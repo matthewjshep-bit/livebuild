@@ -2,10 +2,15 @@
 
 import { Canvas, useFrame } from "@react-three/fiber";
 import * as THREE from "three";
-import { Suspense, useCallback, useMemo, useRef, useState } from "react";
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { CameraRig, type TransitionState, type ViewState } from "@/components/tour/CameraRig";
+import { BomPane } from "@/components/bom/BomPane";
 import { Model } from "@/components/tour/Model";
+import { buildBom } from "@/lib/bom/build";
+import type { Element, Grade } from "@/lib/bom/condition";
+import type { Pick } from "@/lib/bom/pickable";
+import { saveProperty } from "@/lib/property-store";
 import { NodeMarkers } from "@/components/tour/NodeMarkers";
 import { FinishProcessing } from "@/components/tour/FinishProcessing";
 import { Minimap } from "@/components/tour/Minimap";
@@ -52,12 +57,16 @@ function Scene({
   view,
   transition,
   onlyLevel,
+  pick,
+  onPick,
   onSelectNode,
 }: {
   property: Property;
   view: ViewState;
   transition: React.MutableRefObject<TransitionState>;
   onlyLevel: number | null;
+  pick: Pick | null;
+  onPick?: (pick: Pick) => void;
   onSelectNode: (id: string) => void;
 }) {
   const [dollOpacity, setDollOpacity] = useState(1);
@@ -126,6 +135,8 @@ function Scene({
         showLabels={view.mode === "dollhouse"}
         displayUnits={property.displayUnits}
         onlyLevel={onlyLevel}
+        pick={pick}
+        onPick={onPick}
       />
 
       {resident.map((node) => (
@@ -206,11 +217,52 @@ export function TourViewer({
   const levels = useMemo(() => levelsOf(property.plan), [property.plan]);
   const [onlyLevel, setOnlyLevel] = useState<number | null>(null);
 
+  /**
+   * What the scope pane is showing.
+   *
+   * Only meaningful for a locally-stored property: a published tour is someone
+   * else's listing and has no business exposing its rehab costs to whoever
+   * opens the link.
+   */
+  const [pick, setPick] = useState<Pick | null>(null);
+
+  const bom = useMemo(
+    () =>
+      onPropertyChange
+        ? buildBom(property.plan, property.condition, property.rates, property.houseCondition)
+        : null,
+    [property, onPropertyChange],
+  );
+
+  const grade = useCallback(
+    (roomId: string, element: Element, value: Grade) => {
+      const next: Property = {
+        ...property,
+        condition: {
+          ...property.condition,
+          [roomId]: { ...(property.condition[roomId] ?? {}), [element]: value },
+        },
+      };
+      saveProperty(next);
+      onPropertyChange?.(next);
+    },
+    [property, onPropertyChange],
+  );
+
   const activeNode =
     view.mode === "node" ? property.nodes.find((n) => n.id === view.nodeId) ?? null : null;
   const activeRoom = activeNode
     ? property.plan.rooms.find((r) => r.id === activeNode.roomId) ?? null
     : null;
+
+  // Walking into a room shows its scope, because that is the question being
+  // asked at the time. Clicking a fixture then narrows to it.
+  useEffect(() => {
+    if (!onPropertyChange) return;
+    if (view.mode !== "node") return;
+    const node = property.nodes.find((n) => n.id === view.nodeId);
+    if (node) setPick({ roomId: node.roomId, element: null });
+  }, [view, property.nodes, onPropertyChange]);
 
   const selectNode = useCallback((id: string) => {
     setView({ mode: "node", nodeId: id });
@@ -315,9 +367,24 @@ export function TourViewer({
             view={view}
             transition={transition}
             onlyLevel={view.mode === "dollhouse" ? onlyLevel : null}
+            pick={pick}
+            onPick={onPropertyChange ? setPick : undefined}
             onSelectNode={selectNode}
           />
         </Canvas>
+
+        {bom && pick && (
+          <BomPane
+            bom={bom}
+            pick={pick}
+            condition={property.condition[pick.roomId] ?? {}}
+            onGrade={grade}
+            onClear={() => setPick(null)}
+            onOpenFull={() => {
+              window.location.href = `/bom/${property.id}`;
+            }}
+          />
+        )}
 
         {onPropertyChange && (
           <FinishProcessing

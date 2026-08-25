@@ -6,6 +6,8 @@ import { useMemo, useRef } from "react";
 import * as THREE from "three";
 import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
 
+import { type Element } from "@/lib/bom/condition";
+import { elementForPiece, type Pick } from "@/lib/bom/pickable";
 import { furnishRoom } from "@/lib/model/furniture";
 import { BASEBOARD_DEPTH, BASEBOARD_HEIGHT, PALETTE, floorColour } from "@/lib/model/materials";
 import { type WallSolid, wallsForLevel } from "@/lib/model/walls";
@@ -152,11 +154,17 @@ function LevelModel({
   level,
   opacity,
   furnished,
+  pick,
+  onPick,
+  onHover,
 }: {
   plan: Plan;
   level: number;
   opacity: number;
   furnished: boolean;
+  pick: Pick | null;
+  onPick?: (pick: Pick) => void;
+  onHover?: (pick: Pick | null) => void;
 }) {
   const baseY = levelBase(plan, level);
 
@@ -191,43 +199,73 @@ function LevelModel({
       }
     }
 
-    const floorParts = new Map<string, THREE.BufferGeometry[]>();
-    const baseboardParts: THREE.BufferGeometry[] = [];
-    const furnitureParts = new Map<string, THREE.BufferGeometry[]>();
+    /**
+     * Surfaces are merged by room and element, not by colour.
+     *
+     * Merging everything of one colour into a single mesh was cheaper and made
+     * the model anonymous: there was no way to ask what you had clicked. Keying
+     * on room and element keeps identity while still collapsing a house down to
+     * a few dozen draw calls, which is the trade worth making - a model you can
+     * interrogate is the point, and sixty meshes is nothing.
+     */
+    const surfaces = new Map<
+      string,
+      { roomId: string; element: Element; colour: string; parts: THREE.BufferGeometry[] }
+    >();
+
+    const addSurface = (
+      roomId: string,
+      element: Element,
+      colour: string,
+      geometry: THREE.BufferGeometry,
+    ) => {
+      const key = `${roomId}|${element}|${colour}`;
+      const entry = surfaces.get(key) ?? { roomId, element, colour, parts: [] };
+      entry.parts.push(geometry);
+      surfaces.set(key, entry);
+    };
 
     for (const room of rooms) {
       const b = boundsOf(room.polygon);
       const w = b.x1 - b.x0;
       const d = b.y1 - b.y0;
-      const colour = floorColour(room.label);
 
-      const list = floorParts.get(colour) ?? [];
-      list.push(boxGeometry([b.x0 + w / 2, baseY - SLAB / 2, b.y0 + d / 2], [w, SLAB, d]));
-      floorParts.set(colour, list);
+      addSurface(
+        room.id,
+        "floor",
+        floorColour(room.label),
+        boxGeometry([b.x0 + w / 2, baseY - SLAB / 2, b.y0 + d / 2], [w, SLAB, d]),
+      );
 
       // A baseboard around the room. Small, and it is most of what stops a
       // wall meeting a floor looking like two flat planes intersecting.
       const h = BASEBOARD_HEIGHT;
       const t = BASEBOARD_DEPTH;
       const y = baseY + h / 2;
-      baseboardParts.push(
+      for (const part of [
         boxGeometry([b.x0 + w / 2, y, b.y0 + t / 2], [w, h, t]),
         boxGeometry([b.x0 + w / 2, y, b.y1 - t / 2], [w, h, t]),
         boxGeometry([b.x0 + t / 2, y, b.y0 + d / 2], [t, h, d]),
         boxGeometry([b.x1 - t / 2, y, b.y0 + d / 2], [t, h, d]),
-      );
+      ]) {
+        addSurface(room.id, "trim", PALETTE.baseboard, part);
+      }
 
       if (furnished) {
         for (const piece of furnishRoom(plan, room)) {
+          // Staging - a bed, a sofa - has no line item behind it, so it picks
+          // its room rather than inventing an element it does not represent.
+          const element = elementForPiece(piece.kind);
           for (const box of piece.boxes) {
-            const parts = furnitureParts.get(box.colour) ?? [];
-            parts.push(
+            addSurface(
+              room.id,
+              element ?? "floor",
+              box.colour,
               boxGeometry(
                 [b.x0 + box.center[0], baseY + box.center[1], b.y0 + box.center[2]],
                 box.size,
               ),
             );
-            furnitureParts.set(box.colour, parts);
           }
         }
       }
@@ -253,9 +291,14 @@ function LevelModel({
       rooms,
       exterior,
       interior: merged(interiorParts),
-      floors: [...floorParts.entries()].map(([colour, parts]) => ({ colour, geometry: merged(parts) })),
-      baseboards: merged(baseboardParts),
-      furniture: [...furnitureParts.entries()].map(([colour, parts]) => ({ colour, geometry: merged(parts) })),
+      surfaces: [...surfaces.values()]
+        .map((entry) => ({ ...entry, geometry: merged(entry.parts) }))
+        .filter((entry) => entry.geometry) as Array<{
+          roomId: string;
+          element: Element;
+          colour: string;
+          geometry: THREE.BufferGeometry;
+        }>,
       frames: merged(frameParts),
       glass: merged(glassParts),
     };
@@ -263,31 +306,49 @@ function LevelModel({
 
   return (
     <group>
-      {built.floors.map(
-        ({ colour, geometry }) =>
-          geometry && (
-            <mesh key={colour} geometry={geometry} receiveShadow>
-              <meshStandardMaterial
-                color={colour}
-                roughness={0.9}
-                metalness={0}
-                transparent
-                opacity={opacity}
-              />
-            </mesh>
-          ),
-      )}
+      {built.surfaces.map((surface) => {
+        const selected =
+          pick?.roomId === surface.roomId &&
+          (pick.element === null || pick.element === surface.element);
 
-      {built.baseboards && (
-        <mesh geometry={built.baseboards}>
-          <meshStandardMaterial
-            color={PALETTE.baseboard}
-            roughness={0.7}
-            transparent
-            opacity={opacity}
-          />
-        </mesh>
-      )}
+        return (
+          <mesh
+            key={`${surface.roomId}-${surface.element}-${surface.colour}`}
+            geometry={surface.geometry}
+            castShadow
+            receiveShadow
+            onPointerOver={(e) => {
+              if (!onPick) return;
+              e.stopPropagation();
+              onHover?.({ roomId: surface.roomId, element: surface.element });
+              document.body.style.cursor = "pointer";
+            }}
+            onPointerOut={() => {
+              if (!onPick) return;
+              onHover?.(null);
+              document.body.style.cursor = "auto";
+            }}
+            onClick={(e) => {
+              if (!onPick) return;
+              e.stopPropagation();
+              onPick({ roomId: surface.roomId, element: surface.element });
+            }}
+          >
+            <meshStandardMaterial
+              color={surface.colour}
+              roughness={surface.element === "floor" ? 0.9 : 0.85}
+              metalness={0}
+              transparent
+              opacity={opacity}
+              // Lifting what is selected rather than tinting it: a colour shift
+              // would fight the palette, and on a pale model a slight glow reads
+              // as "this one" without looking like a different material.
+              emissive={selected ? "#4bb3fd" : "#000000"}
+              emissiveIntensity={selected ? 0.32 : 0}
+            />
+          </mesh>
+        );
+      })}
 
       {built.interior && (
         <mesh geometry={built.interior} castShadow receiveShadow>
@@ -326,21 +387,6 @@ function LevelModel({
           />
         </mesh>
       )}
-
-      {built.furniture.map(
-        ({ colour, geometry }) =>
-          geometry && (
-            <mesh key={colour} geometry={geometry} castShadow receiveShadow>
-              <meshStandardMaterial
-                color={colour}
-                roughness={0.85}
-                metalness={0}
-                transparent
-                opacity={opacity}
-              />
-            </mesh>
-          ),
-      )}
     </group>
   );
 }
@@ -352,6 +398,9 @@ export function Model({
   displayUnits,
   onlyLevel,
   furnished = true,
+  pick = null,
+  onPick,
+  onHover,
 }: {
   plan: Plan;
   opacity: number;
@@ -359,6 +408,11 @@ export function Model({
   displayUnits: "ft" | "m";
   onlyLevel?: number | null;
   furnished?: boolean;
+  /** What is currently selected, so it can be lit. */
+  pick?: Pick | null;
+  /** Absent means the model is not interrogable - no cursor, no picking. */
+  onPick?: (pick: Pick) => void;
+  onHover?: (pick: Pick | null) => void;
 }) {
   const levels = useMemo(() => {
     const all = levelsOf(plan);
@@ -382,6 +436,9 @@ export function Model({
           level={level}
           opacity={opacity}
           furnished={furnished}
+          pick={pick}
+          onPick={onPick}
+          onHover={onHover}
         />
       ))}
 

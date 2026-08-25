@@ -104,6 +104,34 @@ card shows up rather than passing silently.
 Export is CSV, one row per line with its full path, because the first thing
 anyone does is pivot it in a spreadsheet.
 
+### Scope follows what you are looking at
+
+The scope page answers "what does this house need". The pane in the model
+answers "what about *that*", which is the question people actually ask while
+walking a property.
+
+- **Walk into a room** and its scope appears unasked — the room you are standing
+  in is the room you are asking about.
+- **Click a surface** — a floor, a bath, a worktop — and it narrows to that item,
+  with its quantity, rate and material/labour split.
+- **Grade it in place.** The condition selector is in the pane, because the
+  judgement happens at the point of looking. Mark a worktop dated and the total
+  moves immediately; making someone leave, find a list and come back is how a
+  tool stops being used.
+
+Making this work meant re-keying the model's geometry merge from colour to
+**room and element**. Merging by colour was cheaper and left the model anonymous
+— there was no way to ask what you had clicked. A house is now sixty-odd meshes
+instead of ten, which is nothing, and it can be interrogated.
+
+Fixtures map to line items; staging does not. Clicking a bath selects the bath;
+clicking a bed selects its room, because a bed is there to make the room read as
+lived in and replacing it is not rehab scope.
+
+**A published tour shows none of this.** The pane only appears for a property
+stored locally — someone opening a shared link is looking at a listing, not at
+what it would cost to fix.
+
 ## The model
 
 The rendered model is the foundation, not the photographs. It exists before any

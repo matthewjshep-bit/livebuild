@@ -1,0 +1,289 @@
+{
+  "id": "demo-house",
+  "label": "Demo House (synthetic)",
+  "displayUnits": "ft",
+  "plan": {
+    "scaleRef": {
+      "px": 1,
+      "meters": 0.3048
+    },
+    "rooms": [
+      {
+        "id": "living",
+        "label": "Living Room",
+        "polygon": [
+          [
+            0.0,
+            0.0
+          ],
+          [
+            5.5,
+            0.0
+          ],
+          [
+            5.5,
+            4.5
+          ],
+          [
+            0.0,
+            4.5
+          ]
+        ],
+        "ceilingHeight": 2.7
+      },
+      {
+        "id": "kitchen",
+        "label": "Kitchen",
+        "polygon": [
+          [
+            5.5,
+            0.0
+          ],
+          [
+            9.5,
+            0.0
+          ],
+          [
+            9.5,
+            4.5
+          ],
+          [
+            5.5,
+            4.5
+          ]
+        ],
+        "ceilingHeight": 2.7
+      },
+      {
+        "id": "hall",
+        "label": "Hallway",
+        "polygon": [
+          [
+            0.0,
+            4.5
+          ],
+          [
+            9.5,
+            4.5
+          ],
+          [
+            9.5,
+            6.0
+          ],
+          [
+            0.0,
+            6.0
+          ]
+        ],
+        "ceilingHeight": 2.7
+      },
+      {
+        "id": "bedroom",
+        "label": "Bedroom",
+        "polygon": [
+          [
+            0.0,
+            6.0
+          ],
+          [
+            5.0,
+            6.0
+          ],
+          [
+            5.0,
+            10.0
+          ],
+          [
+            0.0,
+            10.0
+          ]
+        ],
+        "ceilingHeight": 2.7
+      },
+      {
+        "id": "bath",
+        "label": "Bathroom",
+        "polygon": [
+          [
+            5.0,
+            6.0
+          ],
+          [
+            9.5,
+            6.0
+          ],
+          [
+            9.5,
+            10.0
+          ],
+          [
+            5.0,
+            10.0
+          ]
+        ],
+        "ceilingHeight": 2.7
+      }
+    ],
+    "openings": [
+      {
+        "id": "o1",
+        "between": [
+          "living",
+          "kitchen"
+        ],
+        "at": [
+          5.5,
+          2.2
+        ],
+        "width": 1.0
+      },
+      {
+        "id": "o2",
+        "between": [
+          "living",
+          "hall"
+        ],
+        "at": [
+          2.5,
+          4.5
+        ],
+        "width": 1.1
+      },
+      {
+        "id": "o3",
+        "between": [
+          "kitchen",
+          "hall"
+        ],
+        "at": [
+          7.5,
+          4.5
+        ],
+        "width": 0.9
+      },
+      {
+        "id": "o4",
+        "between": [
+          "hall",
+          "bedroom"
+        ],
+        "at": [
+          2.5,
+          6.0
+        ],
+        "width": 0.9
+      },
+      {
+        "id": "o5",
+        "between": [
+          "hall",
+          "bath"
+        ],
+        "at": [
+          7.0,
+          6.0
+        ],
+        "width": 0.8
+      }
+    ]
+  },
+  "nodes": [
+    {
+      "id": "n1",
+      "roomId": "living",
+      "position": [
+        0.9,
+        0.9
+      ],
+      "eyeHeight": 1.5,
+      "heading": 48.9,
+      "pitch": 0,
+      "fovDeg": 78.0,
+      "photo": "/properties/demo-house/photos/living-01.jpg",
+      "depth": "/properties/demo-house/depth/living-01.png",
+      "parallaxBudget": 0.45,
+      "neighbors": []
+    },
+    {
+      "id": "n2",
+      "roomId": "living",
+      "position": [
+        5.0,
+        4.0
+      ],
+      "eyeHeight": 1.5,
+      "heading": 229.5,
+      "pitch": 0,
+      "fovDeg": 78.0,
+      "photo": "/properties/demo-house/photos/living-02.jpg",
+      "depth": "/properties/demo-house/depth/living-02.png",
+      "parallaxBudget": 0.45,
+      "neighbors": []
+    },
+    {
+      "id": "n3",
+      "roomId": "kitchen",
+      "position": [
+        9.0,
+        4.0
+      ],
+      "eyeHeight": 1.5,
+      "heading": 219.8,
+      "pitch": 0,
+      "fovDeg": 78.0,
+      "photo": "/properties/demo-house/photos/kitchen-01.jpg",
+      "depth": "/properties/demo-house/depth/kitchen-01.png",
+      "parallaxBudget": 0.45,
+      "neighbors": []
+    },
+    {
+      "id": "n4",
+      "roomId": "hall",
+      "position": [
+        0.7,
+        5.25
+      ],
+      "eyeHeight": 1.5,
+      "heading": 89.0,
+      "pitch": 0,
+      "fovDeg": 78.0,
+      "photo": "/properties/demo-house/photos/hall-01.jpg",
+      "depth": "/properties/demo-house/depth/hall-01.png",
+      "parallaxBudget": 0.45,
+      "neighbors": []
+    },
+    {
+      "id": "n5",
+      "roomId": "bedroom",
+      "position": [
+        0.8,
+        6.5
+      ],
+      "eyeHeight": 1.5,
+      "heading": 48.4,
+      "pitch": 0,
+      "fovDeg": 78.0,
+      "photo": "/properties/demo-house/photos/bedroom-01.jpg",
+      "depth": "/properties/demo-house/depth/bedroom-01.png",
+      "parallaxBudget": 0.45,
+      "neighbors": []
+    },
+    {
+      "id": "n6",
+      "roomId": "bath",
+      "position": [
+        5.5,
+        6.5
+      ],
+      "eyeHeight": 1.5,
+      "heading": 50.0,
+      "pitch": 0,
+      "fovDeg": 78.0,
+      "photo": "/properties/demo-house/photos/bath-01.jpg",
+      "depth": "/properties/demo-house/depth/bath-01.png",
+      "parallaxBudget": 0.45,
+      "neighbors": []
+    }
+  ],
+  "splats": []
+}

@@ -1,0 +1,29 @@
+@import "tailwindcss";
+
+@theme {
+  --color-ink-900: #0b0d10;
+  --color-ink-800: #12151a;
+  --color-ink-700: #1a1f26;
+  --color-ink-600: #262d37;
+  --color-ink-500: #3a434f;
+  --color-mist-400: #8a95a3;
+  --color-mist-200: #c9d1da;
+  --color-accent: #4bb3fd;
+  --color-accent-dim: #2a6f9e;
+  --color-warn: #f2a541;
+}
+
+html, body { height: 100%; }
+
+body {
+  background: var(--color-ink-900);
+  color: var(--color-mist-200);
+  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  overscroll-behavior: none;
+}
+
+/* The editor and viewer are full-bleed tools, not documents - never let the
+   page itself scroll or a drag near the edge will pan the window instead. */
+.app-shell { position: fixed; inset: 0; display: flex; flex-direction: column; }
+
+button { cursor: pointer; }

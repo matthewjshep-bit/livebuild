@@ -1,0 +1,449 @@
+{
+  "id": "two-storey",
+  "label": "Two-Storey Demo",
+  "displayUnits": "ft",
+  "plan": {
+    "scaleRef": {
+      "px": 1,
+      "meters": 0.3048
+    },
+    "rooms": [
+      {
+        "id": "g_living",
+        "label": "Living Room",
+        "polygon": [
+          [
+            0,
+            0
+          ],
+          [
+            5.5,
+            0
+          ],
+          [
+            5.5,
+            4.5
+          ],
+          [
+            0,
+            4.5
+          ]
+        ],
+        "ceilingHeight": 2.7,
+        "level": 0
+      },
+      {
+        "id": "g_kitchen",
+        "label": "Kitchen",
+        "polygon": [
+          [
+            5.5,
+            0
+          ],
+          [
+            9.5,
+            0
+          ],
+          [
+            9.5,
+            4.5
+          ],
+          [
+            5.5,
+            4.5
+          ]
+        ],
+        "ceilingHeight": 2.7,
+        "level": 0
+      },
+      {
+        "id": "g_hall",
+        "label": "Hallway",
+        "polygon": [
+          [
+            0,
+            4.5
+          ],
+          [
+            6.5,
+            4.5
+          ],
+          [
+            6.5,
+            6.2
+          ],
+          [
+            0,
+            6.2
+          ]
+        ],
+        "ceilingHeight": 2.7,
+        "level": 0
+      },
+      {
+        "id": "g_stairs",
+        "label": "Stairs",
+        "polygon": [
+          [
+            6.5,
+            4.5
+          ],
+          [
+            9.5,
+            4.5
+          ],
+          [
+            9.5,
+            6.2
+          ],
+          [
+            6.5,
+            6.2
+          ]
+        ],
+        "ceilingHeight": 2.7,
+        "level": 0
+      },
+      {
+        "id": "u_stairs",
+        "label": "Stairs",
+        "polygon": [
+          [
+            6.5,
+            4.5
+          ],
+          [
+            9.5,
+            4.5
+          ],
+          [
+            9.5,
+            6.2
+          ],
+          [
+            6.5,
+            6.2
+          ]
+        ],
+        "ceilingHeight": 2.7,
+        "level": 1
+      },
+      {
+        "id": "u_landing",
+        "label": "Hallway",
+        "polygon": [
+          [
+            0,
+            4.5
+          ],
+          [
+            6.5,
+            4.5
+          ],
+          [
+            6.5,
+            6.2
+          ],
+          [
+            0,
+            6.2
+          ]
+        ],
+        "ceilingHeight": 2.7,
+        "level": 1
+      },
+      {
+        "id": "u_bed",
+        "label": "Bedroom",
+        "polygon": [
+          [
+            0,
+            0
+          ],
+          [
+            5,
+            0
+          ],
+          [
+            5,
+            4.5
+          ],
+          [
+            0,
+            4.5
+          ]
+        ],
+        "ceilingHeight": 2.7,
+        "level": 1
+      },
+      {
+        "id": "u_bath",
+        "label": "Bathroom",
+        "polygon": [
+          [
+            5,
+            0
+          ],
+          [
+            9.5,
+            0
+          ],
+          [
+            9.5,
+            4.5
+          ],
+          [
+            5,
+            4.5
+          ]
+        ],
+        "ceilingHeight": 2.7,
+        "level": 1
+      }
+    ],
+    "openings": [
+      {
+        "id": "d1",
+        "between": [
+          "g_living",
+          "g_kitchen"
+        ],
+        "at": [
+          5.5,
+          2.25
+        ],
+        "width": 0.9,
+        "kind": "door"
+      },
+      {
+        "id": "d2",
+        "between": [
+          "g_living",
+          "g_hall"
+        ],
+        "at": [
+          2.75,
+          4.5
+        ],
+        "width": 0.9,
+        "kind": "door"
+      },
+      {
+        "id": "d3",
+        "between": [
+          "g_kitchen",
+          "g_hall"
+        ],
+        "at": [
+          6,
+          4.5
+        ],
+        "width": 0.9,
+        "kind": "door"
+      },
+      {
+        "id": "d4",
+        "between": [
+          "g_kitchen",
+          "g_stairs"
+        ],
+        "at": [
+          8,
+          4.5
+        ],
+        "width": 0.9,
+        "kind": "door"
+      },
+      {
+        "id": "d5",
+        "between": [
+          "g_hall",
+          "g_stairs"
+        ],
+        "at": [
+          6.5,
+          5.35
+        ],
+        "width": 0.9,
+        "kind": "door"
+      },
+      {
+        "id": "d6",
+        "between": [
+          "u_stairs",
+          "u_landing"
+        ],
+        "at": [
+          6.5,
+          5.35
+        ],
+        "width": 0.9,
+        "kind": "door"
+      },
+      {
+        "id": "d7",
+        "between": [
+          "u_stairs",
+          "u_bath"
+        ],
+        "at": [
+          8,
+          4.5
+        ],
+        "width": 0.9,
+        "kind": "door"
+      },
+      {
+        "id": "d8",
+        "between": [
+          "u_landing",
+          "u_bed"
+        ],
+        "at": [
+          2.5,
+          4.5
+        ],
+        "width": 0.9,
+        "kind": "door"
+      },
+      {
+        "id": "d9",
+        "between": [
+          "u_landing",
+          "u_bath"
+        ],
+        "at": [
+          5.75,
+          4.5
+        ],
+        "width": 0.9,
+        "kind": "door"
+      },
+      {
+        "id": "d10",
+        "between": [
+          "u_bed",
+          "u_bath"
+        ],
+        "at": [
+          5,
+          2.25
+        ],
+        "width": 0.9,
+        "kind": "door"
+      },
+      {
+        "id": "s11",
+        "between": [
+          "g_stairs",
+          "u_stairs"
+        ],
+        "at": [
+          8,
+          5.35
+        ],
+        "width": 1,
+        "kind": "stairs"
+      }
+    ]
+  },
+  "nodes": [
+    {
+      "id": "n1",
+      "roomId": "g_living",
+      "position": [
+        0.9,
+        0.9
+      ],
+      "eyeHeight": 1.5,
+      "heading": 48.9,
+      "pitch": 0,
+      "fovDeg": 78,
+      "photo": "/properties/demo-house/photos/living-01.jpg",
+      "depth": "/properties/demo-house/depth/living-01.png",
+      "parallaxBudget": 0.45,
+      "neighbors": []
+    },
+    {
+      "id": "n2",
+      "roomId": "g_living",
+      "position": [
+        5,
+        4
+      ],
+      "eyeHeight": 1.5,
+      "heading": 229.5,
+      "pitch": 0,
+      "fovDeg": 78,
+      "photo": "/properties/demo-house/photos/living-02.jpg",
+      "depth": "/properties/demo-house/depth/living-02.png",
+      "parallaxBudget": 0.45,
+      "neighbors": []
+    },
+    {
+      "id": "n3",
+      "roomId": "g_kitchen",
+      "position": [
+        9,
+        4
+      ],
+      "eyeHeight": 1.5,
+      "heading": 219.8,
+      "pitch": 0,
+      "fovDeg": 78,
+      "photo": "/properties/demo-house/photos/kitchen-01.jpg",
+      "depth": "/properties/demo-house/depth/kitchen-01.png",
+      "parallaxBudget": 0.45,
+      "neighbors": []
+    },
+    {
+      "id": "n4",
+      "roomId": "g_hall",
+      "position": [
+        0.7,
+        5.3
+      ],
+      "eyeHeight": 1.5,
+      "heading": 89,
+      "pitch": 0,
+      "fovDeg": 78,
+      "photo": "/properties/demo-house/photos/hall-01.jpg",
+      "depth": "/properties/demo-house/depth/hall-01.png",
+      "parallaxBudget": 0.45,
+      "neighbors": []
+    },
+    {
+      "id": "n5",
+      "roomId": "u_bed",
+      "position": [
+        0.8,
+        0.8
+      ],
+      "eyeHeight": 1.5,
+      "heading": 48.4,
+      "pitch": 0,
+      "fovDeg": 78,
+      "photo": "/properties/demo-house/photos/bedroom-01.jpg",
+      "depth": "/properties/demo-house/depth/bedroom-01.png",
+      "parallaxBudget": 0.45,
+      "neighbors": []
+    },
+    {
+      "id": "n6",
+      "roomId": "u_bath",
+      "position": [
+        5.5,
+        0.8
+      ],
+      "eyeHeight": 1.5,
+      "heading": 50,
+      "pitch": 0,
+      "fovDeg": 78,
+      "photo": "/properties/demo-house/photos/bath-01.jpg",
+      "depth": "/properties/demo-house/depth/bath-01.png",
+      "parallaxBudget": 0.45,
+      "neighbors": []
+    }
+  ],
+  "splats": []
+}

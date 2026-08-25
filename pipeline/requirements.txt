@@ -1,0 +1,8 @@
+# Phase 0 spike. Torch is intentionally unpinned: install the build that matches
+# your CUDA version first (or let Colab's preinstalled torch win).
+torch
+numpy
+pillow
+
+# MoGe-2 - MIT licensed, ViT-S/B/L checkpoints are cleared for commercial use.
+# git+https://github.com/microsoft/MoGe.git

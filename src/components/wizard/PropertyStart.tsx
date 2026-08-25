@@ -77,9 +77,23 @@ export function PropertyStart({
       const learnedNothing =
         files.length === 0 && !listing.footprint && !listing.facts.sqft && !listing.facts.beds;
       if (learnedNothing) {
-        setError(
-          "That address was found, but nothing is published about the building - no outline on the map and no listing details. You can still add photos below, or describe the house.",
-        );
+        // Say which thing failed. The old message ran three unrelated causes
+        // together - an unconfigured scraper, an address the map has never
+        // heard of, and a building nobody has drawn - and the user can act on
+        // the first two.
+        const outline =
+          listing.footprintMiss === "not-located"
+            ? "That address is not on the map. Rural roads are often missing from OpenStreetMap, so there is no outline to build from."
+            : listing.footprintMiss === "lookup-failed"
+              ? "The map service did not answer just now. Trying again often works."
+              : "The address was located, but no building is drawn there on the map.";
+
+        const details =
+          listing.scraperConfigured === false
+            ? " Listing lookup is not configured on this deployment, so no photos or room counts could be fetched either — set APIFY_TOKEN to enable it."
+            : " The listing had no details either.";
+
+        setError(`${outline}${details} You can still add photos below, or describe the house.`);
       }
 
       setStage(files.length > 0 ? `Saving ${files.length} photos` : "Reading the building");

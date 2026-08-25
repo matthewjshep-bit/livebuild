@@ -1,5 +1,5 @@
 import { OSM_ATTRIBUTION, fetchFootprint, geocode } from "@/lib/listing/footprint";
-import type { ListingFootprint, ListingResult } from "@/lib/listing/types";
+import type { FootprintMiss, ListingFootprint, ListingResult } from "@/lib/listing/types";
 import { addressFromZillowUrl, looksLikeUrl } from "@/lib/listing/url";
 import { ListingError, fetchZillowListing } from "@/lib/listing/zillow";
 import { inferStoreys, prepareFootprint } from "@/lib/plan/footprint";
@@ -35,13 +35,26 @@ export async function GET() {
  * Overpass mirror or a suburb OSM has never mapped turn a successful
  * three-minute scrape into an error would be the wrong trade by a wide margin.
  */
-async function outlineFor(listing: ListingResult): Promise<ListingFootprint | null> {
+async function outlineFor(
+  listing: ListingResult,
+  why?: { reason: FootprintMiss },
+): Promise<ListingFootprint | null> {
   try {
     const point = listing.location ?? (await geocode(listing.address));
-    if (!point) return null;
+    if (!point) {
+      // Worth separating from "no building here". Rural street addresses are
+      // frequently absent from OpenStreetMap's address data - Nominatim knows
+      // the town of Gold Bar, Washington and not Pine Road within it - and the
+      // fix for the user is different in each case.
+      if (why) why.reason = "not-located";
+      return null;
+    }
 
     const found = await fetchFootprint(point.lat, point.lon);
-    if (!found) return null;
+    if (!found) {
+      if (why) why.reason = "no-building";
+      return null;
+    }
 
     // The outline is the ground floor, so the listing's total area has to be
     // divided by the number of floors standing on it. Zillow's own storey field
@@ -68,6 +81,7 @@ async function outlineFor(listing: ListingResult): Promise<ListingFootprint | nu
       attribution: OSM_ATTRIBUTION,
     };
   } catch {
+    if (why) why.reason = "lookup-failed";
     return null;
   }
 }
@@ -103,7 +117,14 @@ async function footprintOnly(query: string): Promise<Response> {
   // flaky, so a hard error here would turn a bad minute on a free service into
   // a dead end for the user. The address still names the property and the
   // house still gets built - just as a rectangle, the way it always was.
-  return Response.json({ ...listing, footprint: await outlineFor(listing) });
+  const why: { reason: FootprintMiss } = { reason: "no-building" };
+  const footprint = await outlineFor(listing, why);
+  return Response.json({
+    ...listing,
+    footprint,
+    footprintMiss: footprint ? null : why.reason,
+    scraperConfigured: Boolean(process.env.APIFY_TOKEN),
+  });
 }
 
 export async function POST(request: Request) {
@@ -126,7 +147,14 @@ export async function POST(request: Request) {
 
   try {
     const listing = await fetchZillowListing(query, token);
-    return Response.json({ ...listing, footprint: await outlineFor(listing) });
+    const why: { reason: FootprintMiss } = { reason: "no-building" };
+    const footprint = await outlineFor(listing, why);
+    return Response.json({
+      ...listing,
+      footprint,
+      footprintMiss: footprint ? null : why.reason,
+      scraperConfigured: true,
+    });
   } catch (error) {
     // A failed scrape still leaves the map. Falling back to the outline turns
     // "we could not find that listing" into a house of the right shape, which

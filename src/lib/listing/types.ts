@@ -45,6 +45,16 @@ export type ListingFootprint = {
   attribution: string;
 };
 
+/**
+ * Why no building outline came back.
+ *
+ * Three different situations that used to read as one unhelpful sentence:
+ * the address could not be placed on the map at all, it was placed but no
+ * building is mapped there, or the map service itself failed. Only the last is
+ * worth retrying, and the user can do something about the first.
+ */
+export type FootprintMiss = "not-located" | "no-building" | "lookup-failed";
+
 export type ListingResult = {
   address: string;
   photos: string[];
@@ -56,6 +66,10 @@ export type ListingResult = {
   /** Parcel coordinates from the listing, which beat geocoding the address. */
   location: { lat: number; lon: number } | null;
   footprint: ListingFootprint | null;
+  /** Set when `footprint` is null, saying which of the three happened. */
+  footprintMiss?: FootprintMiss | null;
+  /** Whether listing scraping is configured, so the UI can say what is missing. */
+  scraperConfigured?: boolean;
 };
 
 /**

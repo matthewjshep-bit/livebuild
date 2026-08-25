@@ -9,9 +9,15 @@ import { PlanBuilder } from "@/components/wizard/PlanBuilder";
 import { DepthEstimator, type DepthProgress } from "@/lib/depth/client";
 import { classifyPhotos } from "@/lib/listing/client";
 import { refinePoses } from "@/lib/listing/pose";
-import { factsToDescription, type ListingFacts, type ListingResult } from "@/lib/listing/types";
+import {
+  factsToDescription,
+  type ListingFacts,
+  type ListingFootprint,
+  type ListingResult,
+} from "@/lib/listing/types";
 import { deleteMedia, getMedia, mediaRef, putMedia, refToKey } from "@/lib/media-store";
 import { layoutFromSpec, placeNodesInRoom } from "@/lib/plan/autolayout";
+import { layoutFromFootprint, prepareFootprint } from "@/lib/plan/footprint";
 import { type HouseSpec, describeToSpec } from "@/lib/plan/describe";
 import { saveProperty } from "@/lib/property-store";
 import type { Plan, Property } from "@/lib/schema";
@@ -54,6 +60,8 @@ export default function NewTourPage() {
   const [description, setDescription] = useState("");
   const [spec, setSpec] = useState<HouseSpec | null>(null);
   const [facts, setFacts] = useState<ListingFacts | null>(null);
+  // The building's real outline, when OpenStreetMap had one for the address.
+  const [footprint, setFootprint] = useState<ListingFootprint | null>(null);
   const [plan, setPlan] = useState<Plan | null>(null);
   const [property, setProperty] = useState<Property | null>(null);
 
@@ -106,6 +114,7 @@ export default function NewTourPage() {
     async (files: File[], listing: ListingResult) => {
       await addPhotos(files);
       setFacts(listing.facts);
+      setFootprint(listing.footprint);
       if (!label && listing.address) setLabel(listing.address);
       const sentence = factsToDescription(listing.facts, listing.remarks);
       setDescription(sentence);
@@ -284,11 +293,28 @@ export default function NewTourPage() {
 
     const adjacency =
       (build as unknown as { adjacency?: Array<[string, string]> }).adjacency ?? [];
-    const built = layoutFromSpec(
-      { rooms },
-      facts?.sqft ? sqftToM2(facts.sqft) : undefined,
-      adjacency,
-    );
+    // Pack into the building's real outline when the address gave us one.
+    // The shape of the house is the thing a viewer recognises, and it is the
+    // one part of this that is measured rather than inferred - so it wins over
+    // the invented rectangle whenever it exists.
+    const storeys = Math.max(1, new Set(rooms.map((r) => r.level)).size);
+    const built = footprint
+      ? layoutFromFootprint(
+          { rooms },
+          prepareFootprint(
+            footprint.ring,
+            // The outline is the ground floor, so the listing's total area has
+            // to be divided by the storeys standing on it.
+            facts?.sqft ? facts.sqft / storeys : undefined,
+            Math.max(1, rooms.filter((r) => r.level === 0).length),
+          ),
+          adjacency,
+        )
+      : layoutFromSpec(
+          { rooms },
+          facts?.sqft ? sqftToM2(facts.sqft) : undefined,
+          adjacency,
+        );
     const nextPlan: Plan = {
       scaleRef: { px: 1, meters: M_PER_FT },
       rooms: built.rooms,
@@ -298,6 +324,13 @@ export default function NewTourPage() {
     gathered.push(
       `${built.rooms.length} rooms, ${built.openings.length} doorways.`,
     );
+    if (footprint) {
+      // Worth saying out loud. It is the one measurement in the whole build,
+      // and it is also an attribution the ODbL requires wherever it is shown.
+      gathered.push(
+        `Shaped to the real building outline from the map (${Math.round(footprint.areaSqft)} sqft ground floor). ${footprint.attribution}.`,
+      );
+    }
 
     // --- 3. Put the photos in the rooms ---
     const placed = placePhotos(nextPlan, labelled);
@@ -375,7 +408,7 @@ export default function NewTourPage() {
       saveProperty(working);
       setProperty(working);
     });
-  }, [photos, spec, facts, propertyId, label, placePhotos]);
+  }, [photos, spec, facts, footprint, propertyId, label, placePhotos]);
 
   if (restoring) {
     return (

@@ -91,9 +91,18 @@ export async function fetchZillowListing(
       baths: Number(item.bathrooms) || null,
       sqft: Number(item.livingArea) || null,
       yearBuilt: Number(item.yearBuilt) || Number(item.resoFacts?.yearBuilt) || null,
+      stories: Number(item.resoFacts?.stories) || null,
     },
     remarks: (item.description ?? "").slice(0, 1500) || null,
     status: item.homeStatus ?? null,
     listPrice: Number(item.price) || null,
+    // Zillow returns the parcel's own coordinates, which are far better than
+    // geocoding the address string - a geocoder can land on the road, and
+    // thirty metres of error picks the neighbour's house out of OSM.
+    location:
+      Number.isFinite(Number(item.latitude)) && Number.isFinite(Number(item.longitude))
+        ? { lat: Number(item.latitude), lon: Number(item.longitude) }
+        : null,
+    footprint: null,
   };
 }

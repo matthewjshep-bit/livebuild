@@ -12,7 +12,7 @@ import {
   HOUSE_ELEMENTS,
   HOUSE_ELEMENT_LABEL,
 } from "@/lib/bom/condition";
-import { type GradeProgress, gradeProperty } from "@/lib/bom/grade-client";
+import { type GradeProgress, gradeExterior, gradeProperty } from "@/lib/bom/grade-client";
 import { fetchBundledProperty, loadProperty, saveProperty } from "@/lib/property-store";
 import type { Property } from "@/lib/schema";
 
@@ -76,12 +76,31 @@ export default function BomPage({ params }: { params: Promise<{ id: string }> })
     if (!property) return;
     setGradeNote(null);
     const result = await gradeProperty(property, setGrading);
+
+    // The building's own condition, from whatever exterior shots the listing
+    // had. Without it the roof and siding stay unknown and cost nothing, which
+    // is what made the first totals read low against the comparison bands.
+    setGrading({ room: "the outside of the house", done: 0, total: 1 });
+    const outside = await gradeExterior(property);
     setGrading(null);
-    update({ ...property, condition: result.condition });
+
+    update({
+      ...property,
+      condition: result.condition,
+      houseCondition: { ...property.houseCondition, ...outside.houseCondition },
+    });
+
+    const graded = Object.keys(outside.houseCondition).length;
     setGradeNote(
       `Graded ${result.graded} room${result.graded === 1 ? "" : "s"} from their photos.` +
+        (outside.photos > 0
+          ? ` Read the roof, siding and yard from ${outside.photos} exterior shot${outside.photos === 1 ? "" : "s"}${graded > 0 ? "" : ", though none could be judged"}.`
+          : " No exterior photos, so the roof and siding are still unknown.") +
+        // Said plainly rather than left to be discovered: nothing in a listing
+        // shows a furnace, so those stay the user's to enter.
+        " Heating, electrics and plumbing cannot be seen in photographs and stay unset." +
         (result.unseen > 0
-          ? ` ${result.unseen} had no photo and are costed as needing nothing — set those by hand.`
+          ? ` ${result.unseen} room${result.unseen === 1 ? "" : "s"} had no photo — set those by hand.`
           : ""),
     );
   };

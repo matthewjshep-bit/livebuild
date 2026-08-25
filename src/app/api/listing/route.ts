@@ -1,4 +1,7 @@
+import { OSM_ATTRIBUTION, fetchFootprint, geocode } from "@/lib/listing/footprint";
+import type { ListingFootprint, ListingResult } from "@/lib/listing/types";
 import { ListingError, fetchZillowListing } from "@/lib/listing/zillow";
+import { prepareFootprint } from "@/lib/plan/footprint";
 
 /**
  * Address in, listing photos and facts out.
@@ -13,6 +16,45 @@ export const maxDuration = 300;
 
 export async function GET() {
   return Response.json({ available: Boolean(process.env.APIFY_TOKEN) });
+}
+
+/**
+ * The building's outline, or null.
+ *
+ * Isolated from the listing lookup and failing quietly on purpose. The outline
+ * makes the model better; the listing makes it possible. Letting a slow
+ * Overpass mirror or a suburb OSM has never mapped turn a successful
+ * three-minute scrape into an error would be the wrong trade by a wide margin.
+ */
+async function outlineFor(listing: ListingResult): Promise<ListingFootprint | null> {
+  try {
+    const point = listing.location ?? (await geocode(listing.address));
+    if (!point) return null;
+
+    const found = await fetchFootprint(point.lat, point.lon);
+    if (!found) return null;
+
+    // The outline is the ground floor. Dividing the listing's living area by the
+    // storey count is what keeps the two consistent - scaling a bungalow's
+    // footprint to a two-storey house's total area would double its length and
+    // width and produce a building twice the size of the real one.
+    const stories = Math.max(1, Math.round(listing.facts.stories ?? 1));
+    const groundSqft = listing.facts.sqft ? listing.facts.sqft / stories : undefined;
+
+    const prepared = prepareFootprint(found.ring, groundSqft);
+
+    return {
+      ring: found.ring,
+      outline: prepared.outline.map(([x, y]) => [x, y] as [number, number]),
+      rects: prepared.rects,
+      areaSqft: prepared.areaSqft,
+      rotationDeg: prepared.rotationDeg,
+      wayId: found.wayId,
+      attribution: OSM_ATTRIBUTION,
+    };
+  } catch {
+    return null;
+  }
 }
 
 export async function POST(request: Request) {
@@ -34,7 +76,8 @@ export async function POST(request: Request) {
   }
 
   try {
-    return Response.json(await fetchZillowListing(address, token));
+    const listing = await fetchZillowListing(address, token);
+    return Response.json({ ...listing, footprint: await outlineFor(listing) });
   } catch (error) {
     if (error instanceof ListingError) {
       return Response.json(

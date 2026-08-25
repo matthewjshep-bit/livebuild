@@ -107,6 +107,27 @@ export const HOUSE_ELEMENT_LABEL: Record<HouseElement, string> = {
   foundation: "Foundation & structure",
 };
 
+/**
+ * The house-level elements a photograph of the outside can actually show.
+ *
+ * The rest of `HOUSE_ELEMENTS` - the furnace, the panel, the pipework, the
+ * water heater - cannot be graded from a listing. They are behind walls, and a
+ * model asked to grade them from a photo of the front elevation will oblige by
+ * inventing something. They stay ungraded, which the BOM already reports as
+ * unknown rather than as nothing needed.
+ *
+ * Foundation is included with a caveat: what is visible is the exposed stem
+ * wall and any obvious settlement, not the footing. That is roughly what a
+ * buyer sees from the kerb too.
+ */
+export const EXTERIOR_ELEMENTS = [
+  "roof",
+  "exterior",
+  "windows",
+  "landscaping",
+  "foundation",
+] as const satisfies readonly HouseElement[];
+
 /** Condition for every room, keyed by room id. */
 export type ConditionMap = Record<string, RoomCondition>;
 

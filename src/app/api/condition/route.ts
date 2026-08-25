@@ -50,6 +50,40 @@ Rules:
 - reason: a few words on what you actually saw — "oak doors, brass hardware, sound", "chipped tile at the threshold". Leave empty for not_visible.
 - Return one entry per element you were asked about, and no others.`;
 
+/**
+ * The same job from the kerb rather than from inside.
+ *
+ * A separate prompt because the failure modes are different. A photograph of a
+ * house shows the roof at a glancing angle from forty feet away, and the honest
+ * answer to "what condition is that roof in" is very often that you cannot tell
+ * - which a model will not volunteer unless it is told that saying so is a
+ * good answer. Listing photography also flatters: it is shot in good light,
+ * often in summer, sometimes years old.
+ */
+const EXTERIOR_SYSTEM = `You grade the current condition of a house's exterior from photographs, for a renovation scope of work.
+
+Use exactly these grades:
+- good — recently done or as-new. No work needed.
+- fair — serviceable and unremarkable. No work needed.
+- dated — sound and functional, but the style or finish is old. Needs refreshing, not replacing.
+- poor — damaged, failing, missing, or worn out. Needs replacing.
+- not_visible — no photograph shows this well enough to judge.
+
+What each element means here:
+- roof — covering condition. Curling, cupped or missing shingles, patching, moss, sagging ridge lines. A roof seen only as a thin edge at the top of a photo is not_visible.
+- exterior — siding and paint. Peeling, chalking, rot, damaged boards, mismatched repairs.
+- windows — the units themselves. Single-glazed aluminium or rotten timber frames are poor; sound but old timber is dated; recent double glazing is good.
+- landscaping — the yard as it presents. Overgrowth, dead lawn, weeds through hardstanding, failing fences and retaining walls.
+- foundation — only what is visible: the exposed stem wall, obvious cracking, settlement, a sagging porch.
+
+Rules:
+- Listing photographs are taken to sell, in good light and good weather, and are sometimes years old. Do not read a flattering photograph as evidence of good condition. Read it as evidence of what is *visible*.
+- not_visible is a good answer and is frequently the right one. A roof photographed from ground level at the front tells you nothing about the back.
+- Do not infer. Do not guess a roof's age from the house's style, or the windows from the year it was built.
+- Do not be generous and do not be harsh. This drives a real cost estimate in both directions.
+- reason: a few words on what you actually saw — "curled shingles above the garage", "peeling paint on south elevation". Leave empty for not_visible.
+- Return one entry per element you were asked about, and no others.`;
+
 export async function GET() {
   return Response.json({ available: Boolean(process.env.ANTHROPIC_API_KEY) });
 }
@@ -63,6 +97,8 @@ export async function POST(request: Request) {
     room?: string;
     elements?: string[];
     photos?: string[];
+    /** "house" grades the building's exterior rather than a room. */
+    scope?: string;
   };
   try {
     body = await request.json();
@@ -70,11 +106,12 @@ export async function POST(request: Request) {
     return Response.json({ error: "bad-request" }, { status: 400 });
   }
 
+  const exterior = body.scope === "house";
   const room = String(body.room ?? "").trim();
   const elements = (body.elements ?? []).filter((e) => typeof e === "string");
   const photos = (body.photos ?? []).slice(0, MAX_PHOTOS);
 
-  if (!room || elements.length === 0) {
+  if ((!room && !exterior) || elements.length === 0) {
     return Response.json({ error: "nothing-to-do" }, { status: 400 });
   }
 
@@ -82,9 +119,11 @@ export async function POST(request: Request) {
     {
       type: "text",
       text:
-        photos.length > 0
-          ? `This is the ${room}. Grade these elements: ${elements.join(", ")}.`
-          : `This is the ${room}, but no photographs are available.`,
+        exterior
+          ? `These are exterior photographs of the property. Grade these elements: ${elements.join(", ")}.`
+          : photos.length > 0
+            ? `This is the ${room}. Grade these elements: ${elements.join(", ")}.`
+            : `This is the ${room}, but no photographs are available.`,
     },
   ];
 
@@ -118,7 +157,7 @@ export async function POST(request: Request) {
       // Telling dated from poor is a judgement that decides thousands of
       // dollars a room, and it is not a glance.
       output_config: { effort: "high", format: zodOutputFormat(ConditionSchema) },
-      system: SYSTEM,
+      system: exterior ? EXTERIOR_SYSTEM : SYSTEM,
       messages: [{ role: "user", content }],
     });
 

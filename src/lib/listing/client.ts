@@ -23,22 +23,28 @@ import type { ListingResult } from "@/lib/listing/types";
 const CLASSIFY_EDGE = 768;
 const CLASSIFY_BATCH = 6;
 
-export async function lookupListing(address: string): Promise<ListingResult> {
+/** Look a property up by street address or by listing URL. */
+export async function lookupListing(query: string): Promise<ListingResult> {
+  const isUrl = /^https?:\/\//i.test(query.trim());
   const response = await fetch("/api/listing", {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ address }),
+    body: JSON.stringify(isUrl ? { url: query } : { address: query }),
   });
 
   if (!response.ok) {
     const detail = await response.json().catch(() => ({}));
     throw new Error(
       detail.message ??
-        (detail.error === "not-configured"
-          ? "Listing import is not set up on this deployment."
-          : detail.error === "timeout"
-            ? "Zillow took too long to answer. Try again, or add the photos by hand."
-            : "Could not find that address."),
+        {
+          "not-configured": "Listing lookup is not set up on this deployment.",
+          timeout: "Zillow took too long to answer. Try again, or add the photos by hand.",
+          "no-address-in-link":
+            "That link does not contain an address. Paste the street address instead.",
+          "nothing-found":
+            "Nothing was found there. Try the full street address, with the city and state.",
+        }[detail.error as string] ??
+        "Could not find that address.",
     );
   }
 

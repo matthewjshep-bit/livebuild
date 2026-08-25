@@ -1,5 +1,6 @@
 import { OSM_ATTRIBUTION, fetchFootprint, geocode } from "@/lib/listing/footprint";
 import type { ListingFootprint, ListingResult } from "@/lib/listing/types";
+import { addressFromZillowUrl, looksLikeUrl } from "@/lib/listing/url";
 import { ListingError, fetchZillowListing } from "@/lib/listing/zillow";
 import { prepareFootprint } from "@/lib/plan/footprint";
 
@@ -15,7 +16,15 @@ import { prepareFootprint } from "@/lib/plan/footprint";
 export const maxDuration = 300;
 
 export async function GET() {
-  return Response.json({ available: Boolean(process.env.APIFY_TOKEN) });
+  // Two separate capabilities, reported separately because they fail
+  // separately. Scraping needs a paid token; putting the house in the right
+  // shape needs nothing at all, and an address on its own is worth quite a lot
+  // even when no photos can be fetched.
+  return Response.json({
+    available: Boolean(process.env.APIFY_TOKEN),
+    photos: Boolean(process.env.APIFY_TOKEN),
+    footprint: true,
+  });
 }
 
 /**
@@ -57,28 +66,69 @@ async function outlineFor(listing: ListingResult): Promise<ListingFootprint | nu
   }
 }
 
-export async function POST(request: Request) {
-  const token = process.env.APIFY_TOKEN;
-  if (!token) {
-    return Response.json({ error: "not-configured" }, { status: 501 });
+/**
+ * What can be known from an address alone, with no scraper.
+ *
+ * The building's real outline needs no API key, so an unconfigured deployment
+ * is not a dead end: the house still comes out the right shape and facing the
+ * right way, and the user fills in the bedroom count themselves. Returning a
+ * 501 here would throw that away because a *different* capability is missing.
+ */
+async function footprintOnly(query: string): Promise<Response> {
+  const address = looksLikeUrl(query) ? (addressFromZillowUrl(query) ?? "") : query;
+  if (address.length < 6) {
+    return Response.json({ error: "no-address-in-link" }, { status: 422 });
   }
 
-  let address: string;
+  const listing: ListingResult = {
+    address,
+    photos: [],
+    photoCount: 0,
+    facts: { beds: null, baths: null, sqft: null, yearBuilt: null, stories: null },
+    remarks: null,
+    status: null,
+    listPrice: null,
+    location: null,
+    footprint: null,
+  };
+
+  // A missing outline is not a failed lookup. OpenStreetMap's building
+  // coverage is genuinely absent in places, and its mirrors are genuinely
+  // flaky, so a hard error here would turn a bad minute on a free service into
+  // a dead end for the user. The address still names the property and the
+  // house still gets built - just as a rectangle, the way it always was.
+  return Response.json({ ...listing, footprint: await outlineFor(listing) });
+}
+
+export async function POST(request: Request) {
+  const token = process.env.APIFY_TOKEN;
+
+  let query: string;
   try {
     const body = await request.json();
-    address = typeof body?.address === "string" ? body.address.trim() : "";
+    const raw = body?.url ?? body?.address;
+    query = typeof raw === "string" ? raw.trim() : "";
   } catch {
     return Response.json({ error: "bad-request" }, { status: 400 });
   }
 
-  if (address.length < 6) {
+  if (query.length < 6) {
     return Response.json({ error: "bad-address" }, { status: 400 });
   }
 
+  if (!token) return footprintOnly(query);
+
   try {
-    const listing = await fetchZillowListing(address, token);
+    const listing = await fetchZillowListing(query, token);
     return Response.json({ ...listing, footprint: await outlineFor(listing) });
   } catch (error) {
+    // A failed scrape still leaves the map. Falling back to the outline turns
+    // "we could not find that listing" into a house of the right shape, which
+    // is a far better answer and costs one more request.
+    if (error instanceof ListingError && error.status === 404) {
+      const fallback = await footprintOnly(query);
+      if (fallback.ok) return fallback;
+    }
     if (error instanceof ListingError) {
       return Response.json(
         { error: "lookup-failed", message: error.message, detail: error.detail },

@@ -1,6 +1,7 @@
 import "server-only";
 
 import type { ListingResult } from "@/lib/listing/types";
+import { addressFromZillowUrl, looksLikeUrl } from "@/lib/listing/url";
 
 /**
  * Look up a listing by address and return its photos and facts.
@@ -48,16 +49,23 @@ export class ListingError extends Error {
 }
 
 export async function fetchZillowListing(
-  address: string,
+  /** A street address, or a Zillow listing URL. */
+  query: string,
   apifyToken: string,
 ): Promise<ListingResult> {
+  const isUrl = looksLikeUrl(query);
+  // A link identifies one listing exactly, which is why people paste them - so
+  // it is passed through as a link rather than reduced to its address and
+  // searched for again.
+  const input = isUrl ? { startUrls: [{ url: query.trim() }] } : { addresses: [query] };
+
   const response = await fetch(
     `https://api.apify.com/v2/acts/${APIFY_ACTOR}/run-sync-get-dataset-items` +
       `?token=${encodeURIComponent(apifyToken)}&timeout=180`,
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ addresses: [address] }),
+      body: JSON.stringify(input),
       signal: AbortSignal.timeout(200_000),
     },
   );
@@ -83,7 +91,11 @@ export async function fetchZillowListing(
   const photos = raw.map(bestPhotoUrl).filter(Boolean).slice(0, MAX_PHOTOS) as string[];
 
   return {
-    address,
+    // Prefer the address Zillow itself reports, so a pasted link comes back
+    // labelled with a real address rather than with the URL.
+    address: [item.address?.streetAddress, item.address?.city, item.address?.state]
+      .filter(Boolean)
+      .join(", ") || (isUrl ? (addressFromZillowUrl(query) ?? query) : query),
     photos,
     photoCount: raw.length,
     facts: {

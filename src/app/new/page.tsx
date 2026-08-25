@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { DescribeHouse } from "@/components/wizard/DescribeHouse";
 import { PhotoDrop, type ImportedPhoto } from "@/components/wizard/PhotoDrop";
+import { PropertyStart } from "@/components/wizard/PropertyStart";
 import { PhotoReview } from "@/components/wizard/PhotoReview";
 import { PlanBuilder } from "@/components/wizard/PlanBuilder";
 import { DepthEstimator, type DepthProgress } from "@/lib/depth/client";
@@ -116,14 +117,56 @@ export default function NewTourPage() {
       setFacts(listing.facts);
       setFootprint(listing.footprint);
       if (!label && listing.address) setLabel(listing.address);
-      const sentence = factsToDescription(listing.facts, listing.remarks);
-      setDescription(sentence);
-      setSpec(describeToSpec(sentence));
+
+      // Only describe the house when the listing actually said something about
+      // it. With every fact null, `factsToDescription` returns the bare word
+      // "house", which the parser dutifully reads as a kitchen and a living
+      // room - and a three-room house is a worse answer than admitting we do
+      // not know, because it looks like a considered one.
+      const saidSomething =
+        Boolean(listing.facts.beds || listing.facts.baths || listing.facts.sqft) ||
+        Boolean(listing.remarks);
+      if (saidSomething) {
+        const sentence = factsToDescription(listing.facts, listing.remarks);
+        setDescription(sentence);
+        setSpec(describeToSpec(sentence));
+      }
     },
     [addPhotos, label],
   );
 
   const tagged = useMemo(() => photos.filter((p) => p.roomLabel), [photos]);
+
+  /**
+   * What the lookup found, in the user's own terms.
+   *
+   * The build is about to spend a minute on this, and an address is a much
+   * weaker commitment than a folder of photographs - so it has to be visible
+   * that the right house was found before anyone presses go.
+   */
+  const found = useMemo(() => {
+    const items: string[] = [];
+    if (facts?.beds) items.push(`${facts.beds} bed`);
+    if (facts?.baths) items.push(`${facts.baths} bath`);
+    if (facts?.sqft) items.push(`${facts.sqft.toLocaleString()} sqft`);
+    if (facts?.yearBuilt) items.push(`built ${facts.yearBuilt}`);
+    if (footprint) items.push(`real outline, ${Math.round(footprint.areaSqft)} sqft ground floor`);
+    if (photos.length > 0) items.push(`${photos.length} photos`);
+    return items;
+  }, [facts, footprint, photos.length]);
+
+  /**
+   * Enough to build something.
+   *
+   * Any one of these is enough on its own: photographs, the building's outline,
+   * the listing's facts, or a typed description. Requiring photographs was the
+   * old rule and it is what forced an upload before anything could happen.
+   */
+  const canBuild =
+    photos.length > 0 ||
+    footprint !== null ||
+    Boolean(facts?.sqft || facts?.beds) ||
+    description.trim().length > 0;
 
   /**
    * Put the labelled photos into a plan's rooms.
@@ -289,7 +332,20 @@ export default function NewTourPage() {
       .filter((l) => !describedLabels.has(l))
       .map((l) => ({ label: l, level: 0 }));
     const source = [...described, ...extras];
-    const rooms = source.length > 0 ? source : roomLabels.map((l) => ({ label: l, level: 0 }));
+    let rooms = source.length > 0 ? source : roomLabels.map((l) => ({ label: l, level: 0 }));
+
+    // An address with no photographs, no listing facts and no description still
+    // has to produce a house. A plain three-bed is the most common home in the
+    // country and is a far better starting point than an empty outline - the
+    // shape is right, and the rooms inside it are the part the user can fix in
+    // the builder in seconds.
+    if (rooms.length === 0) {
+      rooms = [
+        "Living Room", "Kitchen", "Dining Room", "Primary Bedroom",
+        "Bedroom 2", "Bedroom 3", "Bathroom", "Bathroom 2", "Hallway",
+      ].map((label) => ({ label, level: 0 }));
+      gathered.push("No room details were available, so this is a typical three-bedroom plan — correct it below.");
+    }
 
     const adjacency =
       (build as unknown as { adjacency?: Array<[string, string]> }).adjacency ?? [];
@@ -455,32 +511,70 @@ export default function NewTourPage() {
         {stage === "photos" && (
           <>
             <div className="mx-auto mb-6 max-w-3xl text-center">
-              <h1 className="text-2xl font-semibold tracking-tight">Make a tour</h1>
+              <h1 className="text-2xl font-semibold tracking-tight">Make a house</h1>
               <p className="mt-2 text-sm leading-relaxed text-mist-400">
-                Drop in your photos and that is genuinely it &ndash; the rooms, the layout and
-                the 3D are all worked out from them. Everything below is optional, and only
-                makes the result closer to your house.
+                Give it an address or a listing link and it will find the photos, the room
+                counts and the building&rsquo;s real outline, then build the house from them.
+                Photos of your own are optional.
               </p>
             </div>
 
-            <PhotoDrop
-              photos={photos}
-              onAdd={addPhotos}
-              onRemove={(id) => {
-                const photo = photos.find((p) => p.id === id);
-                setPhotos((c) => c.filter((p) => p.id !== id));
-                if (photo) void deleteMedia(refToKey(photo.ref));
-              }}
-              onImported={importListing}
-            />
+            <PropertyStart onImported={importListing} />
 
-            {photos.length > 0 && (
+            {/* What the address actually turned up, before anything is built.
+                Saying so here is what makes the next click feel safe. */}
+            {found.length > 0 && (
+              <div className="mx-auto mt-5 max-w-2xl rounded-lg border border-ink-600 bg-ink-800 px-4 py-3">
+                <div className="text-xs font-medium text-mist-200">
+                  {label || "Found this property"}
+                </div>
+                <ul className="mt-1.5 flex flex-wrap gap-x-4 gap-y-1 text-xs text-mist-400">
+                  {found.map((item) => (
+                    <li key={item}>{item}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
+
+            {/* Photos are a way in of their own, and after a lookup they are the
+                way to fill the house in. Folded away until wanted either way. */}
+            <details
+              className="mx-auto mt-5 max-w-2xl rounded-lg border border-ink-600 bg-ink-800"
+              open={photos.length > 0}
+            >
+              <summary className="cursor-pointer px-4 py-3 text-sm text-mist-200">
+                {photos.length > 0
+                  ? `${photos.length} photo${photos.length === 1 ? "" : "s"}`
+                  : "Add photos"}{" "}
+                <span className="text-mist-400">
+                  &mdash; {canBuild
+                    ? "optional; they add the 3D walk-through and let it read the condition"
+                    : "or start from photos alone, with no address at all"}
+                </span>
+              </summary>
+              <div className="border-t border-ink-600 p-4">
+                <PhotoDrop
+                  photos={photos}
+                  onAdd={addPhotos}
+                  onRemove={(id) => {
+                    const photo = photos.find((p) => p.id === id);
+                    setPhotos((c) => c.filter((p) => p.id !== id));
+                    if (photo) void deleteMedia(refToKey(photo.ref));
+                  }}
+                />
+              </div>
+            </details>
+
+            {canBuild && (
               <>
-                <details className="mx-auto mt-6 max-w-3xl rounded-lg border border-ink-600 bg-ink-800">
+                <details className="mx-auto mt-4 max-w-2xl rounded-lg border border-ink-600 bg-ink-800">
                   <summary className="cursor-pointer px-4 py-3 text-sm text-mist-200">
-                    Describe the house in a sentence{" "}
+                    Describe the house{" "}
                     <span className="text-mist-400">
-                      &mdash; optional, helps it get the bedrooms right
+                      &mdash;{" "}
+                      {facts?.beds
+                        ? "read from the listing; correct it if it is wrong"
+                        : "optional, but it is how it knows the bedroom count"}
                     </span>
                   </summary>
                   <div className="border-t border-ink-600 p-4">
@@ -495,12 +589,12 @@ export default function NewTourPage() {
                   </div>
                 </details>
 
-                <div className="mx-auto mt-6 flex max-w-3xl justify-center">
+                <div className="mx-auto mt-6 flex max-w-2xl justify-center">
                   <button
                     onClick={() => void build()}
                     className="rounded-lg bg-accent px-8 py-3 text-sm font-semibold text-ink-900 transition hover:brightness-110"
                   >
-                    Build my tour
+                    {photos.length > 0 ? "Build my tour" : "Build the house"}
                   </button>
                 </div>
               </>

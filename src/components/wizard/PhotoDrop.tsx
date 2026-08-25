@@ -2,7 +2,6 @@
 
 import { useCallback, useRef, useState } from "react";
 
-import { ListingImport } from "@/components/wizard/ListingImport";
 import type { ListingResult } from "@/lib/listing/types";
 
 export type ImportedPhoto = {
@@ -39,13 +38,11 @@ export function PhotoDrop({
   photos,
   onAdd,
   onRemove,
-  onImported,
 }: {
   photos: ImportedPhoto[];
   onAdd: (files: File[]) => Promise<void> | void;
   onRemove: (id: string) => void;
   /** Photos plus the listing facts that came with them. */
-  onImported: (files: File[], listing: ListingResult) => Promise<void> | void;
 }) {
   const [dragging, setDragging] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -112,7 +109,6 @@ export function PhotoDrop({
         />
       </div>
 
-      <ListingImport onImported={onImported} />
 
       {photos.length > 0 && (
         <>

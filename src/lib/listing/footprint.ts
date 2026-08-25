@@ -51,8 +51,16 @@ const SEARCH_RADIUS_M = 30;
  */
 const USER_AGENT = "livebuild.ai/1.0";
 
-/** Overpass is free and busy. These are the answers that mean "try again". */
-const RETRYABLE = new Set([429, 502, 503, 504]);
+/**
+ * Overpass is free and busy. These are the answers that mean "try again".
+ *
+ * 500 belongs here despite looking like a bug on their side: the mirrors return
+ * it when overloaded, and treating it as fatal made one mirror's bad minute
+ * abandon the whole lookup. Measured back-to-back, the main instance answered
+ * 200, 200 and 504 in fifteen seconds - flakiness is the normal condition here,
+ * not an incident.
+ */
+const RETRYABLE = new Set([429, 500, 502, 503, 504]);
 
 export type FetchedFootprint = {
   /** The outline as [lat, lon] pairs, unclosed. */
@@ -66,10 +74,17 @@ export type FetchedFootprint = {
 async function overpass(query: string): Promise<unknown> {
   let lastError: unknown = null;
 
-  // Two passes over the mirrors. A busy instance that answers 504 on the first
-  // attempt very often answers normally a few seconds later, and giving up
-  // after one round trip would report "no building" for a house that is mapped.
+  // Two passes over the mirrors, impatient then patient.
+  //
+  // A healthy Overpass answers this query in one to four seconds, so the first
+  // pass gives each mirror a short leash and moves on - one hung mirror was
+  // making an address take 58 seconds behind a single spinner, most of it spent
+  // waiting on an instance that was never going to answer. The second pass
+  // waits properly, because a busy instance that fails once often succeeds a
+  // few seconds later and giving up would report "no building" for a house that
+  // is mapped.
   for (let attempt = 0; attempt < 2; attempt++) {
+    const budget = attempt === 0 ? 12_000 : 45_000;
     for (const mirror of MIRRORS) {
       try {
         const response = await fetch(mirror, {
@@ -79,7 +94,7 @@ async function overpass(query: string): Promise<unknown> {
             "User-Agent": USER_AGENT,
           },
           body: `data=${encodeURIComponent(query)}`,
-          signal: AbortSignal.timeout(45_000),
+          signal: AbortSignal.timeout(budget),
         });
         if (!response.ok) {
           lastError = new Error(`Overpass ${response.status}`);

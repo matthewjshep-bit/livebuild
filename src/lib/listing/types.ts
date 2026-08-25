@@ -33,6 +33,14 @@ export type ListingFootprint = {
   areaSqft: number;
   /** How far the building sits off north, so the model can face the street. */
   rotationDeg: number;
+  /**
+   * Storeys, worked out from the listing's floor area against the footprint.
+   *
+   * Zillow's own field is usually missing, so this is derived rather than
+   * reported - and it is what stops a two-storey house being built as a
+   * bungalow with twice the floor plan.
+   */
+  storeys: number;
   wayId: number;
   attribution: string;
 };
@@ -66,6 +74,10 @@ export function factsToDescription(facts: ListingFacts, remarks?: string | null)
 
   let sentence = parts.length > 0 ? parts.join(" ") : "house";
   if (facts.sqft) sentence += `, ${facts.sqft} sqft`;
+  // Written as words rather than passed as a number, so the storey count goes
+  // through the same parser as everything else - which already knows to put the
+  // bedrooms upstairs and stairs on both floors.
+  if (facts.stories && facts.stories >= 2) sentence += `, ${facts.stories} storeys`;
   if (facts.yearBuilt) sentence += `, built ${facts.yearBuilt}`;
 
   // The agent's own remarks are where rooms actually get named - "formal dining

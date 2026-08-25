@@ -26,6 +26,31 @@ const MAX_PHOTOS = 40;
  * import downloads every one of them. Taking the widest under 1536 keeps a set
  * of forty photos to a sane download without visibly costing detail.
  */
+/**
+ * Zillow's stand-in for a property with no photographs of its own.
+ *
+ * An off-market home often has a single "photo" that is a Google Street View
+ * image, fetched through Google's Static Street View API with **Zillow's** key
+ * and signature. Three separate reasons not to take it:
+ *
+ * - It is not a photograph of the property in any useful sense. It is the kerb,
+ *   from the road, and it shows nothing of the inside.
+ * - The URL is signed with Zillow's own Google API key and quota. Theirs to
+ *   spend on their page, not ours to spend from a server.
+ * - It is Google Maps imagery, and their terms restrict derivative works. That
+ *   is the same reason satellite tiles were rejected as a source for building
+ *   outlines.
+ *
+ * The photo proxy already refuses it - its allowlist is Zillow's own image
+ * hosts - so leaving it in the list only produced a photo that always failed to
+ * download and a count of "1" for a property with no pictures. Dropping it here
+ * reports zero, which is the honest answer and one the rest of the flow already
+ * handles: the house still gets built from its outline and its room counts.
+ */
+function isPlaceholderPhoto(url: string): boolean {
+  return /(^|\/\/)maps\.googleapis\.com\//i.test(url) || /\/streetview\?/i.test(url);
+}
+
 function bestPhotoUrl(photo: {
   mixedSources?: { jpeg?: Array<{ url: string; width: number }> };
   url?: string;
@@ -88,7 +113,9 @@ export async function fetchZillowListing(
   }
 
   const raw = (item.photos?.length ? item.photos : item.responsivePhotos) ?? [];
-  const photos = raw.map(bestPhotoUrl).filter(Boolean).slice(0, MAX_PHOTOS) as string[];
+  const photos = (raw.map(bestPhotoUrl).filter(Boolean) as string[])
+    .filter((url) => !isPlaceholderPhoto(url))
+    .slice(0, MAX_PHOTOS);
 
   return {
     // Prefer the address Zillow itself reports, so a pasted link comes back
@@ -97,7 +124,9 @@ export async function fetchZillowListing(
       .filter(Boolean)
       .join(", ") || (isUrl ? (addressFromZillowUrl(query) ?? query) : query),
     photos,
-    photoCount: raw.length,
+    // What the listing actually holds, after the Street View stand-in is
+    // discarded - so "0 of 0" is reported rather than "0 of 1".
+    photoCount: photos.length,
     facts: {
       beds: Number(item.bedrooms) || null,
       baths: Number(item.bathrooms) || null,

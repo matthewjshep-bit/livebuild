@@ -127,7 +127,18 @@ export default function NewTourPage() {
         Boolean(listing.facts.beds || listing.facts.baths || listing.facts.sqft) ||
         Boolean(listing.remarks);
       if (saidSomething) {
-        const sentence = factsToDescription(listing.facts, listing.remarks);
+        // The storey count is usually absent from the listing and worked out
+        // instead from its floor area against the building's footprint. It
+        // matters here rather than only for scale: it is what puts the bedrooms
+        // upstairs instead of spreading them across one enormous floor.
+        const storeys = Math.max(
+          listing.footprint?.storeys ?? 1,
+          Math.round(listing.facts.stories ?? 1),
+        );
+        const sentence = factsToDescription(
+          { ...listing.facts, stories: storeys > 1 ? storeys : listing.facts.stories },
+          listing.remarks,
+        );
         setDescription(sentence);
         setSpec(describeToSpec(sentence));
       }
@@ -353,7 +364,13 @@ export default function NewTourPage() {
     // The shape of the house is the thing a viewer recognises, and it is the
     // one part of this that is measured rather than inferred - so it wins over
     // the invented rectangle whenever it exists.
-    const storeys = Math.max(1, new Set(rooms.map((r) => r.level)).size);
+    // Trust the count derived from the two areas over the number of levels the
+    // room list happens to use - a description that never mentioned an upstairs
+    // would otherwise squash a two-storey house onto one floor.
+    const storeys = Math.max(
+      footprint?.storeys ?? 1,
+      new Set(rooms.map((r) => r.level)).size,
+    );
     const built = footprint
       ? layoutFromFootprint(
           { rooms },

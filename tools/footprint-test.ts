@@ -11,6 +11,7 @@ import { autoOpenings, boundsOf } from "../src/lib/plan/autolayout";
 import {
   decompose,
   dominantAngle,
+  inferStoreys,
   layoutFromFootprint,
   packIntoFootprint,
   prepareFootprint,
@@ -284,6 +285,28 @@ for (const [name, fixture] of Object.entries(fixtures)) {
     `${coarse.rects.length} rects for 4 rooms vs ${detailed.rects.length} for 12`);
   check("a large house keeps the building's detail", detailed.rects.length >= 2,
     `got ${detailed.rects.length}`);
+}
+
+// ---------------------------------------------------------------- storeys
+
+// Storeys are worked out from the listing's floor area against the building's
+// footprint, because Zillow's own storey field is usually absent - a real
+// lookup came back with no storey information at all. Getting this wrong is
+// expensive in a way that is not obvious: the outline is the ground floor, so
+// treating a two-storey house as a bungalow stretches the building by about
+// 40% in each direction.
+{
+  check("a bungalow is one storey", inferStoreys(1600, 1650) === 1,
+    `got ${inferStoreys(1600, 1650)}`);
+  check("a two-storey house is two", inferStoreys(3000, 1500) === 2,
+    `got ${inferStoreys(3000, 1500)}`);
+  check("a three-storey townhouse is three", inferStoreys(3600, 1200) === 3,
+    `got ${inferStoreys(3600, 1200)}`);
+  // Ambiguity resolves downwards: leaving the outline alone is the safer error.
+  check("a house with a small extension is still one storey",
+    inferStoreys(1800, 1300) === 1, `got ${inferStoreys(1800, 1300)}`);
+  check("missing numbers mean one storey",
+    inferStoreys(0, 1500) === 1 && inferStoreys(1500, 0) === 1);
 }
 
 // ----------------------------------------------------------------- scaling

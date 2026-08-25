@@ -264,6 +264,29 @@ function polygonArea(poly: Vec2[]): number {
 }
 
 /**
+ * How many storeys the building has, from the two areas we already know.
+ *
+ * Zillow does not reliably report this - on a real lookup `resoFacts` carried
+ * no storey field at all - and it matters more than it sounds. The outline is
+ * the *ground floor*, so scaling it to a two-storey house's total living area
+ * stretches the building by about 40% in each direction and produces a house
+ * far bigger than the one on the street.
+ *
+ * The listing's floor area and the map's footprint area are independent
+ * measurements of the same building, and their ratio is roughly the number of
+ * floors. That is a better answer than a field that is usually absent, and it
+ * degrades honestly: a ratio near one means a bungalow, and anything ambiguous
+ * lands on the smaller count, which errs towards leaving the outline alone.
+ */
+export function inferStoreys(livingSqft: number, footprintSqft: number): number {
+  if (!(livingSqft > 100) || !(footprintSqft > 100)) return 1;
+  const ratio = livingSqft / footprintSqft;
+  if (ratio >= 2.4) return 3;
+  if (ratio >= 1.45) return 2;
+  return 1;
+}
+
+/**
  * A raw OSM ring in, a packable footprint out.
  *
  * Scaling to a known living area is the last step and deliberately optional:

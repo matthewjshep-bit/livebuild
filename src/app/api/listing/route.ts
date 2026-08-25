@@ -2,7 +2,7 @@ import { OSM_ATTRIBUTION, fetchFootprint, geocode } from "@/lib/listing/footprin
 import type { ListingFootprint, ListingResult } from "@/lib/listing/types";
 import { addressFromZillowUrl, looksLikeUrl } from "@/lib/listing/url";
 import { ListingError, fetchZillowListing } from "@/lib/listing/zillow";
-import { prepareFootprint } from "@/lib/plan/footprint";
+import { inferStoreys, prepareFootprint } from "@/lib/plan/footprint";
 
 /**
  * Address in, listing photos and facts out.
@@ -43,11 +43,16 @@ async function outlineFor(listing: ListingResult): Promise<ListingFootprint | nu
     const found = await fetchFootprint(point.lat, point.lon);
     if (!found) return null;
 
-    // The outline is the ground floor. Dividing the listing's living area by the
-    // storey count is what keeps the two consistent - scaling a bungalow's
-    // footprint to a two-storey house's total area would double its length and
-    // width and produce a building twice the size of the real one.
-    const stories = Math.max(1, Math.round(listing.facts.stories ?? 1));
+    // The outline is the ground floor, so the listing's total area has to be
+    // divided by the number of floors standing on it. Zillow's own storey field
+    // is usually absent, so it is only a hint - the areas decide.
+    const raw = prepareFootprint(found.ring);
+    const stories = listing.facts.sqft
+      ? Math.max(
+          Math.round(listing.facts.stories ?? 1),
+          inferStoreys(listing.facts.sqft, raw.areaSqft),
+        )
+      : Math.max(1, Math.round(listing.facts.stories ?? 1));
     const groundSqft = listing.facts.sqft ? listing.facts.sqft / stories : undefined;
 
     const prepared = prepareFootprint(found.ring, groundSqft);
@@ -58,6 +63,7 @@ async function outlineFor(listing: ListingResult): Promise<ListingFootprint | nu
       rects: prepared.rects,
       areaSqft: prepared.areaSqft,
       rotationDeg: prepared.rotationDeg,
+      storeys: stories,
       wayId: found.wayId,
       attribution: OSM_ATTRIBUTION,
     };

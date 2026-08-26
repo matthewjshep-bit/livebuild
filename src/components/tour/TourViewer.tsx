@@ -358,7 +358,19 @@ export function TourViewer({
           // No tone mapping. The default filmic curve exists to tame bright
           // highlights in photographic renders, and here it just drags white
           // walls down to grey - the whole palette is already inside range.
-          gl={{ antialias: true, toneMapping: THREE.NoToneMapping }}
+          gl={{ antialias: true }}
+          onCreated={({ gl }) => {
+            // Filmic tone mapping, which was switched off earlier in the build.
+            //
+            // It was turned off because it dragged the flat white walls to
+            // grey, and with nothing but flat colour on screen that was the
+            // right call. Once the surfaces carry grain the trade reverses:
+            // the filmic curve is what stops a sunlit floor clipping to a
+            // white slab and gives the shading somewhere to go. The exposure
+            // lift puts the whites back where they were.
+            gl.toneMapping = THREE.ACESFilmicToneMapping;
+            gl.toneMappingExposure = 1.0;
+          }}
           className="touch-none"
         >
           <color attach="background" args={["#0f1216"]} />

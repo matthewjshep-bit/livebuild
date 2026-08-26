@@ -10,6 +10,14 @@ import { type Element } from "@/lib/bom/condition";
 import { elementForPiece, type Pick } from "@/lib/bom/pickable";
 import { furnishRoom } from "@/lib/model/furniture";
 import { BASEBOARD_DEPTH, BASEBOARD_HEIGHT, PALETTE, floorColour } from "@/lib/model/materials";
+import {
+  TEXTURE_METRES,
+  applyWorldUvs,
+  canTexture,
+  floorFinish,
+  floorTexture,
+  wallTexture,
+} from "@/lib/model/textures";
 import { type WallSolid, wallsForLevel } from "@/lib/model/walls";
 import { wallPiecesAround, windowsForLevel } from "@/lib/model/windows";
 import { boundsOf } from "@/lib/plan/autolayout";
@@ -292,12 +300,35 @@ function LevelModel({
       exterior,
       interior: merged(interiorParts),
       surfaces: [...surfaces.values()]
-        .map((entry) => ({ ...entry, geometry: merged(entry.parts) }))
+        .map((entry) => {
+          const geometry = merged(entry.parts);
+          // Floors are read off the plan and walls off their own face, so the
+          // two need different tile sizes to end up at the same apparent scale.
+          if (geometry) {
+            applyWorldUvs(
+              geometry,
+              entry.element === "floor" ? TEXTURE_METRES.floor : TEXTURE_METRES.wall,
+            );
+          }
+          const room = rooms.find((r) => r.id === entry.roomId);
+          return {
+            ...entry,
+            geometry,
+            texture: canTexture()
+              ? entry.element === "floor"
+                ? floorTexture(floorFinish(room?.label ?? ""), entry.colour)
+                : entry.element === "walls" || entry.element === "ceiling"
+                  ? wallTexture(entry.colour)
+                  : null
+              : null,
+          };
+        })
         .filter((entry) => entry.geometry) as Array<{
           roomId: string;
           element: Element;
           colour: string;
           geometry: THREE.BufferGeometry;
+          texture: THREE.Texture | null;
         }>,
       frames: merged(frameParts),
       glass: merged(glassParts),
@@ -335,8 +366,11 @@ function LevelModel({
             }}
           >
             <meshStandardMaterial
-              color={surface.colour}
-              roughness={surface.element === "floor" ? 0.9 : 0.85}
+              // The texture already carries the colour, so tinting it again
+              // would darken every surface by its own shade.
+              color={surface.texture ? "#ffffff" : surface.colour}
+              map={surface.texture ?? undefined}
+              roughness={surface.element === "floor" ? 0.78 : 0.9}
               metalness={0}
               transparent
               opacity={opacity}

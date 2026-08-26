@@ -5,6 +5,7 @@ import * as THREE from "three";
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { CameraRig, type TransitionState, type ViewState } from "@/components/tour/CameraRig";
+import { WalkControls, type WalkState } from "@/components/tour/WalkControls";
 import { BomPane } from "@/components/bom/BomPane";
 import { Model } from "@/components/tour/Model";
 import { buildBom } from "@/lib/bom/build";
@@ -70,6 +71,10 @@ function Scene({
   onSelectNode: (id: string) => void;
 }) {
   const [dollOpacity, setDollOpacity] = useState(1);
+  // Which storey the walker is standing on, which changes under them on the
+  // stairs rather than being chosen from the toolbar.
+  const [walkLevel, setWalkLevel] = useState(0);
+  const walkState = useRef<WalkState>({ x: 0, y: 0, level: 0, yaw: 0 });
   const aspects = useRef(new Map<string, number>());
   const reportAspect = useCallback((nodeId: string, aspect: number) => {
     aspects.current.set(nodeId, aspect);
@@ -131,12 +136,23 @@ function Scene({
 
       <Model
         plan={property.plan}
-        opacity={dollOpacity}
+        // Inside the house the walls are the thing you are looking at, so the
+        // dollhouse's see-through shell would be exactly wrong.
+        opacity={view.mode === "walk" ? 1 : dollOpacity}
         showLabels={view.mode === "dollhouse"}
         displayUnits={property.displayUnits}
-        onlyLevel={onlyLevel}
+        onlyLevel={view.mode === "walk" ? walkLevel : onlyLevel}
         pick={pick}
         onPick={onPick}
+        walking={view.mode === "walk"}
+      />
+
+      <WalkControls
+        plan={property.plan}
+        level={walkLevel}
+        onLevelChange={setWalkLevel}
+        state={walkState}
+        enabled={view.mode === "walk"}
       />
 
       {resident.map((node) => (
@@ -162,7 +178,9 @@ function Scene({
         plan={property.plan}
         nodes={property.nodes}
         activeNodeId={view.mode === "node" ? view.nodeId : null}
-        mode={view.mode}
+        // Rings are for stepping between photographs; on foot you simply walk.
+        mode={view.mode === "walk" ? "dollhouse" : view.mode}
+        hidden={view.mode === "walk"}
         onlyLevel={onlyLevel}
         onSelect={onSelectNode}
       />
@@ -225,6 +243,17 @@ export function TourViewer({
    * opens the link.
    */
   const [pick, setPick] = useState<Pick | null>(null);
+
+  // Whether the browser currently holds the mouse. The prompt has to go the
+  // moment it does, or it sits in the middle of the room you are walking
+  // through - and it has to come back on Esc, which the user can press at any
+  // time without telling us.
+  const [locked, setLocked] = useState(false);
+  useEffect(() => {
+    const onChange = () => setLocked(Boolean(document.pointerLockElement));
+    document.addEventListener("pointerlockchange", onChange);
+    return () => document.removeEventListener("pointerlockchange", onChange);
+  }, []);
 
   const bom = useMemo(
     () =>
@@ -330,6 +359,13 @@ export function TourViewer({
           >
             Dollhouse
           </button>
+          <button
+            onClick={() => setView({ mode: "walk" })}
+            disabled={view.mode === "walk"}
+            className="rounded border border-ink-500 px-3 py-1 text-xs text-mist-200 transition hover:bg-ink-600 disabled:opacity-35"
+          >
+            Walk
+          </button>
           {onPropertyChange && <PublishPanel property={property} />}
           {onPropertyChange && (
             <a
@@ -412,10 +448,42 @@ export function TourViewer({
           onSelectNode={selectNode}
         />
 
+        {/*
+          The surface that takes pointer lock.
+          
+          A browser will only capture the mouse in response to a real click, so
+          walking needs something to click before it can begin. Making that an
+          explicit panel rather than the bare canvas also gives somewhere to put
+          the controls, which are not guessable - nothing on screen says WASD.
+        */}
+        {view.mode === "walk" && !locked && (
+          <div
+            data-walk-lock
+            className="absolute inset-0 grid place-items-center"
+            style={{ cursor: "crosshair" }}
+          >
+            <div className="rounded-lg bg-ink-800/85 px-5 py-4 text-center backdrop-blur">
+              <p className="text-sm text-mist-200">Click to look around</p>
+              <p className="mt-1 text-[11px] leading-relaxed text-mist-400">
+                W A S D or the arrow keys to move · shift to hurry
+                <br />
+                Esc to let the pointer go
+              </p>
+            </div>
+          </div>
+        )}
+
+        {/* A crosshair, so it is obvious where the pointer went. */}
+        {view.mode === "walk" && locked && (
+          <div className="pointer-events-none absolute left-1/2 top-1/2 h-1 w-1 -translate-x-1/2 -translate-y-1/2 rounded-full bg-mist-200/60" />
+        )}
+
         <div className="pointer-events-none absolute bottom-3 left-1/2 -translate-x-1/2 rounded bg-ink-800/85 px-3 py-1.5 text-[11px] text-mist-400 backdrop-blur">
           {view.mode === "dollhouse"
             ? "Drag to orbit · scroll to zoom · click a ring to step inside"
-            : "Drag to look · move the pointer to lean · click a ring to walk there"}
+            : view.mode === "walk"
+              ? "Walking · W A S D to move · Esc to release the pointer"
+              : "Drag to look · move the pointer to lean · click a ring to walk there"}
         </div>
 
         {property.nodes.length === 0 && (

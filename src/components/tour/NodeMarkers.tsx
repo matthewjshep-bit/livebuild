@@ -156,6 +156,7 @@ export function NodeMarkers({
   mode,
   onlyLevel,
   onSelect,
+  hidden = false,
 }: {
   plan: Plan;
   nodes: TourNode[];
@@ -163,7 +164,10 @@ export function NodeMarkers({
   mode: "dollhouse" | "node";
   onlyLevel?: number | null;
   onSelect: (id: string) => void;
+  /** Walking on foot: the rings are a way of moving you no longer need. */
+  hidden?: boolean;
 }) {
+  if (hidden) return null;
   const active = nodes.find((n) => n.id === activeNodeId) ?? null;
 
   const onShownFloor = useMemo(() => {

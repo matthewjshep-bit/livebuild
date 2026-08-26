@@ -83,10 +83,12 @@ function ExteriorShell({
   walls,
   baseY,
   opacity,
+  walking,
 }: {
   walls: WallSolid[];
   baseY: number;
   opacity: number;
+  walking: boolean;
 }) {
   const groups = useMemo(() => {
     const byFacing = new Map<string, { normal: [number, number]; parts: THREE.BufferGeometry[] }>();
@@ -132,7 +134,9 @@ function ExteriorShell({
       // Eased across the grazing angle so nothing pops as the view swings, and
       // never quite to zero - a ghost of the elevation keeps the building's
       // outline readable.
-      material.opacity = opacity * THREE.MathUtils.clamp(-toCamera / 2.5, 0.05, 1);
+      material.opacity = walking
+        ? opacity
+        : opacity * THREE.MathUtils.clamp(-toCamera / 2.5, 0.05, 1);
     }
   });
 
@@ -162,6 +166,7 @@ function LevelModel({
   level,
   opacity,
   furnished,
+  walking,
   pick,
   onPick,
   onHover,
@@ -170,6 +175,7 @@ function LevelModel({
   level: number;
   opacity: number;
   furnished: boolean;
+  walking: boolean;
   pick: Pick | null;
   onPick?: (pick: Pick) => void;
   onHover?: (pick: Pick | null) => void;
@@ -244,6 +250,19 @@ function LevelModel({
         floorColour(room.label),
         boxGeometry([b.x0 + w / 2, baseY - SLAB / 2, b.y0 + d / 2], [w, SLAB, d]),
       );
+
+      // A ceiling, but only when someone is under it.
+      if (walking) {
+        addSurface(
+          room.id,
+          "ceiling",
+          PALETTE.ceiling,
+          boxGeometry(
+            [b.x0 + w / 2, baseY + room.ceilingHeight + SLAB / 2, b.y0 + d / 2],
+            [w, SLAB, d],
+          ),
+        );
+      }
 
       // A baseboard around the room. Small, and it is most of what stops a
       // wall meeting a floor looking like two flat planes intersecting.
@@ -333,7 +352,7 @@ function LevelModel({
       frames: merged(frameParts),
       glass: merged(glassParts),
     };
-  }, [plan, level, baseY, furnished]);
+  }, [plan, level, baseY, furnished, walking]);
 
   return (
     <group>
@@ -396,7 +415,7 @@ function LevelModel({
         </mesh>
       )}
 
-      <ExteriorShell walls={built.exterior} baseY={baseY} opacity={opacity} />
+      <ExteriorShell walls={built.exterior} baseY={baseY} opacity={opacity} walking={walking} />
 
       {built.frames && (
         <mesh geometry={built.frames}>
@@ -435,6 +454,7 @@ export function Model({
   pick = null,
   onPick,
   onHover,
+  walking = false,
 }: {
   plan: Plan;
   opacity: number;
@@ -442,6 +462,16 @@ export function Model({
   displayUnits: "ft" | "m";
   onlyLevel?: number | null;
   furnished?: boolean;
+  /**
+   * True when the camera is inside the house on foot.
+   *
+   * Two things have to change. A dollhouse has no ceilings - they would hide
+   * everything it exists to show - and standing in a room without one you look
+   * up into the page background, which is the single most obvious way to tell
+   * a model from a building. And the exterior shell must stop fading, since
+   * from inside there is nothing in the way to fade.
+   */
+  walking?: boolean;
   /** What is currently selected, so it can be lit. */
   pick?: Pick | null;
   /** Absent means the model is not interrogable - no cursor, no picking. */
@@ -470,6 +500,7 @@ export function Model({
           level={level}
           opacity={opacity}
           furnished={furnished}
+          walking={walking}
           pick={pick}
           onPick={onPick}
           onHover={onHover}

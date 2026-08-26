@@ -9,7 +9,9 @@ import type { Plan, TourNode } from "@/lib/schema";
 
 export type ViewState =
   | { mode: "dollhouse" }
-  | { mode: "node"; nodeId: string };
+  | { mode: "node"; nodeId: string }
+  /** First person, on foot. The walker owns the camera in this mode. */
+  | { mode: "walk" };
 
 const TRANSITION_MS = 850;
 
@@ -163,12 +165,15 @@ export function CameraRig({
     const element = gl.domElement;
 
     const onPointerDown = (e: PointerEvent) => {
+      // Orbit and pointer-lock look would both be steering at once otherwise.
+      if (view.mode === "walk") return;
       dragging.current = true;
       lastPointer.current = { x: e.clientX, y: e.clientY };
       element.setPointerCapture(e.pointerId);
     };
 
     const onPointerMove = (e: PointerEvent) => {
+      if (view.mode === "walk") return;
       const rect = element.getBoundingClientRect();
 
       if (view.mode === "dollhouse") {
@@ -252,6 +257,10 @@ export function CameraRig({
   };
 
   useFrame(() => {
+    // Walking hands the camera to WalkControls entirely. Two things writing
+    // camera.position on the same frame is a fight the user sees as jitter.
+    if (view.mode === "walk") return;
+
     const elapsed = performance.now() - startedAt.current;
     const raw = THREE.MathUtils.clamp(elapsed / TRANSITION_MS, 0, 1);
     const t = easeInOutCubic(raw);

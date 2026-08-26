@@ -118,6 +118,32 @@ export type SplatRef = z.infer<typeof SplatRef>;
  */
 export const Grade = z.enum(["good", "fair", "dated", "poor", "not_visible"]);
 
+/**
+ * Where the house is, and which way it points.
+ *
+ * Everything else in the model is local geometry; daylight is the one thing
+ * that depends on the actual site. Both fields come free from the address
+ * lookup - the parcel's coordinates from the listing, and the bearing from the
+ * angle the building had to be rotated to square it up - so a house built from
+ * an address gets a sun that is genuinely correct for it rather than plausible.
+ *
+ * Nullish because a house drawn by hand or built from photographs has no site,
+ * and the lighting falls back to a fixed studio key light for those.
+ */
+export const Site = z.object({
+  lat: z.number().min(-90).max(90),
+  lon: z.number().min(-180).max(180),
+  /**
+   * Compass bearing of the plan's +x axis, in degrees.
+   *
+   * The footprint is projected with +x east and +y south, then rotated by the
+   * building's dominant wall angle to square it up - so +x ends up that many
+   * degrees round from east.
+   */
+  planXBearing: z.number().default(90),
+});
+export type Site = z.infer<typeof Site>;
+
 export const Property = z.object({
   id: z.string().min(1),
   label: z.string().default(""),
@@ -132,6 +158,8 @@ export const Property = z.object({
   houseCondition: z.record(z.string(), Grade).default({}),
   /** Rate-card overrides, keyed by rate id. Absent means the default. */
   rates: z.record(z.string(), z.number()).default({}),
+  /** Where on earth the house is, and which way it faces. */
+  site: Site.nullish(),
 });
 export type Property = z.infer<typeof Property>;
 

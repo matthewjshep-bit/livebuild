@@ -5,6 +5,8 @@ import * as THREE from "three";
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { CameraRig, type TransitionState, type ViewState } from "@/components/tour/CameraRig";
+import { Lighting } from "@/components/tour/Lighting";
+import { dayOfYear, solarPosition } from "@/lib/model/sun";
 import { WalkControls, type WalkState } from "@/components/tour/WalkControls";
 import { BomPane } from "@/components/bom/BomPane";
 import { Model } from "@/components/tour/Model";
@@ -61,6 +63,8 @@ function Scene({
   pick,
   onPick,
   onSelectNode,
+  dayOfYear,
+  hour,
 }: {
   property: Property;
   view: ViewState;
@@ -69,6 +73,8 @@ function Scene({
   pick: Pick | null;
   onPick?: (pick: Pick) => void;
   onSelectNode: (id: string) => void;
+  dayOfYear: number;
+  hour: number;
 }) {
   const [dollOpacity, setDollOpacity] = useState(1);
   // Which storey the walker is standing on, which changes under them on the
@@ -97,32 +103,12 @@ function Scene({
 
   return (
     <>
-      {/*
-        Architectural lighting: one key light with real shadows, a cool sky fill,
-        and very little ambient.
-        
-        Flat ambient light was what made the old dollhouse read as a diagram -
-        every surface came back the same tone, so nothing had form. Shading is
-        what separates a wall from the floor it meets, and a soft shadow under
-        furniture is most of what makes a room look occupied.
-      */}
-      <hemisphereLight args={["#eef4fb", "#6f6b64", 1.05]} />
-      <ambientLight intensity={0.22} />
-      <directionalLight
-        position={[9, 16, 7]}
-        intensity={1.9}
-        castShadow
-        shadow-mapSize={[2048, 2048]}
-        shadow-camera-left={-22}
-        shadow-camera-right={22}
-        shadow-camera-top={22}
-        shadow-camera-bottom={-22}
-        shadow-camera-near={0.5}
-        shadow-camera-far={70}
-        shadow-bias={-0.0004}
+      <Lighting
+        site={property.site}
+        dayOfYear={dayOfYear}
+        hour={hour}
+        interior={view.mode === "walk" || view.mode === "node"}
       />
-      {/* A weak opposing fill so the shadowed side is shaded, not black. */}
-      <directionalLight position={[-8, 6, -6]} intensity={0.32} />
 
       <CameraRig
         plan={property.plan}
@@ -211,6 +197,19 @@ function DollhouseOpacityDriver({
   return null;
 }
 
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+function monthOf(doy: number): number {
+  const ends = [31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334, 365];
+  return ends.findIndex((end) => doy <= end);
+}
+
+function formatHour(hour: number): string {
+  const h = Math.floor(hour) % 24;
+  const m = Math.round((hour - Math.floor(hour)) * 60);
+  return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
+}
+
 export function TourViewer({
   property,
   onPropertyChange,
@@ -248,6 +247,13 @@ export function TourViewer({
   // moment it does, or it sits in the middle of the room you are walking
   // through - and it has to come back on Esc, which the user can press at any
   // time without telling us.
+  // Time of day, which only means anything when the house knows where it is.
+  // A late-morning midsummer default rather than noon: the sun overhead casts
+  // almost no shadow, which is the one time of day that makes a model look
+  // flat.
+  const [hour, setHour] = useState(10.5);
+  const [dayOfYearValue, setDayOfYearValue] = useState(() => dayOfYear(6, 21));
+
   const [locked, setLocked] = useState(false);
   useEffect(() => {
     const onChange = () => setLocked(Boolean(document.pointerLockElement));
@@ -418,6 +424,8 @@ export function TourViewer({
             pick={pick}
             onPick={onPropertyChange ? setPick : undefined}
             onSelectNode={selectNode}
+            dayOfYear={dayOfYearValue}
+            hour={hour}
           />
         </Canvas>
 
@@ -476,6 +484,49 @@ export function TourViewer({
         {/* A crosshair, so it is obvious where the pointer went. */}
         {view.mode === "walk" && locked && (
           <div className="pointer-events-none absolute left-1/2 top-1/2 h-1 w-1 -translate-x-1/2 -translate-y-1/2 rounded-full bg-mist-200/60" />
+        )}
+
+        {/*
+          Daylight controls, shown only when the house has coordinates.
+          
+          Offering a time-of-day slider on a model that does not know where it
+          is would be decoration pretending to be information - the sun would
+          move and mean nothing. Where the address gave us a parcel, it means
+          exactly what it says.
+        */}
+        {property.site && (
+          <div className="absolute bottom-3 left-3 rounded-lg border border-ink-600 bg-ink-800/90 px-3 py-2.5 backdrop-blur">
+            <div className="flex items-baseline justify-between gap-4">
+              <span className="text-[10px] uppercase tracking-wide text-mist-400">Daylight</span>
+              <span className="text-[11px] tabular-nums text-mist-200">
+                {formatHour(hour)} · {MONTHS[monthOf(dayOfYearValue)]}
+              </span>
+            </div>
+            <input
+              type="range"
+              min={0}
+              max={24}
+              step={0.25}
+              value={hour}
+              aria-label="Time of day"
+              onChange={(e) => setHour(Number(e.target.value))}
+              className="mt-1.5 w-48 accent-accent"
+            />
+            <input
+              type="range"
+              min={1}
+              max={365}
+              step={1}
+              value={dayOfYearValue}
+              aria-label="Day of year"
+              onChange={(e) => setDayOfYearValue(Number(e.target.value))}
+              className="mt-1 w-48 accent-accent"
+            />
+            <div className="mt-1 text-[10px] text-mist-400" data-sun-altitude>
+              Sun {Math.round(solarPosition(property.site, dayOfYearValue, hour).altitudeDeg)}° up,
+              bearing {Math.round(solarPosition(property.site, dayOfYearValue, hour).azimuthDeg)}°
+            </div>
+          </div>
         )}
 
         <div className="pointer-events-none absolute bottom-3 left-1/2 -translate-x-1/2 rounded bg-ink-800/85 px-3 py-1.5 text-[11px] text-mist-400 backdrop-blur">

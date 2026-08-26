@@ -63,6 +63,8 @@ export default function NewTourPage() {
   const [facts, setFacts] = useState<ListingFacts | null>(null);
   // The building's real outline, when OpenStreetMap had one for the address.
   const [footprint, setFootprint] = useState<ListingFootprint | null>(null);
+  /** Parcel coordinates from the listing, for the sun. */
+  const [listingSite, setListingSite] = useState<{ lat: number; lon: number } | null>(null);
   const [plan, setPlan] = useState<Plan | null>(null);
   const [property, setProperty] = useState<Property | null>(null);
 
@@ -116,6 +118,7 @@ export default function NewTourPage() {
       await addPhotos(files);
       setFacts(listing.facts);
       setFootprint(listing.footprint);
+      setListingSite(listing.location);
       if (!label && listing.address) setLabel(listing.address);
 
       // Only describe the house when the listing actually said something about
@@ -420,6 +423,17 @@ export default function NewTourPage() {
       condition: {},
       houseCondition: {},
       rates: {},
+      // Where the house is, so the daylight can be its own rather than a
+      // studio light. The bearing follows from the rotation the footprint
+      // needed to square it up: the outline is projected with +x east, so
+      // turning it by that angle puts plan +x that many degrees round from
+      // east.
+      site:
+        listingSite && footprint
+          ? { ...listingSite, planXBearing: 90 + footprint.rotationDeg }
+          : listingSite
+            ? { ...listingSite, planXBearing: 90 }
+            : null,
     };
     if (placed.unplaced > 0) {
       gathered.push(
@@ -481,7 +495,7 @@ export default function NewTourPage() {
       saveProperty(working);
       setProperty(working);
     });
-  }, [photos, spec, facts, footprint, propertyId, label, placePhotos]);
+  }, [photos, spec, facts, footprint, listingSite, propertyId, label, placePhotos]);
 
   if (restoring) {
     return (

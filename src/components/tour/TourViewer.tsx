@@ -7,6 +7,8 @@ import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "rea
 import { CameraRig, type TransitionState, type ViewState } from "@/components/tour/CameraRig";
 import { Lighting } from "@/components/tour/Lighting";
 import { Measure, type MeasurePoints } from "@/components/tour/Measure";
+import { ScriptedTour, recordCanvas, supportedFormat } from "@/components/tour/ScriptedTour";
+import { buildTour, tourDuration } from "@/lib/model/tour-script";
 import { SCHEMES, type Scheme, schemeByName } from "@/lib/model/schemes";
 import { dayOfYear, solarPosition } from "@/lib/model/sun";
 import { WalkControls, type WalkState } from "@/components/tour/WalkControls";
@@ -71,6 +73,10 @@ function Scene({
   measurePoints,
   onMeasurePoint,
   scheme,
+  tourBeats,
+  touring,
+  onTourCaption,
+  onTourFinish,
 }: {
   property: Property;
   view: ViewState;
@@ -85,6 +91,10 @@ function Scene({
   measurePoints: MeasurePoints;
   onMeasurePoint: (point: THREE.Vector3) => void;
   scheme: Scheme;
+  tourBeats: ReturnType<typeof buildTour>;
+  touring: boolean;
+  onTourCaption: (caption: string) => void;
+  onTourFinish: () => void;
 }) {
   const [dollOpacity, setDollOpacity] = useState(1);
   // Which storey the walker is standing on, which changes under them on the
@@ -130,6 +140,7 @@ function Scene({
         view={view}
         transition={transition}
         aspects={aspects}
+        paused={touring}
       />
 
       <DollhouseOpacityDriver transition={transition} onChange={setDollOpacity} />
@@ -150,6 +161,13 @@ function Scene({
       />
 
       <Measure points={measurePoints} displayUnits={property.displayUnits} />
+
+      <ScriptedTour
+        beats={tourBeats}
+        running={touring}
+        onBeat={onTourCaption}
+        onFinish={onTourFinish}
+      />
 
       <WalkControls
         plan={property.plan}
@@ -288,6 +306,50 @@ export function TourViewer({
   const [schemeName, setSchemeName] = useState<string>(SCHEMES[1].name);
   const scheme = schemeByName(schemeName);
 
+  // The scripted tour, and recording it.
+  const [touring, setTouring] = useState(false);
+  const [tourCaption, setTourCaption] = useState("");
+  const [recording, setRecording] = useState(false);
+  const stopRecording = useRef<null | (() => void)>(null);
+  const tourBeats = useMemo(
+    () => buildTour(property.plan, property.label || "This house"),
+    [property.plan, property.label],
+  );
+
+  const finishTour = useCallback(() => {
+    setTouring(false);
+    setTourCaption("");
+    stopRecording.current?.();
+    stopRecording.current = null;
+    setRecording(false);
+  }, []);
+
+  const startTour = useCallback(
+    (record: boolean) => {
+      if (tourBeats.length === 0) return;
+      setView({ mode: "dollhouse" });
+      setTouring(true);
+
+      if (!record) return;
+      const canvas = document.querySelector("canvas");
+      if (!(canvas instanceof HTMLCanvasElement)) return;
+      setRecording(true);
+      stopRecording.current = recordCanvas(canvas, tourDuration(tourBeats), (blob) => {
+        setRecording(false);
+        if (blob.size === 0) return;
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = `${property.id}-tour.${blob.type.includes("mp4") ? "mp4" : "webm"}`;
+        a.click();
+        // Revoked on a delay: revoking immediately can cancel the download in
+        // some browsers before it has read the blob.
+        setTimeout(() => URL.revokeObjectURL(url), 30_000);
+      });
+    },
+    [tourBeats, property.id],
+  );
+
   const [locked, setLocked] = useState(false);
   useEffect(() => {
     const onChange = () => setLocked(Boolean(document.pointerLockElement));
@@ -399,6 +461,27 @@ export function TourViewer({
           >
             Dollhouse
           </button>
+          <button
+            onClick={() => (touring ? finishTour() : startTour(false))}
+            data-tour-toggle
+            className={`rounded border px-3 py-1 text-xs transition ${
+              touring
+                ? "border-accent bg-accent text-ink-900"
+                : "border-ink-500 text-mist-200 hover:bg-ink-600"
+            }`}
+          >
+            {touring ? "Stop" : "Tour"}
+          </button>
+          {supportedFormat() && (
+            <button
+              onClick={() => startTour(true)}
+              disabled={touring}
+              title={`Records a ${Math.round(tourDuration(tourBeats) / 1000)}s film of the house`}
+              className="rounded border border-ink-500 px-3 py-1 text-xs text-mist-200 transition hover:bg-ink-600 disabled:opacity-35"
+            >
+              {recording ? "Recording…" : "Record"}
+            </button>
+          )}
           <select
             value={schemeName}
             onChange={(e) => setSchemeName(e.target.value)}
@@ -491,6 +574,10 @@ export function TourViewer({
             measurePoints={measurePoints}
             onMeasurePoint={addMeasurePoint}
             scheme={scheme}
+            tourBeats={tourBeats}
+            touring={touring}
+            onTourCaption={setTourCaption}
+            onTourFinish={finishTour}
           />
         </Canvas>
 
@@ -543,6 +630,22 @@ export function TourViewer({
                 Esc to let the pointer go
               </p>
             </div>
+          </div>
+        )}
+
+        {/*
+          The caption for the beat being shown.
+          
+          On screen only. `captureStream` carries what WebGL draws and nothing
+          else, so HTML over the canvas is absent from the recording - burning
+          captions in would mean rendering text inside the scene.
+        */}
+        {touring && tourCaption && (
+          <div
+            data-tour-caption
+            className="pointer-events-none absolute bottom-16 left-1/2 -translate-x-1/2 rounded bg-ink-800/85 px-4 py-2 text-sm text-mist-200 backdrop-blur"
+          >
+            {tourCaption}
           </div>
         )}
 

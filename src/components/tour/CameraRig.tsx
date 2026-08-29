@@ -106,10 +106,13 @@ export function CameraRig({
   view,
   transition,
   aspects,
+  paused = false,
 }: {
   plan: Plan;
   nodes: TourNode[];
   view: ViewState;
+  /** True while something else is driving the camera. */
+  paused?: boolean;
   /** Written every frame. A ref, not state, so a move costs no re-renders. */
   transition: React.MutableRefObject<TransitionState>;
   /** Node id to true photo aspect, filled in as textures decode. */
@@ -257,9 +260,10 @@ export function CameraRig({
   };
 
   useFrame(() => {
-    // Walking hands the camera to WalkControls entirely. Two things writing
-    // camera.position on the same frame is a fight the user sees as jitter.
-    if (view.mode === "walk") return;
+    // Walking hands the camera to WalkControls entirely, and a scripted tour
+    // takes it the same way. Two things writing camera.position on the same
+    // frame is a fight the user sees as jitter.
+    if (view.mode === "walk" || paused) return;
 
     const elapsed = performance.now() - startedAt.current;
     const raw = THREE.MathUtils.clamp(elapsed / TRANSITION_MS, 0, 1);

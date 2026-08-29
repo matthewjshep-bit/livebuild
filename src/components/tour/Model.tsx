@@ -170,6 +170,7 @@ function LevelModel({
   pick,
   onPick,
   onHover,
+  onMeasurePoint,
 }: {
   plan: Plan;
   level: number;
@@ -179,6 +180,7 @@ function LevelModel({
   pick: Pick | null;
   onPick?: (pick: Pick) => void;
   onHover?: (pick: Pick | null) => void;
+  onMeasurePoint?: (point: THREE.Vector3) => void;
 }) {
   const baseY = levelBase(plan, level);
 
@@ -379,6 +381,14 @@ function LevelModel({
               document.body.style.cursor = "auto";
             }}
             onClick={(e) => {
+              // Measuring wants the point on the surface, not which surface it
+              // was. Taking precedence over picking keeps the two from fighting
+              // over the same click.
+              if (onMeasurePoint) {
+                e.stopPropagation();
+                onMeasurePoint(e.point.clone());
+                return;
+              }
               if (!onPick) return;
               e.stopPropagation();
               onPick({ roomId: surface.roomId, element: surface.element });
@@ -454,6 +464,7 @@ export function Model({
   pick = null,
   onPick,
   onHover,
+  onMeasurePoint,
   walking = false,
 }: {
   plan: Plan;
@@ -477,6 +488,8 @@ export function Model({
   /** Absent means the model is not interrogable - no cursor, no picking. */
   onPick?: (pick: Pick) => void;
   onHover?: (pick: Pick | null) => void;
+  /** Set while the tape measure is out; receives the exact point clicked. */
+  onMeasurePoint?: (point: THREE.Vector3) => void;
 }) {
   const levels = useMemo(() => {
     const all = levelsOf(plan);
@@ -504,6 +517,7 @@ export function Model({
           pick={pick}
           onPick={onPick}
           onHover={onHover}
+          onMeasurePoint={onMeasurePoint}
         />
       ))}
 

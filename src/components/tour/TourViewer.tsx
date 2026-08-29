@@ -6,6 +6,7 @@ import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "rea
 
 import { CameraRig, type TransitionState, type ViewState } from "@/components/tour/CameraRig";
 import { Lighting } from "@/components/tour/Lighting";
+import { Measure, type MeasurePoints } from "@/components/tour/Measure";
 import { dayOfYear, solarPosition } from "@/lib/model/sun";
 import { WalkControls, type WalkState } from "@/components/tour/WalkControls";
 import { BomPane } from "@/components/bom/BomPane";
@@ -65,6 +66,9 @@ function Scene({
   onSelectNode,
   dayOfYear,
   hour,
+  measuring,
+  measurePoints,
+  onMeasurePoint,
 }: {
   property: Property;
   view: ViewState;
@@ -75,6 +79,9 @@ function Scene({
   onSelectNode: (id: string) => void;
   dayOfYear: number;
   hour: number;
+  measuring: boolean;
+  measurePoints: MeasurePoints;
+  onMeasurePoint: (point: THREE.Vector3) => void;
 }) {
   const [dollOpacity, setDollOpacity] = useState(1);
   // Which storey the walker is standing on, which changes under them on the
@@ -130,8 +137,11 @@ function Scene({
         onlyLevel={view.mode === "walk" ? walkLevel : onlyLevel}
         pick={pick}
         onPick={onPick}
+        onMeasurePoint={measuring ? onMeasurePoint : undefined}
         walking={view.mode === "walk"}
       />
+
+      <Measure points={measurePoints} displayUnits={property.displayUnits} />
 
       <WalkControls
         plan={property.plan}
@@ -254,6 +264,16 @@ export function TourViewer({
   const [hour, setHour] = useState(10.5);
   const [dayOfYearValue, setDayOfYearValue] = useState(() => dayOfYear(6, 21));
 
+  // The tape measure. Two clicks give a distance; a third starts again, which
+  // is what people expect and saves a "clear" button being the only way out.
+  const [measuring, setMeasuring] = useState(false);
+  const [measurePoints, setMeasurePoints] = useState<MeasurePoints>({ a: null, b: null });
+  const addMeasurePoint = useCallback((point: THREE.Vector3) => {
+    setMeasurePoints((current) =>
+      current.a && !current.b ? { a: current.a, b: point } : { a: point, b: null },
+    );
+  }, []);
+
   const [locked, setLocked] = useState(false);
   useEffect(() => {
     const onChange = () => setLocked(Boolean(document.pointerLockElement));
@@ -366,6 +386,20 @@ export function TourViewer({
             Dollhouse
           </button>
           <button
+            onClick={() => {
+              setMeasuring((on) => !on);
+              setMeasurePoints({ a: null, b: null });
+            }}
+            data-measure-toggle
+            className={`rounded border px-3 py-1 text-xs transition ${
+              measuring
+                ? "border-accent bg-accent text-ink-900"
+                : "border-ink-500 text-mist-200 hover:bg-ink-600"
+            }`}
+          >
+            Measure
+          </button>
+          <button
             onClick={() => setView({ mode: "walk" })}
             disabled={view.mode === "walk"}
             className="rounded border border-ink-500 px-3 py-1 text-xs text-mist-200 transition hover:bg-ink-600 disabled:opacity-35"
@@ -426,6 +460,9 @@ export function TourViewer({
             onSelectNode={selectNode}
             dayOfYear={dayOfYearValue}
             hour={hour}
+            measuring={measuring}
+            measurePoints={measurePoints}
+            onMeasurePoint={addMeasurePoint}
           />
         </Canvas>
 
@@ -534,6 +571,8 @@ export function TourViewer({
             ? "Drag to orbit · scroll to zoom · click a ring to step inside"
             : view.mode === "walk"
               ? "Walking · W A S D to move · Esc to release the pointer"
+            : measuring
+              ? "Click two points to measure between them"
               : "Drag to look · move the pointer to lean · click a ring to walk there"}
         </div>
 

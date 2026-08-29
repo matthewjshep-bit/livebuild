@@ -13,6 +13,7 @@ import {
   moveWithSliding,
   startingPoint,
 } from "@/lib/model/collide";
+import { MAX_STEP } from "@/lib/model/stairs";
 import type { Plan } from "@/lib/schema";
 
 /**
@@ -71,6 +72,10 @@ export function WalkControls({
   const velocity = useRef(new THREE.Vector2());
   const carry = useRef(0);
   const eye = useRef(0);
+  // Where the feet actually are. The eye is eased toward its target for the
+  // look of it, and lags - using it to decide which surface you are on would
+  // pick the wrong one halfway up a flight.
+  const foot = useRef(0);
 
   const colliders = useMemo(() => {
     const byLevel = new Map<number, Collider[]>();
@@ -110,6 +115,7 @@ export function WalkControls({
     const ground = groundAt(plan, level, sx, sy);
     state.current = { x: sx, y: sy, level, yaw: 0 };
     eye.current = ground.height + EYE_HEIGHT;
+    foot.current = ground.height;
     velocity.current.set(0, 0);
     camera.position.set(sx, eye.current, sy);
 
@@ -169,7 +175,19 @@ export function WalkControls({
         velocity.current.y * STEP,
       );
 
-      const ground = groundAt(plan, here.level, nx, ny);
+      const ground = groundAt(plan, here.level, nx, ny, foot.current);
+
+      // Refuse a step no person could take. This is what stops you walking
+      // sideways off a flight into the stairwell, or out of an upstairs door
+      // that opens onto the void - and it needs no extra colliders, because it
+      // is read from the same tread heights the staircase was drawn from. The
+      // largest legitimate move is one riser, comfortably under the limit.
+      if (Math.abs(ground.height - foot.current) > MAX_STEP) {
+        velocity.current.set(0, 0);
+        continue;
+      }
+      foot.current = ground.height;
+
       if (ground.level !== here.level) onLevelChange(ground.level);
 
       state.current = { x: nx, y: ny, level: ground.level, yaw };

@@ -2,6 +2,7 @@ import { boundsOf } from "@/lib/plan/autolayout";
 import { levelBase } from "@/lib/plan/geometry";
 import { roomKind } from "@/lib/plan/room-kind";
 import type { Plan, Vec2 } from "@/lib/schema";
+import { heightAt, levelForHeight, runsAtLevel } from "@/lib/model/stairs";
 import { wallsForLevel } from "@/lib/model/walls";
 
 /**
@@ -92,48 +93,45 @@ export function roomAt(plan: Plan, level: number, x: number, y: number) {
 /**
  * Height underfoot, and which storey that puts you on.
  *
- * Standing in a stairwell the floor is a ramp, so the height is interpolated
- * along the stair room's longer axis and the storey flips at the halfway
- * point. It is not a staircase with treads - it is a slope where a staircase
- * is - but it climbs continuously, which is what stops the transition between
- * floors reading as a teleport.
+ * All of the geometry now lives in `stairs.ts`; this only asks it. That matters
+ * more than it looks: this function used to interpolate a ramp of its own, so
+ * the moment real treads were drawn there were two descriptions of the same
+ * staircase and nothing to keep them in step. The failure that produces is
+ * invisible - the stair looks right and your feet are somewhere else.
+ *
+ * `fromHeight` is where the walker's feet are now. With one staircase it
+ * changes nothing; on the middle storey of a three-storey house, where the
+ * flight up and the flight down share a footprint, it is what tells climbing
+ * from descending without keeping any extra state.
  */
 export function groundAt(
   plan: Plan,
   level: number,
   x: number,
   y: number,
+  fromHeight?: number,
 ): { height: number; level: number } {
   const here = roomAt(plan, level, x, y);
   const base = levelBase(plan, level);
-
   if (!here || roomKind(here.label) !== "stairs") return { height: base, level };
 
-  // Is there a stairwell directly above this one? If not, there is nowhere to
-  // climb to and the floor is flat.
-  const above = plan.rooms.find(
-    (r) => r.level === level + 1 && roomKind(r.label) === "stairs" && overlaps(r, here),
+  const { up, down } = runsAtLevel(plan, level);
+  const candidates: number[] = [];
+  for (const run of [up, down]) {
+    if (!run) continue;
+    const h = heightAt(run, x, y);
+    if (h !== null) candidates.push(h);
+  }
+
+  // A stairwell with nothing stacked on it is simply a landing.
+  if (candidates.length === 0) return { height: base, level };
+
+  const feet = fromHeight ?? base;
+  const height = candidates.reduce((best, h) =>
+    Math.abs(h - feet) < Math.abs(best - feet) ? h : best,
   );
-  if (!above) return { height: base, level };
 
-  const b = boundsOf(here.polygon);
-  const alongX = b.x1 - b.x0 >= b.y1 - b.y0;
-  const t = alongX ? (x - b.x0) / (b.x1 - b.x0) : (y - b.y0) / (b.y1 - b.y0);
-  const clamped = Math.max(0, Math.min(1, t));
-
-  const upper = levelBase(plan, level + 1);
-  return {
-    height: base + (upper - base) * clamped,
-    // Past halfway you are on the storey above, so its walls start blocking
-    // and its rooms are what you are standing in.
-    level: clamped > 0.5 ? level + 1 : level,
-  };
-}
-
-function overlaps(a: { polygon: Vec2[] }, b: { polygon: Vec2[] }): boolean {
-  const p = boundsOf(a.polygon);
-  const q = boundsOf(b.polygon);
-  return p.x0 < q.x1 && q.x0 < p.x1 && p.y0 < q.y1 && q.y0 < p.y1;
+  return { height, level: levelForHeight(plan, height) };
 }
 
 /** A sensible place to start walking: the middle of the largest ground room. */

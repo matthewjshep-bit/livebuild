@@ -34,6 +34,15 @@ await page.waitForFunction(
 );
 await page.waitForTimeout(2500);
 
+// Clicks are aimed at the canvas, not at the page.
+//
+// The centre used to be a hardcoded x of 640, and the scope rail moved the 3D
+// view sideways - so every click in the sweep landed on the rail and the test
+// reported that no ring responded. Nothing about the walk had changed.
+const canvas = await page.locator("canvas").boundingBox();
+const midX = Math.round(canvas.x + canvas.width / 2);
+const rowAt = (fraction) => Math.round(canvas.y + canvas.height * fraction);
+
 const activeNode = () => new URL(page.url()).searchParams.get("node");
 const start = activeNode();
 
@@ -43,11 +52,11 @@ const start = activeNode();
 // right pixel a moment too soon.
 let moved = null;
 for (let attempt = 0; attempt < 3 && !moved; attempt++) {
-  for (const y of [600, 640, 678, 700, 730, 760]) {
-    await page.mouse.click(640, y);
+  for (const y of [0.73, 0.78, 0.83, 0.85, 0.89, 0.93].map(rowAt)) {
+    await page.mouse.click(midX, y);
     await page.waitForTimeout(900);
     if (activeNode() !== start) {
-      moved = { at: [640, y], to: activeNode() };
+      moved = { at: [midX, y], to: activeNode() };
       break;
     }
   }
@@ -59,8 +68,8 @@ if (moved) {
   await page.waitForTimeout(1400);
   await page.screenshot({ path: "shots/11-after-walk.png" });
   // The node just left should now be a neighbour, so a step back must exist.
-  for (const y of [600, 660, 700, 740]) {
-    await page.mouse.click(640, y);
+  for (const y of [0.73, 0.80, 0.85, 0.90].map(rowAt)) {
+    await page.mouse.click(midX, y);
     await page.waitForTimeout(900);
     if (activeNode() !== moved.to) {
       returned = activeNode();

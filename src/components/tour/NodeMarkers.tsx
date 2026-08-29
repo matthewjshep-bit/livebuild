@@ -3,6 +3,7 @@
 import { useMemo, useState } from "react";
 import * as THREE from "three";
 
+import { runsAtLevel } from "@/lib/model/stairs";
 import { headingToPlanDir, levelBase, nodeBaseY, planToWorld } from "@/lib/plan/geometry";
 import type { Plan, TourNode, Vec2 } from "@/lib/schema";
 
@@ -192,6 +193,31 @@ export function NodeMarkers({
       return { at: neighbor.position, baseY: nodeBaseY(plan, neighbor) };
     }
 
+    const going: "up" | "down" = there.level > here.level ? "up" : "down";
+
+    // At the foot of the flight, standing on it.
+    //
+    // The ring used to sit at the centre of the stairwell on the storey floor,
+    // which was fine while a staircase was a flat slab and is inside the treads
+    // now - the raycast hits a tread first and the ring stops responding. The
+    // bottom of the flight is also simply where you would walk to.
+    const { up, down } = runsAtLevel(plan, here.level);
+    const run = going === "up" ? up : down;
+    if (run) {
+      // In front of the flight, on the floor, rather than on it.
+      //
+      // The ring used to sit at the centre of the stairwell, which was fine
+      // while a staircase was a flat slab. With treads there it stopped
+      // responding: a ring is drawn without depth testing so it is always
+      // *visible*, but a click is a ray and the ray hits whichever mesh is
+      // nearest - which is now a tread. Standing it clear of the staircase is
+      // also simply where a person waits before climbing.
+      const from = going === "up" ? run.entry.at : run.arrival.at;
+      const along = run.entry.into;
+      const at: Vec2 = [from[0] - along[0] * 0.7, from[1] - along[1] * 0.7];
+      return { at, baseY: levelBase(plan, here.level), stairs: going };
+    }
+
     const stair = plan.openings.find((o) => {
       if (o.kind !== "stairs") return false;
       const levels = o.between.map(
@@ -203,7 +229,7 @@ export function NodeMarkers({
     return {
       at: stair ? stair.at : neighbor.position,
       baseY: levelBase(plan, here.level),
-      stairs: there.level > here.level ? "up" : "down",
+      stairs: going,
     };
   };
 

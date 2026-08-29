@@ -35,9 +35,18 @@ const viaMinimap = at();
 // just finds whichever ring is nearest and ping-pongs between rooms.
 await page.goto(`${base}/tour/two-storey?node=n4`, { waitUntil: "networkidle" });
 await page.waitForTimeout(3500);
+// Scanned relative to the canvas, not to the page. These were fixed page
+// pixels, and the scope rail moved the 3D view sideways - so the "centre
+// column" became the rail and the ring stopped being found. The ring was fine.
+const canvas = await page.locator("canvas").boundingBox();
+const colX0 = Math.round(canvas.x + canvas.width * 0.42);
+const colX1 = Math.round(canvas.x + canvas.width * 0.58);
+const rowY0 = Math.round(canvas.y + canvas.height * 0.60);
+const rowY1 = Math.round(canvas.y + canvas.height * 0.90);
+
 let viaStairs = null;
-for (let y = 520; y <= 720 && !viaStairs; y += 12) {
-  for (let x = 560; x <= 720; x += 20) {
+for (let y = rowY0; y <= rowY1 && !viaStairs; y += 12) {
+  for (let x = colX0; x <= colX1; x += 20) {
     await page.mouse.click(x, y);
     await page.waitForTimeout(90);
     if (at() !== "n4") {

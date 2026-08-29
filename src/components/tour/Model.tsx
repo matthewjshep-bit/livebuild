@@ -12,6 +12,12 @@ import { furnishRoom } from "@/lib/model/furniture";
 import { BASEBOARD_DEPTH, BASEBOARD_HEIGHT, PALETTE } from "@/lib/model/materials";
 import { DEFAULT_SCHEME, type Scheme, floorToneFor, recolour } from "@/lib/model/schemes";
 import {
+  ceilingHolesFor,
+  floorHolesFor,
+  stairPieces,
+  subtractRects,
+} from "@/lib/model/stairs";
+import {
   TEXTURE_METRES,
   applyWorldUvs,
   canTexture,
@@ -251,24 +257,54 @@ function LevelModel({
       const w = b.x1 - b.x0;
       const d = b.y1 - b.y0;
 
-      addSurface(
-        room.id,
-        "floor",
-        floorToneFor(room.label, scheme),
-        boxGeometry([b.x0 + w / 2, baseY - SLAB / 2, b.y0 + d / 2], [w, SLAB, d]),
-      );
-
-      // A ceiling, but only when someone is under it.
-      if (walking) {
+      // The floor, with the stairwell cut out of it where a staircase arrives.
+      // `subtractRects` returns the room untouched when there is no hole, so
+      // every other room in the house is byte-identical to before.
+      const roomRect = { x0: b.x0, y0: b.y0, x1: b.x1, y1: b.y1 };
+      const floorPieces = subtractRects(roomRect, floorHolesFor(plan, room));
+      for (const piece of floorPieces) {
+        const pw = piece.x1 - piece.x0;
+        const pd = piece.y1 - piece.y0;
         addSurface(
           room.id,
-          "ceiling",
-          scheme.ceiling,
-          boxGeometry(
-            [b.x0 + w / 2, baseY + room.ceilingHeight + SLAB / 2, b.y0 + d / 2],
-            [w, SLAB, d],
-          ),
+          "floor",
+          floorToneFor(room.label, scheme),
+          boxGeometry([piece.x0 + pw / 2, baseY - SLAB / 2, piece.y0 + pd / 2], [pw, SLAB, pd]),
         );
+      }
+
+      // A ceiling, but only when someone is under it - and opened where the
+      // staircase leaves, or you climb the treads into the underside of it.
+      if (walking) {
+        for (const piece of subtractRects(roomRect, ceilingHolesFor(plan, room))) {
+          const pw = piece.x1 - piece.x0;
+          const pd = piece.y1 - piece.y0;
+          addSurface(
+            room.id,
+            "ceiling",
+            scheme.ceiling,
+            boxGeometry(
+              [piece.x0 + pw / 2, baseY + room.ceilingHeight + SLAB / 2, piece.y0 + pd / 2],
+              [pw, SLAB, pd],
+            ),
+          );
+        }
+      }
+
+      // The staircase itself. Structure rather than staging, so it is drawn
+      // whether or not the house is furnished.
+      for (const piece of stairPieces(plan, room, level)) {
+        for (const box of piece.boxes) {
+          addSurface(
+            room.id,
+            "floor",
+            recolour(box.colour, scheme),
+            boxGeometry(
+              [b.x0 + box.center[0], baseY + box.center[1], b.y0 + box.center[2]],
+              box.size,
+            ),
+          );
+        }
       }
 
       // A baseboard around the room. Small, and it is most of what stops a
@@ -276,12 +312,14 @@ function LevelModel({
       const h = BASEBOARD_HEIGHT;
       const t = BASEBOARD_DEPTH;
       const y = baseY + h / 2;
-      for (const part of [
+      // Nothing to run skirting along when the floor is a stairwell.
+      const skirting = floorPieces.length === 0 ? [] : [
         boxGeometry([b.x0 + w / 2, y, b.y0 + t / 2], [w, h, t]),
         boxGeometry([b.x0 + w / 2, y, b.y1 - t / 2], [w, h, t]),
         boxGeometry([b.x0 + t / 2, y, b.y0 + d / 2], [t, h, d]),
         boxGeometry([b.x1 - t / 2, y, b.y0 + d / 2], [t, h, d]),
-      ]) {
+      ];
+      for (const part of skirting) {
         addSurface(room.id, "trim", scheme.trim, part);
       }
 

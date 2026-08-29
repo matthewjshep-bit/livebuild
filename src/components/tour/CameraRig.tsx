@@ -11,7 +11,9 @@ export type ViewState =
   | { mode: "dollhouse" }
   | { mode: "node"; nodeId: string }
   /** First person, on foot. The walker owns the camera in this mode. */
-  | { mode: "walk" };
+  | { mode: "walk" }
+  /** The architectural plan, which is a drawing rather than a camera. */
+  | { mode: "plan" };
 
 const TRANSITION_MS = 850;
 
@@ -266,7 +268,7 @@ export function CameraRig({
     // Walking hands the camera to WalkControls entirely, and a scripted tour
     // takes it the same way. Two things writing camera.position on the same
     // frame is a fight the user sees as jitter.
-    if (view.mode === "walk" || paused) return;
+    if (view.mode === "walk" || view.mode === "plan" || paused) return;
 
     const elapsed = performance.now() - startedAt.current;
     const raw = THREE.MathUtils.clamp(elapsed / TRANSITION_MS, 0, 1);

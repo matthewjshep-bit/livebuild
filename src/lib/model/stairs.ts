@@ -484,3 +484,74 @@ export function ceilingHolesFor(plan: Plan, room: Room): Rect[] {
     .filter((run) => run.lowerRoomId === room.id && run.spec.kind !== "ramp")
     .map((run) => run.well);
 }
+
+/* ----------------------------------------------------------------- 2D plan */
+
+export type StairSymbol = {
+  /** One line across the flight per tread, at its leading edge. */
+  treadLines: Array<[Vec2, Vec2]>;
+  /** The outline of each flight and of the landing. */
+  outlines: Rect[];
+  /** The conventional diagonal break, where the flight passes the cut plane. */
+  breakLine: [Vec2, Vec2] | null;
+  /** Which way you are going, and how many risers. */
+  arrow: { from: Vec2; to: Vec2; label: string };
+};
+
+/**
+ * The staircase as an architect would draw it.
+ *
+ * Read off the same `steps` the treads are built from, so a plan that disagrees
+ * with the model is not possible. Only the half of the flight below the cut
+ * plane is drawn on a storey, which is the convention and is also what stops
+ * the two storeys' drawings duplicating each other.
+ */
+export function stairSymbol(run: StairRun, level: number): StairSymbol | null {
+  if (run.spec.kind === "ramp") return null;
+
+  const isLower = run.lowerLevel === level;
+  const cut = run.topY - PLAN_CUT;
+  const shown = run.steps.filter((s) => (isLower ? s.top < cut : s.top >= cut));
+  if (shown.length === 0) return null;
+
+  const alongX = run.footprint.x1 - run.footprint.x0 >= run.footprint.y1 - run.footprint.y0;
+
+  const treadLines = shown
+    .filter((s) => s.role === "tread")
+    .map((s): [Vec2, Vec2] =>
+      alongX
+        ? [
+            [s.rect.x0, s.rect.y0],
+            [s.rect.x0, s.rect.y1],
+          ]
+        : [
+            [s.rect.x0, s.rect.y0],
+            [s.rect.x1, s.rect.y0],
+          ],
+    );
+
+  const outlines = shown.filter((s) => s.role === "landing").map((s) => s.rect);
+
+  // The break sits where the flight is cut, drawn across the run.
+  const edge = shown.reduce((best, s) => (s.top > best.top ? s : best), shown[0]);
+  const breakLine: [Vec2, Vec2] = alongX
+    ? [
+        [edge.rect.x0 - 0.15, edge.rect.y0 - 0.1],
+        [edge.rect.x1 + 0.15, edge.rect.y1 + 0.1],
+      ]
+    : [
+        [edge.rect.x0 - 0.1, edge.rect.y0 - 0.15],
+        [edge.rect.x1 + 0.1, edge.rect.y1 + 0.15],
+      ];
+
+  return {
+    treadLines,
+    outlines,
+    breakLine,
+    arrow: {
+      from: isLower ? run.entry.at : run.arrival.at,
+      to: isLower ? run.arrival.at : run.entry.at,
+      label: `${isLower ? "UP" : "DN"} ${run.spec.risers}R`,
+    },
+  };
+}

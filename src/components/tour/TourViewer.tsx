@@ -12,6 +12,7 @@ import { buildTour, tourDuration } from "@/lib/model/tour-script";
 import { SCHEMES, type Scheme, schemeByName } from "@/lib/model/schemes";
 import { dayOfYear, solarPosition } from "@/lib/model/sun";
 import { WalkControls, type WalkState } from "@/components/tour/WalkControls";
+import { ArchitecturalPlan } from "@/components/plan2d/ArchitecturalPlan";
 import { ScopeRail } from "@/components/bom/ScopeRail";
 import { Model } from "@/components/tour/Model";
 import { buildBom } from "@/lib/bom/build";
@@ -205,8 +206,9 @@ function Scene({
         plan={property.plan}
         nodes={property.nodes}
         activeNodeId={view.mode === "node" ? view.nodeId : null}
-        // Rings are for stepping between photographs; on foot you simply walk.
-        mode={view.mode === "walk" ? "dollhouse" : view.mode}
+        // Rings are for stepping between photographs; on foot you simply walk,
+        // and a drawing has no camera to step into.
+        mode={view.mode === "node" ? "node" : "dollhouse"}
         // Stepping into a photograph from a house in pieces means nothing.
         hidden={view.mode === "walk" || explode > 0}
         onlyLevel={onlyLevel}
@@ -360,6 +362,10 @@ export function TourViewer({
   // no sense, so entering walk mode puts it back together.
   const [explode, setExplode] = useState(0);
 
+  // Which storey the drawing shows. Separate from the dollhouse's floor filter:
+  // a plan is always of one floor, whereas the model can show them stacked.
+  const [planLevel, setPlanLevel] = useState(0);
+
   // The rail costs 320px of a 3D view, so it collapses to a spine.
   const [railCollapsed, setRailCollapsed] = useState(false);
 
@@ -468,6 +474,16 @@ export function TourViewer({
             </span>
           )}
           <button
+            onClick={() => {
+              setExplode(0);
+              setView({ mode: "plan" });
+            }}
+            disabled={view.mode === "plan"}
+            className="rounded border border-ink-500 px-3 py-1 text-xs text-mist-200 transition hover:bg-ink-600 disabled:opacity-35"
+          >
+            Plan
+          </button>
+          <button
             onClick={showDollhouse}
             disabled={view.mode === "dollhouse"}
             className="rounded border border-ink-500 px-3 py-1 text-xs text-mist-200 transition hover:bg-ink-600 disabled:opacity-35"
@@ -477,7 +493,8 @@ export function TourViewer({
           <button
             onClick={() => (touring ? finishTour() : startTour(false))}
             data-tour-toggle
-            className={`rounded border px-3 py-1 text-xs transition ${
+            disabled={view.mode === "plan"}
+            className={`rounded border px-3 py-1 text-xs transition disabled:opacity-35 ${
               touring
                 ? "border-accent bg-accent text-ink-900"
                 : "border-ink-500 text-mist-200 hover:bg-ink-600"
@@ -488,7 +505,7 @@ export function TourViewer({
           {supportedFormat() && (
             <button
               onClick={() => startTour(true)}
-              disabled={touring}
+              disabled={touring || view.mode === "plan"}
               title={`Records a ${Math.round(tourDuration(tourBeats) / 1000)}s film of the house`}
               className="rounded border border-ink-500 px-3 py-1 text-xs text-mist-200 transition hover:bg-ink-600 disabled:opacity-35"
             >
@@ -514,7 +531,8 @@ export function TourViewer({
               setMeasurePoints({ a: null, b: null });
             }}
             data-measure-toggle
-            className={`rounded border px-3 py-1 text-xs transition ${
+            disabled={view.mode === "plan"}
+            className={`rounded border px-3 py-1 text-xs transition disabled:opacity-35 ${
               measuring
                 ? "border-accent bg-accent text-ink-900"
                 : "border-ink-500 text-mist-200 hover:bg-ink-600"
@@ -542,7 +560,7 @@ export function TourViewer({
               setExplode(0);
               setView({ mode: "walk" });
             }}
-            disabled={view.mode === "walk"}
+            disabled={view.mode === "walk" || view.mode === "plan"}
             className="rounded border border-ink-500 px-3 py-1 text-xs text-mist-200 transition hover:bg-ink-600 disabled:opacity-35"
           >
             Walk
@@ -588,6 +606,23 @@ export function TourViewer({
         )}
 
       <div className="relative min-w-0 flex-1">
+        {/*
+          The plan is a drawing, not a camera angle, so it replaces the canvas
+          rather than being another view of it. Everything that steers a camera
+          - walking, measuring, the tour - is meaningless while it is showing.
+        */}
+        {view.mode === "plan" ? (
+          <ArchitecturalPlan
+            plan={property.plan}
+            site={property.site}
+            level={planLevel}
+            levels={levels}
+            onLevel={setPlanLevel}
+            displayUnits={property.displayUnits}
+            pick={pick}
+            onPick={onPropertyChange ? setPick : undefined}
+          />
+        ) : (
         <Canvas
           camera={{ fov: 60, near: 0.05, far: 200 }}
           dpr={[1, 2]}
@@ -632,6 +667,7 @@ export function TourViewer({
             onTourFinish={finishTour}
           />
         </Canvas>
+        )}
 
 
         {onPropertyChange && (
@@ -641,12 +677,15 @@ export function TourViewer({
           />
         )}
 
-        <Minimap
-          property={property}
-          activeNodeId={view.mode === "node" ? view.nodeId : null}
-          onlyLevel={onlyLevel}
-          onSelectNode={selectNode}
-        />
+        {/* A small plan floating over a large one is just a smaller plan. */}
+        {view.mode !== "plan" && (
+          <Minimap
+            property={property}
+            activeNodeId={view.mode === "node" ? view.nodeId : null}
+            onlyLevel={onlyLevel}
+            onSelectNode={selectNode}
+          />
+        )}
 
         {/*
           The surface that takes pointer lock.
@@ -737,6 +776,7 @@ export function TourViewer({
           </div>
         )}
 
+        {view.mode !== "plan" && (
         <div className="pointer-events-none absolute bottom-3 left-1/2 -translate-x-1/2 rounded bg-ink-800/85 px-3 py-1.5 text-[11px] text-mist-400 backdrop-blur">
           {view.mode === "dollhouse"
             ? "Drag to orbit · scroll to zoom · click a ring to step inside"
@@ -746,6 +786,7 @@ export function TourViewer({
               ? "Click two points to measure between them"
               : "Drag to look · move the pointer to lean · click a ring to walk there"}
         </div>
+        )}
 
         {property.nodes.length === 0 && (
           <div className="pointer-events-none absolute inset-0 grid place-items-center">

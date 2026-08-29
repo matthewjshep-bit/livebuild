@@ -107,12 +107,15 @@ export function CameraRig({
   transition,
   aspects,
   paused = false,
+  explode = 0,
 }: {
   plan: Plan;
   nodes: TourNode[];
   view: ViewState;
   /** True while something else is driving the camera. */
   paused?: boolean;
+  /** How far the house is pulled apart, so the camera can keep it in frame. */
+  explode?: number;
   /** Written every frame. A ref, not state, so a move costs no re-renders. */
   transition: React.MutableRefObject<TransitionState>;
   /** Node id to true photo aspect, filled in as textures decode. */
@@ -271,7 +274,14 @@ export function CameraRig({
 
     if (view.mode === "dollhouse") {
       const center = planCenter(plan);
-      scratch.position.copy(orbitPosition(center, orbit.current));
+      // Pulling the house apart makes it bigger, so the camera has to give
+      // ground or the pieces simply leave the frame - which is what happened
+      // the first time, and looks like the rooms have been deleted.
+      const framed = {
+        ...orbit.current,
+        distance: orbit.current.distance * (1 + explode * 1.1),
+      };
+      scratch.position.copy(orbitPosition(center, framed));
       scratch.lookAt.lookAt(scratch.position, center, UP);
       scratch.quaternion.setFromRotationMatrix(scratch.lookAt);
       applyFov(DOLLHOUSE_FOV);

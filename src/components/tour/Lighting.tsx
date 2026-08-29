@@ -4,6 +4,7 @@ import { useThree } from "@react-three/fiber";
 import { useEffect, useMemo } from "react";
 import * as THREE from "three";
 
+import { explodeLift, explodeOffset } from "@/lib/model/room-shell";
 import { SKY_RAYS, sunState } from "@/lib/model/sun";
 import { boundsOf } from "@/lib/plan/autolayout";
 import { levelBase } from "@/lib/plan/geometry";
@@ -35,6 +36,7 @@ export function Lighting({
   interior,
   plan,
   lamps,
+  explode = 0,
 }: {
   site: Site | null | undefined;
   dayOfYear: number;
@@ -42,6 +44,8 @@ export function Lighting({
   interior: boolean;
   plan: Plan;
   lamps: boolean;
+  /** Lamps travel with the rooms they light. */
+  explode?: number;
 }) {
   const scene = useThree((s) => s.scene);
   const sun = useMemo(
@@ -54,7 +58,7 @@ export function Lighting({
     scene.background = new THREE.Color(sun.sky[0], sun.sky[1], sun.sky[2]);
   }, [scene, sun]);
 
-  const lampLights = lamps ? <Lamps plan={plan} /> : null;
+  const lampLights = lamps ? <Lamps plan={plan} explode={explode} /> : null;
 
   if (!sun) {
     return (
@@ -157,7 +161,7 @@ export function Lighting({
  * rest of the scene put together, and a ceiling light casting no shadow is a
  * far smaller lie than a room nobody can see.
  */
-function Lamps({ plan }: { plan: Plan }) {
+function Lamps({ plan, explode }: { plan: Plan; explode: number }) {
   const positions = useMemo(
     () =>
       plan.rooms
@@ -168,19 +172,21 @@ function Lamps({ plan }: { plan: Plan }) {
         })
         .map((room) => {
           const b = boundsOf(room.polygon);
+          // A lamp left behind would light the gap the room came out of.
+          const [dx, dy] = explodeOffset(plan, room, explode);
           return {
             id: room.id,
             position: [
-              (b.x0 + b.x1) / 2,
-              levelBase(plan, room.level) + room.ceilingHeight - 0.25,
-              (b.y0 + b.y1) / 2,
+              (b.x0 + b.x1) / 2 + dx,
+              levelBase(plan, room.level) + room.ceilingHeight - 0.25 + explodeLift(room.level, explode),
+              (b.y0 + b.y1) / 2 + dy,
             ] as [number, number, number],
             // Bigger rooms get a longer reach, so a hallway is not as bright as
             // a living room lit by the same fitting.
             distance: Math.max(3.5, Math.hypot(b.x1 - b.x0, b.y1 - b.y0) * 0.9),
           };
         }),
-    [plan],
+    [plan, explode],
   );
 
   return (

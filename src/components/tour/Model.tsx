@@ -11,6 +11,7 @@ import { elementForPiece, type Pick } from "@/lib/bom/pickable";
 import { furnishRoom } from "@/lib/model/furniture";
 import { BASEBOARD_DEPTH, BASEBOARD_HEIGHT, PALETTE } from "@/lib/model/materials";
 import { DEFAULT_SCHEME, type Scheme, floorToneFor, recolour } from "@/lib/model/schemes";
+import { explodeLift, explodeOffset, roomShell } from "@/lib/model/room-shell";
 import {
   ceilingHolesFor,
   floorHolesFor,
@@ -177,6 +178,7 @@ function LevelModel({
   furnished,
   walking,
   scheme,
+  explode,
   pick,
   onPick,
   onHover,
@@ -188,12 +190,18 @@ function LevelModel({
   furnished: boolean;
   walking: boolean;
   scheme: Scheme;
+  explode: number;
   pick: Pick | null;
   onPick?: (pick: Pick) => void;
   onHover?: (pick: Pick | null) => void;
   onMeasurePoint?: (point: THREE.Vector3) => void;
 }) {
   const baseY = levelBase(plan, level);
+
+  // Geometry is rebuilt only when the house comes apart or goes back together,
+  // never as the slider moves - the movement itself is a transform, and
+  // remerging a few hundred boxes sixty times a second is not.
+  const exploded = explode > 0;
 
   const built = useMemo(() => {
     const rooms = plan.rooms.filter((r) => r.level === level);
@@ -286,6 +294,23 @@ function LevelModel({
             boxGeometry(
               [piece.x0 + pw / 2, baseY + room.ceilingHeight + SLAB / 2, piece.y0 + pd / 2],
               [pw, SLAB, pd],
+            ),
+          );
+        }
+      }
+
+      // Pulled apart, a room carries its own four walls. Assembled it shares
+      // them with its neighbours, which is what stops the dollhouse having
+      // doubled partitions - so this is only built when it is needed.
+      if (exploded) {
+        for (const box of roomShell(plan, room)) {
+          addSurface(
+            room.id,
+            "walls",
+            scheme.wall,
+            boxGeometry(
+              [box.center[0], baseY + box.center[1], box.center[2]],
+              box.size,
             ),
           );
         }
@@ -397,7 +422,18 @@ function LevelModel({
       frames: merged(frameParts),
       glass: merged(glassParts),
     };
-  }, [plan, level, baseY, furnished, walking, scheme]);
+  }, [plan, level, baseY, furnished, walking, scheme, exploded]);
+
+  // Every surface of one room moves together, so a room comes apart from the
+  // house as one part rather than as a floor and some furniture that happen to
+  // travel the same way.
+  const offsetFor = (roomId: string): [number, number, number] => {
+    if (!exploded) return [0, 0, 0];
+    const room = built.rooms.find((r) => r.id === roomId);
+    if (!room) return [0, 0, 0];
+    const [dx, dy] = explodeOffset(plan, room, explode);
+    return [dx, explodeLift(level, explode), dy];
+  };
 
   return (
     <group>
@@ -409,6 +445,7 @@ function LevelModel({
         return (
           <mesh
             key={`${surface.roomId}-${surface.element}-${surface.colour}`}
+            position={offsetFor(surface.roomId)}
             geometry={surface.geometry}
             castShadow
             receiveShadow
@@ -456,7 +493,7 @@ function LevelModel({
         );
       })}
 
-      {built.interior && (
+      {!exploded && built.interior && (
         <mesh geometry={built.interior} castShadow receiveShadow>
           <meshStandardMaterial
             color={scheme.wall}
@@ -468,20 +505,25 @@ function LevelModel({
         </mesh>
       )}
 
-      <ExteriorShell
-        walls={built.exterior}
-        baseY={baseY}
-        opacity={opacity}
-        walking={walking}
-        colour={scheme.wallExterior}
-      />
+      {/* The shared shell is the assembled house. Pulled apart, each room has
+          brought its own walls and this would be a second set floating where
+          the building used to be. */}
+      {!exploded && (
+        <ExteriorShell
+          walls={built.exterior}
+          baseY={baseY}
+          opacity={opacity}
+          walking={walking}
+          colour={scheme.wallExterior}
+        />
+      )}
 
-      {built.frames && (
+      {!exploded && built.frames && (
         <mesh geometry={built.frames}>
           <meshStandardMaterial color={PALETTE.frame} roughness={0.6} transparent opacity={opacity} />
         </mesh>
       )}
-      {built.glass && (
+      {!exploded && built.glass && (
         <mesh geometry={built.glass}>
           {/*
             Nearly opaque, not see-through. Real glass would show whatever is
@@ -516,6 +558,7 @@ export function Model({
   onMeasurePoint,
   walking = false,
   scheme = DEFAULT_SCHEME,
+  explode = 0,
 }: {
   plan: Plan;
   opacity: number;
@@ -542,6 +585,15 @@ export function Model({
   onMeasurePoint?: (point: THREE.Vector3) => void;
   /** The interior direction. Changes the whole house together. */
   scheme?: Scheme;
+  /**
+   * How far the house is pulled apart, 0 to 1.
+   *
+   * At zero nothing moves and the model is exactly the assembled house. Above
+   * zero every room becomes a separate part with its own walls, which is what
+   * an exploded assembly drawing shows and what lets a room be looked at and
+   * costed on its own.
+   */
+  explode?: number;
 }) {
   const levels = useMemo(() => {
     const all = levelsOf(plan);
@@ -567,6 +619,7 @@ export function Model({
           furnished={furnished}
           walking={walking}
           scheme={scheme}
+          explode={explode}
           pick={pick}
           onPick={onPick}
           onHover={onHover}
@@ -577,10 +630,17 @@ export function Model({
       {showLabels &&
         labelled.map((room: Room) => {
           const c = centroid(room.polygon);
+          // A label that stayed behind while its room left would be labelling
+          // the hole where the room used to be.
+          const offset = explodeOffset(plan, room, explode);
           return (
             <Html
               key={room.id}
-              position={[c[0], levelBase(plan, room.level) + 0.06, c[1]]}
+              position={[
+                c[0] + offset[0],
+                levelBase(plan, room.level) + 0.06 + explodeLift(room.level, explode),
+                c[1] + offset[1],
+              ]}
               center
               distanceFactor={9}
               zIndexRange={[10, 0]}

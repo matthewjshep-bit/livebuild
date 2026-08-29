@@ -116,7 +116,14 @@ const OPENING_SNAP_M = 0.25;
  * where one doorway punches through two rooms' polygons at once.
  */
 export function wallSegmentsForRoom(room: Room, openings: Opening[]): Segment[] {
-  const relevant = openings.filter((o) => o.between.includes(room.id));
+  // Stairs join two storeys through a floor, not two rooms through a wall.
+  // Every other consumer of openings filters them out - `wallsForLevel`, the
+  // takeoff and the furniture placer all do - and this one did not, so a
+  // stairwell narrow enough to bring its opening within the snap tolerance
+  // would have had a doorway punched through a wall that has none.
+  const relevant = openings.filter(
+    (o) => o.kind !== "stairs" && o.between.includes(room.id),
+  );
   const out: Segment[] = [];
 
   for (let i = 0; i < room.polygon.length; i++) {

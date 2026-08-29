@@ -69,6 +69,7 @@ function Scene({
   onSelectNode,
   dayOfYear,
   hour,
+  explode,
   measuring,
   measurePoints,
   onMeasurePoint,
@@ -87,6 +88,7 @@ function Scene({
   onSelectNode: (id: string) => void;
   dayOfYear: number;
   hour: number;
+  explode: number;
   measuring: boolean;
   measurePoints: MeasurePoints;
   onMeasurePoint: (point: THREE.Vector3) => void;
@@ -132,6 +134,7 @@ function Scene({
         // Lit indoors, and after dark whatever the view. Nobody wants a
         // dollhouse glowing from inside at midday.
         lamps={view.mode === "walk" || hour < 7.5 || hour > 18.5}
+        explode={explode}
       />
 
       <CameraRig
@@ -141,6 +144,7 @@ function Scene({
         transition={transition}
         aspects={aspects}
         paused={touring}
+        explode={explode}
       />
 
       <DollhouseOpacityDriver transition={transition} onChange={setDollOpacity} />
@@ -158,6 +162,7 @@ function Scene({
         onMeasurePoint={measuring ? onMeasurePoint : undefined}
         walking={view.mode === "walk"}
         scheme={scheme}
+        explode={explode}
       />
 
       <Measure points={measurePoints} displayUnits={property.displayUnits} />
@@ -202,7 +207,8 @@ function Scene({
         activeNodeId={view.mode === "node" ? view.nodeId : null}
         // Rings are for stepping between photographs; on foot you simply walk.
         mode={view.mode === "walk" ? "dollhouse" : view.mode}
-        hidden={view.mode === "walk"}
+        // Stepping into a photograph from a house in pieces means nothing.
+        hidden={view.mode === "walk" || explode > 0}
         onlyLevel={onlyLevel}
         onSelect={onSelectNode}
       />
@@ -349,6 +355,10 @@ export function TourViewer({
     },
     [tourBeats, property.id],
   );
+
+  // How far the house is pulled apart. Walking through a house in pieces makes
+  // no sense, so entering walk mode puts it back together.
+  const [explode, setExplode] = useState(0);
 
   // The rail costs 320px of a 3D view, so it collapses to a spine.
   const [railCollapsed, setRailCollapsed] = useState(false);
@@ -512,8 +522,26 @@ export function TourViewer({
           >
             Measure
           </button>
+          {view.mode === "dollhouse" && (
+            <label className="mr-1 flex items-center gap-1.5 text-[11px] text-mist-400">
+              Explode
+              <input
+                type="range"
+                min={0}
+                max={1}
+                step={0.02}
+                value={explode}
+                aria-label="Explode the house"
+                onChange={(e) => setExplode(Number(e.target.value))}
+                className="w-24 accent-accent"
+              />
+            </label>
+          )}
           <button
-            onClick={() => setView({ mode: "walk" })}
+            onClick={() => {
+              setExplode(0);
+              setView({ mode: "walk" });
+            }}
             disabled={view.mode === "walk"}
             className="rounded border border-ink-500 px-3 py-1 text-xs text-mist-200 transition hover:bg-ink-600 disabled:opacity-35"
           >
@@ -593,6 +621,7 @@ export function TourViewer({
             onSelectNode={selectNode}
             dayOfYear={dayOfYearValue}
             hour={hour}
+            explode={explode}
             measuring={measuring}
             measurePoints={measurePoints}
             onMeasurePoint={addMeasurePoint}

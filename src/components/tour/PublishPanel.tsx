@@ -97,7 +97,10 @@ export function PublishPanel({ property }: { property: Property }) {
   }
 
   return (
-    <div className="absolute top-12 right-3 z-10 w-80 rounded-lg border border-ink-600 bg-ink-800/97 p-4 backdrop-blur">
+    <div
+      data-publish-panel
+      className="absolute top-12 right-3 z-10 w-80 rounded-lg border border-ink-600 bg-ink-800/97 p-4 backdrop-blur"
+    >
       <div className="flex items-start justify-between">
         <h3 className="text-sm font-medium">Publish this tour</h3>
         <button
@@ -117,6 +120,7 @@ export function PublishPanel({ property }: { property: Property }) {
           <div className="mt-2 flex gap-1.5">
             <input
               readOnly
+              aria-label="Share link"
               value={shareUrl}
               onFocus={(e) => e.currentTarget.select()}
               className="min-w-0 flex-1 rounded border border-ink-600 bg-ink-700 px-2 py-1 text-xs outline-none"
@@ -152,6 +156,7 @@ export function PublishPanel({ property }: { property: Property }) {
               <span>/t/</span>
               <input
                 value={slug}
+                aria-label="Link"
                 onChange={(e) => setSlug(toSlug(e.target.value))}
                 className="min-w-0 flex-1 rounded border border-ink-600 bg-ink-700 px-2 py-1 text-mist-200 outline-none focus:border-accent-dim"
               />
@@ -165,6 +170,7 @@ export function PublishPanel({ property }: { property: Property }) {
               </span>
               <input
                 type="password"
+                aria-label="Publish passphrase"
                 value={adminKey}
                 onChange={(e) => setAdminKey(e.target.value)}
                 className="w-full rounded border border-ink-600 bg-ink-700 px-2 py-1 text-xs outline-none focus:border-accent-dim"

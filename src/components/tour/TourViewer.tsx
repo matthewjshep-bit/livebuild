@@ -369,6 +369,18 @@ export function TourViewer({
   // The rail costs 320px of a 3D view, so it collapses to a spine.
   const [railCollapsed, setRailCollapsed] = useState(false);
 
+  /**
+   * Whether the browser has taken over from the server render.
+   *
+   * `MediaRecorder` does not exist on the server, so asking whether it can
+   * encode video returns nothing there and something here - and React then
+   * finds the server's HTML and the client's disagreeing and throws the whole
+   * tree away to re-render it. Deciding after mount is the fix; the button
+   * appears a frame later, which nobody sees.
+   */
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => setMounted(true), []);
+
   const [locked, setLocked] = useState(false);
   useEffect(() => {
     const onChange = () => setLocked(Boolean(document.pointerLockElement));
@@ -502,7 +514,7 @@ export function TourViewer({
           >
             {touring ? "Stop" : "Tour"}
           </button>
-          {supportedFormat() && (
+          {mounted && supportedFormat() && (
             <button
               onClick={() => startTour(true)}
               disabled={touring || view.mode === "plan"}

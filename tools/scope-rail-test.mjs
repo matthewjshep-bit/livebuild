@@ -102,37 +102,24 @@ check("the total survives collapsing",
 await page.getByLabel("Show the scope").click();
 await page.waitForTimeout(400);
 
-// --- 4. The privacy gate ---
+// --- 4. The privacy gate lives elsewhere ---
 //
 // A bundled sample opened in a fresh browser is deliberately still yours to
 // edit - that was fixed on purpose so the demo house could be costed at all -
-// so it is NOT the test for this. The real gate is `PublishedTour`, which
-// renders `TourViewer` with no edit callback; without one there is no BOM and
-// so no rail.
+// so it is not the test for this. The real gate is `PublishedTour`, which
+// renders the viewer with no edit callback and therefore has no BOM and no
+// rail, and the only place a published tour exists is `publish-test.mjs`. It
+// asserts there that a visitor sees neither the rail nor any costs.
 //
-// An earlier version of this test used the bundled route and "passed" because
-// nothing had been clicked yet. The check it replaced in bom-pane-test was
-// worse: it computed the answer and never asserted it.
-const published = await fetch(`${BASE}/api/publish/status`).then((r) => r.json()).catch(() => null);
-let gateChecked = false;
-if (published?.configured) {
-  gateChecked = true;
-  const visitor = await browser.newContext({ viewport: { width: 1500, height: 900 } });
-  const visitorPage = await visitor.newPage();
-  await visitorPage.goto(`${BASE}/t/${published.sampleSlug ?? "none"}`, { waitUntil: "networkidle" });
-  await visitorPage.waitForTimeout(3000);
-  check("a published tour shows no scope rail",
-    (await visitorPage.locator("[data-scope-rail]").count()) === 0);
-} else {
-  console.log("  (publishing not configured, so the published-tour gate is untested here)");
-}
+// An earlier version of this tried to check it here against a status field
+// that does not exist, so it always reported "not configured" and always
+// passed. A check that cannot fail is worse than an absent one.
 
 check("no console errors", errors.length === 0, errors.slice(0, 2).join(" | "));
 
 console.log(
   failures === 0
-    ? `SCOPE RAIL OK - always visible, follows the model, collapses` +
-      (gateChecked ? ", and hidden from a published tour" : " (published-tour gate not exercised)")
+    ? "SCOPE RAIL OK - always visible, follows the model, and collapses"
     : `SCOPE RAIL BROKEN - ${failures} failures`,
 );
 await browser.close();

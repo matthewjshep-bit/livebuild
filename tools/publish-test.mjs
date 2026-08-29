@@ -13,6 +13,7 @@
  *   node tools/publish-test.mjs
  */
 import { chromium } from "playwright";
+import { addPhotos, build, freshStart } from "./lib/flow.mjs";
 import { readdirSync } from "node:fs";
 import { join } from "node:path";
 import { readFileSync } from "node:fs";
@@ -59,36 +60,27 @@ const page = await author.newPage();
 const errors = [];
 page.on("pageerror", (e) => errors.push(e.message));
 
-await page.goto(`${base}/new`, { waitUntil: "networkidle" });
-await page.waitForTimeout(700);
-if (await page.getByRole("button", { name: "Start over" }).count()) {
-  await page.getByRole("button", { name: "Start over" }).click();
-  await page.waitForTimeout(400);
-}
-await page.setInputFiles('input[type="file"]', files);
-await page.waitForTimeout(1800);
-await page.getByRole("button", { name: "Next", exact: true }).click();
-await page.waitForTimeout(400);
-await page.getByRole("button", { name: /^(Next|Skip)$/ }).click();
-await page.waitForTimeout(400);
-for (const room of ["Kitchen", "Living Room", "Bedroom"]) {
-  const b = page.getByRole("button", { name: room, exact: true });
-  if (await b.count()) {
-    await b.first().click();
-    await page.waitForTimeout(250);
-  }
-}
-await page.getByRole("button", { name: "Next", exact: true }).click();
-await page.waitForTimeout(700);
-await page.getByRole("button", { name: "Build my tour" }).click();
+// The wizard used to be five steps with a Next button between each. It was
+// collapsed to a single button long ago and this test was never updated -
+// because with no Supabase project it reported SKIPPED and nobody ran it. It
+// now drives the same shared flow every other suite uses.
+await freshStart(page, base);
+await addPhotos(page, files);
 
-// Let depth finish so the published tour carries real depth maps.
-await page.waitForTimeout(6000);
+const built = await build(page);
+if (!built) {
+  console.log(JSON.stringify({ verdict: "PUBLISH FAILED - the house never built" }, null, 2));
+  await browser.close();
+  process.exit(1);
+}
+
+// Let depth finish so the published tour carries real depth maps rather than
+// flat photographs - which is half of what publishing is for.
 for (let i = 0; i < 40; i++) {
   const done = await page.evaluate(() => {
     const index = JSON.parse(localStorage.getItem("mattermatt:index") ?? "[]");
     const doc = JSON.parse(localStorage.getItem("mattermatt:property:" + index.pop()) ?? "null");
-    return doc && doc.nodes.every((n) => n.depth);
+    return doc && doc.nodes.length > 0 && doc.nodes.every((n) => n.depth);
   });
   if (done) break;
   await page.waitForTimeout(4000);
@@ -101,22 +93,29 @@ await page.goto(`${base}/tour/${id}`, { waitUntil: "networkidle" });
 await page.waitForTimeout(3000);
 
 await page.getByRole("button", { name: "Publish" }).click();
-await page.waitForTimeout(500);
-await page.locator('input[type="password"]').fill(adminKey);
-const slugInput = page.locator('input').filter({ hasNot: page.locator('[type="password"]') }).first();
-await slugInput.fill(slug);
+await page.waitForTimeout(600);
+
+// Addressed by label rather than by position. `input` first-on-page used to be
+// the slug field and is now an explode slider - the same brittleness that has
+// broken three other suites in this codebase.
+await page.getByLabel("Publish passphrase").fill(adminKey);
+await page.getByLabel("Link").fill(slug);
 await page.getByRole("button", { name: "Publish", exact: true }).last().click();
 
 let published = null;
 for (let i = 0; i < 60; i++) {
   await page.waitForTimeout(2000);
   published = await page.evaluate(() => {
-    const text = document.body.innerText;
-    if (/Live\. Anyone with this link/.test(text)) {
-      const input = [...document.querySelectorAll("input")].find((i) => i.readOnly);
-      return { url: input?.value ?? null };
+    // Scoped to the panel. Reading `.text-warn` page-wide picked up the scope
+    // rail's "5 not seen" and reported it as a publish failure - the panel is
+    // the only thing that knows whether publishing worked.
+    const panel = document.querySelector("[data-publish-panel]");
+    if (!panel) return null;
+    if (/Live\. Anyone with this link/.test(panel.textContent ?? "")) {
+      const input = panel.querySelector('[aria-label="Share link"]');
+      return { url: input instanceof HTMLInputElement ? input.value : null };
     }
-    const warn = document.querySelector(".text-warn");
+    const warn = panel.querySelector(".text-warn");
     return warn ? { error: warn.textContent } : null;
   });
   if (published) break;
@@ -140,6 +139,11 @@ if (published?.url) {
     hasCanvas: !!document.querySelector("canvas"),
     offersPublish: /Publish/.test(document.body.innerText),
     offersFinish: /still flat/.test(document.body.innerText),
+    // The privacy invariant, checked where a published tour actually exists.
+    // A visitor is looking at somebody else's listing and has no business
+    // seeing what it would cost to renovate it.
+    showsScopeRail: !!document.querySelector("[data-scope-rail]"),
+    showsCosts: /Scope of work|CONDITION/i.test(document.body.innerText),
     title: document.title,
     localStorageEmpty: localStorage.length === 0,
   }));
@@ -149,6 +153,8 @@ const ok =
   published?.url &&
   viewerState?.hasCanvas &&
   !viewerState.offersPublish &&
+  !viewerState.showsScopeRail &&
+  !viewerState.showsCosts &&
   viewerState.localStorageEmpty;
 
 console.log(
@@ -159,7 +165,8 @@ console.log(
       authorErrors: errors.slice(0, 3),
       viewerErrors: viewerErrors.slice(0, 3),
       verdict: ok
-        ? `PUBLISH WORKS - ${published.url} renders for a viewer with empty storage, and shows them no author controls`
+        ? `PUBLISH WORKS - ${published.url} renders for a viewer with empty storage, ` +
+          `with no author controls and no rehab costs`
         : "PUBLISH FAILED",
     },
     null,

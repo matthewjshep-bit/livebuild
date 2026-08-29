@@ -9,7 +9,7 @@
 import { readFileSync } from "node:fs";
 
 import { DOOR_HEIGHT, EXTERIOR_THICKNESS, INTERIOR_THICKNESS, wallsForLevel } from "../src/lib/model/walls";
-import { autoOpenings } from "../src/lib/plan/autolayout";
+import { autoOpenings, boundsOf } from "../src/lib/plan/autolayout";
 import { parseProperty } from "../src/lib/schema";
 import type { Plan } from "../src/lib/schema";
 
@@ -56,7 +56,14 @@ function overlaps(a: ReturnType<typeof wallsForLevel>[number], b: typeof a): boo
     Math.min(aAcross + a.thickness / 2, bAcross + b.thickness / 2) -
     Math.max(aAcross - a.thickness / 2, bAcross - b.thickness / 2);
 
-  return alongOverlap > 0.05 && acrossOverlap > 0.02;
+  if (acrossOverlap <= 0.02) return false;
+
+  // A duplicated wall covers substantially the same run twice. A few
+  // centimetres of overlap is a junction: walls are carried past their ends to
+  // fill the corner they turn, so two collinear neighbours meeting at a corner
+  // now share a sliver by design. Judging that by an absolute threshold would
+  // make the corner fix look like the bug it exists to fix.
+  return alongOverlap > Math.min(a.length, b.length) * 0.5;
 }
 
 for (const [name, path] of [
@@ -128,9 +135,64 @@ for (const [name, path] of [
   );
 }
 
+// Corners close.
+//
+// Two boxes meeting at a right angle leave the outer quadrant empty, and on the
+// demo house that was a 200mm square hole at every corner of the building - you
+// could see straight through it when orbiting past. It is exactly the kind of
+// fault that a screenshot from the wrong angle says nothing about, so it is
+// probed against the geometry rather than looked at.
+for (const fixture of ["demo-house", "two-storey"]) {
+  const plan = load(`public/properties/${fixture}/property.json`);
+
+  for (const level of [...new Set(plan.rooms.map((r) => r.level))]) {
+    const boxes = wallsForLevel(plan, level)
+      .filter((w) => !w.header)
+      .map((w) => {
+        const alongX = Math.abs(w.angleDeg) < 45;
+        const halfW = (alongX ? w.length : w.thickness) / 2;
+        const halfD = (alongX ? w.thickness : w.length) / 2;
+        return {
+          x0: w.center[0] - halfW,
+          y0: w.center[1] - halfD,
+          x1: w.center[0] + halfW,
+          y1: w.center[1] + halfD,
+        };
+      });
+    if (boxes.length === 0) continue;
+
+    const solid = (x: number, y: number) =>
+      boxes.some((b) => x >= b.x0 - 1e-9 && x <= b.x1 + 1e-9 && y >= b.y0 - 1e-9 && y <= b.y1 + 1e-9);
+
+    // Every corner of every room, probed just outside it on the diagonal -
+    // which is precisely where the quadrant went missing.
+    let holes = 0;
+    let probes = 0;
+    for (const room of plan.rooms.filter((r) => r.level === level)) {
+      const b = boundsOf(room.polygon);
+      for (const [cx, cy] of [
+        [b.x0, b.y0],
+        [b.x1, b.y0],
+        [b.x0, b.y1],
+        [b.x1, b.y1],
+      ]) {
+        const sx = cx === b.x0 ? -1 : 1;
+        const sy = cy === b.y0 ? -1 : 1;
+        probes++;
+        if (!solid(cx + sx * 0.03, cy + sy * 0.03)) holes++;
+      }
+    }
+    check(
+      `${fixture} level ${level}: no open corners`,
+      holes === 0,
+      `${holes} of ${probes} room corners let daylight through`,
+    );
+  }
+}
+
 console.log(
   failures === 0
-    ? "WALLS OK - shared walls built once, real thickness, doorways cut with headers above"
+    ? "WALLS OK - shared walls built once, real thickness, doorways cut with headers above, corners closed"
     : `WALLS BROKEN - ${failures} failures`,
 );
 process.exit(failures === 0 ? 0 : 1);

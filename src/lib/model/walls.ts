@@ -27,6 +27,9 @@ export const DOOR_HEIGHT = 2.05;
 /** Edges closer than this were meant to be the same wall. */
 const PAIR_TOLERANCE = 0.06;
 
+/** Below this a wall piece is a pairing artefact rather than a wall. */
+const MIN_WALL_PIECE = 0.08;
+
 export type WallSolid = {
   /** Centre of the wall in plan space. */
   center: Vec2;
@@ -182,7 +185,40 @@ export function wallsForLevel(plan: Plan, level: number): WallSolid[] {
     outward: Vec2 | null,
   ) => {
     if (span.to - span.from < 1e-3) return;
-    const { solid, doors } = subtractOpenings(span, axis, at, openings);
+
+    // Carry each wall past its ends, far enough to fill the corner it turns.
+    //
+    // Two boxes meeting at a right angle leave the outer quadrant of the
+    // corner empty - measured on the demo house, a 200mm square hole at every
+    // corner of the building, which is what you see through when you orbit
+    // past. A general mitred-polygon solver would fix it too, and would be a
+    // great deal of machinery for plans that are axis-aligned rectangles by
+    // construction.
+    //
+    // How far depends on where the wall sits relative to the room edge. An
+    // interior wall straddles it, so half its thickness reaches the far face of
+    // whatever it meets. An exterior wall is offset wholly outside it, so it
+    // needs its full thickness to reach round the corner.
+    // Only the outermost pieces are carried, and only after the doorways have
+    // been taken out. Stretching the span first was the obvious order and the
+    // wrong one: the extension is then something a doorway can be subtracted
+    // from, so a door near the end of a wall left a 250mm stub floating beyond
+    // it. Doorways keep their exact positions this way.
+    const reach = exterior ? thickness : thickness / 2;
+    const { solid: raw, doors } = subtractOpenings(span, axis, at, openings);
+
+    // Slivers are dropped before anything is carried anywhere. Pairing at a
+    // T-junction leaves fragments a few centimetres long; unextended they were
+    // too small to see, and carrying one past its ends turns a 50mm artefact
+    // into a 250mm wall standing where it does not belong.
+    const solid = raw.filter((piece) => piece.to - piece.from > MIN_WALL_PIECE);
+
+    if (solid.length > 0) {
+      solid[0] = { from: solid[0].from - reach, to: solid[0].to };
+      const last = solid.length - 1;
+      solid[last] = { from: solid[last].from, to: solid[last].to + reach };
+    }
+
     for (const piece of solid) {
       solids.push(toSolid(axis, at, piece, thickness, 0, ceiling, exterior, false, outward));
     }

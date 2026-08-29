@@ -31,27 +31,6 @@ const check = (name, ok, detail = "") => {
   }
 };
 
-/**
- * Mean colour of a patch, read off a screenshot.
- *
- * Not off the canvas: a WebGL context does not preserve its drawing buffer by
- * default, so copying it into a 2D canvas after the frame has been presented
- * returns solid black. The first version of this did exactly that and reported
- * every sample as 0,0,0 - which looks like a rendering failure rather than a
- * test that is reading the wrong thing.
- */
-const sample = async (x, y, w, h) => {
-  const png = PNG.sync.read(await page.screenshot());
-  let r = 0, g = 0, b = 0, n = 0;
-  for (let py = y; py < y + h; py++) {
-    for (let px = x; px < x + w; px++) {
-      const i = (png.width * py + px) << 2;
-      r += png.data[i]; g += png.data[i + 1]; b += png.data[i + 2]; n++;
-    }
-  }
-  return [Math.round(r / n), Math.round(g / n), Math.round(b / n)];
-};
-
 const distance = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
 
 // Seeded with coordinates so the daylight control exists - without a site
@@ -75,42 +54,69 @@ await page.waitForTimeout(5000);
 const selector = page.getByLabel("Interior scheme");
 check("the scheme selector exists", (await selector.count()) === 1);
 
-// The hallway floor, which is wood in every scheme and so changes tone rather
-// than material - and the bed, which is the furniture check.
-const FLOOR = [700, 390, 90, 20];
-// The bed as a whole, frame included. Sampling only the bedding compared
-// near-white against near-white: the two schemes genuinely differ there by
-// about three values out of 255, which is a real change and not a measurable
-// one. The frame is where a scheme actually shows.
-const BED = [380, 500, 120, 115];
+/**
+ * Find where the scheme changed, rather than guessing where the floor is.
+ *
+ * This used to sample two hardcoded patches. That is brittle twice over: the
+ * scope rail shifted the 3D view sideways and the "floor" patch landed on a
+ * wall, and even expressed as a fraction of the canvas a fixed patch only works
+ * for one camera angle on one fixture. Comparing a grid and reporting the
+ * largest change asks the question that is actually being asked - does
+ * switching the scheme repaint the house - without needing to know the house.
+ */
+const gridSamples = async () => {
+  const png = PNG.sync.read(await page.screenshot());
+  const cells = [];
+  const COLS = 24;
+  const ROWS = 16;
+  const cw = Math.floor(png.width / COLS);
+  const ch = Math.floor(png.height / ROWS);
+  for (let cy = 0; cy < ROWS; cy++) {
+    for (let cx = 0; cx < COLS; cx++) {
+      let r = 0, g = 0, b = 0, n = 0;
+      for (let y = cy * ch; y < (cy + 1) * ch; y += 3) {
+        for (let x = cx * cw; x < (cx + 1) * cw; x += 3) {
+          const i = (png.width * y + x) << 2;
+          r += png.data[i]; g += png.data[i + 1]; b += png.data[i + 2]; n++;
+        }
+      }
+      cells.push([Math.round(r / n), Math.round(g / n), Math.round(b / n)]);
+    }
+  }
+  return cells;
+};
+
 
 await selector.selectOption("Cool contemporary");
 await page.waitForTimeout(2200);
-const coolFloor = await sample(...FLOOR);
-const coolBed = await sample(...BED);
+const cool = await gridSamples();
 
 await selector.selectOption("Warm traditional");
 await page.waitForTimeout(2200);
-const warmFloor = await sample(...FLOOR);
-const warmBed = await sample(...BED);
+const warm = await gridSamples();
 
-check("the floor changes with the scheme", distance(coolFloor, warmFloor) > 20,
-  `${coolFloor} to ${warmFloor}`);
-// The furniture is checked in scheme-colour-test.ts instead. Measured here it
-// came out two to five values out of 255 - a real change, and not one a
-// screenshot can distinguish from noise, because a bed is mostly bedding and
-// bedding is near-white in every direction. The claim is about the mapping, so
-// the mapping is asserted directly rather than photographed.
-check("the bed is still drawn", coolBed[0] > 5 && warmBed[0] > 5, `${coolBed} / ${warmBed}`);
+// How much of the picture moved, and by how much at its strongest.
+const deltas = cool.map((c, i) => distance(c, warm[i]));
+const strongest = Math.max(...deltas);
+const moved = deltas.filter((d) => d > 8).length;
+const at = deltas.indexOf(strongest);
 
-// Warm should actually be warmer, or the schemes are merely different rather
-// than what they say they are.
+check("switching the scheme repaints the house", strongest > 25,
+  `strongest change ${strongest.toFixed(0)} across ${cool.length} cells`);
+check("it repaints a substantial part of it, not one object", moved >= 12,
+  `${moved} cells moved`);
+
+// And warm must actually be warmer where it changed most, or the schemes are
+// merely different rather than what their names claim.
 const warmth = (c) => c[0] - c[2];
 check("the warm scheme is warmer than the cool one",
-  warmth(warmFloor) > warmth(coolFloor),
-  `red-minus-blue ${warmth(warmFloor)} against ${warmth(coolFloor)}`);
+  warmth(warm[at]) > warmth(cool[at]),
+  `red-minus-blue ${warmth(warm[at])} against ${warmth(cool[at])}`);
 
-console.log(`  floor ${coolFloor} → ${warmFloor}, bed ${coolBed} → ${warmBed}`);
+console.log(
+  `  strongest change ${strongest.toFixed(0)} at cell ${at}: ` +
+    `${cool[at]} → ${warm[at]}; ${moved} of ${cool.length} cells moved`,
+);
 
 // Lamps come on after dark. Without them the house would simply go black, and
 // a tour that only works at noon is half a tour.
@@ -118,13 +124,20 @@ const time = page.getByLabel("Time of day");
 if ((await time.count()) === 0) {
   console.log("  (no daylight control on this fixture, so lamps are untested here)");
 } else {
+  // Whole-frame brightness, for the same reason: no patch to guess at.
+  const meanLuminance = async () => {
+    const cells = await gridSamples();
+    const lums = cells.map((c) => 0.299 * c[0] + 0.587 * c[1] + 0.114 * c[2]);
+    return lums.reduce((a, b) => a + b, 0) / lums.length;
+  };
+
   await time.fill("13");
   await page.waitForTimeout(1500);
-  const day = await sample(...FLOOR);
+  const day = await meanLuminance();
   await time.fill("23");
   await page.waitForTimeout(1800);
-  const night = await sample(...FLOOR);
-  const lum = (c) => 0.299 * c[0] + 0.587 * c[1] + 0.114 * c[2];
+  const night = await meanLuminance();
+  const lum = (v) => v;
   check("night is darker than day", lum(night) < lum(day), `${lum(night)} vs ${lum(day)}`);
   check("the lamps keep the room visible at night", lum(night) > 12,
     `luminance ${lum(night).toFixed(0)}`);

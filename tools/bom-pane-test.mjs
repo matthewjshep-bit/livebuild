@@ -107,9 +107,15 @@ await page.waitForTimeout(5000);
 const inside = await paneState(page);
 await page.screenshot({ path: "shots/P2-pane-inside.png" });
 
-// --- 4. A published tour must not expose costs to a visitor ---
-// Simulated by the absence of a stored property: the viewer gets no editing
-// callbacks, so no pane.
+// --- 4. What a bundled sample shows in a fresh browser ---
+//
+// Recorded, not asserted, and the name now says so. This was called
+// "a published tour must not expose costs" and simulated that by clearing local
+// storage - but `/tour/[id]` passes editing callbacks for a bundled sample
+// whether or not anything is stored, so it never simulated a visitor at all. It
+// also computed the answer and left it out of the pass condition, so it could
+// not have failed. The real gate is `PublishedTour`, which renders the viewer
+// with no edit callback; `scope-rail-test.mjs` checks it where it lives.
 const visitor = await browser.newContext({ viewport: { width: 1280, height: 860 } });
 const visitorPage = await visitor.newPage();
 await visitorPage.goto(`${base}/tour/demo-house`, { waitUntil: "networkidle" });
@@ -132,7 +138,7 @@ console.log(
       clickedSurface: clicked,
       regraded,
       standingInARoom: inside,
-      bundledViewerSeesPane: visitorSeesPane,
+      bundledSampleIsEditable: visitorSeesPane,
       errors: errors.slice(0, 3),
       verdict: ok
         ? `SCOPE PANE OK - clicking a surface shows "${clicked.heading}" with its condition, ` +

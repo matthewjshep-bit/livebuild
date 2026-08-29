@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import type { Bom, BomAssembly, BomLine, BomRoom } from "@/lib/bom/build";
 import { GRADE_LABEL, type Grade } from "@/lib/bom/condition";
@@ -77,16 +77,46 @@ function Assembly({ assembly }: { assembly: BomAssembly }) {
   );
 }
 
-function Room({ room, defaultOpen }: { room: BomRoom; defaultOpen: boolean }) {
+function Room({
+  room,
+  defaultOpen,
+  compact,
+  selected,
+  onSelect,
+}: {
+  room: BomRoom;
+  defaultOpen: boolean;
+  compact: boolean;
+  selected: boolean;
+  onSelect?: (roomId: string) => void;
+}) {
   const [open, setOpen] = useState(defaultOpen);
   const nothing = room.assemblies.length === 0;
+  const ref = useRef<HTMLDivElement>(null);
+
+  // Selecting a room in the model opens it here and scrolls it into view. The
+  // rail is taller than it is tall, so a highlight alone would often be
+  // highlighting something off-screen.
+  useEffect(() => {
+    if (!selected) return;
+    if (!nothing) setOpen(true);
+    ref.current?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+  }, [selected, nothing]);
 
   return (
-    <div className="border-b border-ink-700 last:border-0">
+    <div
+      ref={ref}
+      data-room-row={room.roomId}
+      data-selected={selected ? "true" : undefined}
+      className={`border-b border-ink-700 last:border-0 ${selected ? "bg-accent/10" : ""}`}
+    >
       <button
-        onClick={() => !nothing && setOpen((v) => !v)}
+        onClick={() => {
+          onSelect?.(room.roomId);
+          if (!nothing) setOpen((v) => !v);
+        }}
         className={`grid w-full grid-cols-[1fr_auto] gap-3 px-3 py-2.5 text-left ${
-          nothing ? "cursor-default" : "hover:bg-ink-700/60"
+          nothing && !onSelect ? "cursor-default" : "hover:bg-ink-700/60"
         }`}
       >
         <span className="min-w-0">
@@ -97,14 +127,26 @@ function Room({ room, defaultOpen }: { room: BomRoom; defaultOpen: boolean }) {
             {nothing && <span className="mr-1.5 inline-block w-3" />}
             {room.label}
           </span>
+          {/* The full takeoff wraps badly in a 320px rail, so the rail shows
+              only the floor area and the scope page keeps the rest. */}
           <span className="ml-2 text-[11px] text-mist-400">
-            {Math.round(room.takeoff.floorSqft)} sqft floor ·{" "}
-            {Math.round(room.takeoff.wallSqft)} sqft wall ·{" "}
-            {Math.round(room.takeoff.baseboardLf)} lf trim
+            {compact ? (
+              `${Math.round(room.takeoff.floorSqft)} sqft`
+            ) : (
+              <>
+                {Math.round(room.takeoff.floorSqft)} sqft floor ·{" "}
+                {Math.round(room.takeoff.wallSqft)} sqft wall ·{" "}
+                {Math.round(room.takeoff.baseboardLf)} lf trim
+              </>
+            )}
           </span>
           {room.unknownElements.length > 0 && (
+            // Spelled out on the scope page, counted in the rail. Nine element
+            // names wrap to three lines there and bury the room they belong to.
             <div className="mt-0.5 text-[11px] text-warn">
-              Not seen: {room.unknownElements.join(", ")}
+              {compact
+                ? `${room.unknownElements.length} not seen`
+                : `Not seen: ${room.unknownElements.join(", ")}`}
             </div>
           )}
         </span>
@@ -120,18 +162,30 @@ function Room({ room, defaultOpen }: { room: BomRoom; defaultOpen: boolean }) {
   );
 }
 
-export function BomTree({ bom }: { bom: Bom }) {
+export function BomTree({
+  bom,
+  compact = false,
+  selectedRoomId = null,
+  onSelectRoom,
+}: {
+  bom: Bom;
+  /** Narrow enough that the full takeoff line will not fit. */
+  compact?: boolean;
+  /** Highlighted and forced open - driven by what is selected in the model. */
+  selectedRoomId?: string | null;
+  onSelectRoom?: (roomId: string) => void;
+}) {
   const levels = [...new Set(bom.rooms.map((r) => r.level))].sort((a, b) => a - b);
 
   return (
-    <div className="rounded-lg border border-ink-600 bg-ink-800">
+    <div className={compact ? "" : "rounded-lg border border-ink-600 bg-ink-800"}>
       {bom.house.length > 0 && (
         <div className="border-b border-ink-700">
           <div className="grid grid-cols-[1fr_auto] gap-3 px-3 py-2.5">
             <span className="text-sm font-medium text-mist-200">
               Whole house
               <span className="ml-2 text-[11px] text-mist-400">
-                roof, systems and exterior — belongs to no single room
+                {compact ? "roof, systems, exterior" : "roof, systems and exterior — belongs to no single room"}
               </span>
             </span>
             <span className="tabular-nums text-sm text-mist-200">{money(bom.houseTotal)}</span>
@@ -152,7 +206,16 @@ export function BomTree({ bom }: { bom: Bom }) {
           {bom.rooms
             .filter((r) => r.level === level)
             .map((room) => (
-              <Room key={room.roomId} room={room} defaultOpen={room.total > 0} />
+              <Room
+                key={room.roomId}
+                room={room}
+                compact={compact}
+                // In the rail everything starts closed: a dozen open rooms is a
+                // wall of text, and the model is what picks one out.
+                defaultOpen={!compact && room.total > 0}
+                selected={room.roomId === selectedRoomId}
+                onSelect={onSelectRoom}
+              />
             ))}
         </div>
       ))}

@@ -12,7 +12,7 @@ import { buildTour, tourDuration } from "@/lib/model/tour-script";
 import { SCHEMES, type Scheme, schemeByName } from "@/lib/model/schemes";
 import { dayOfYear, solarPosition } from "@/lib/model/sun";
 import { WalkControls, type WalkState } from "@/components/tour/WalkControls";
-import { BomPane } from "@/components/bom/BomPane";
+import { ScopeRail } from "@/components/bom/ScopeRail";
 import { Model } from "@/components/tour/Model";
 import { buildBom } from "@/lib/bom/build";
 import type { Element, Grade } from "@/lib/bom/condition";
@@ -350,6 +350,9 @@ export function TourViewer({
     [tourBeats, property.id],
   );
 
+  // The rail costs 320px of a 3D view, so it collapses to a spine.
+  const [railCollapsed, setRailCollapsed] = useState(false);
+
   const [locked, setLocked] = useState(false);
   useEffect(() => {
     const onChange = () => setLocked(Boolean(document.pointerLockElement));
@@ -536,7 +539,27 @@ export function TourViewer({
         </div>
       </header>
 
-      <div className="relative flex-1">
+      {/* The rail sits outside the relative wrapper on purpose: the hint bar and
+          the tour caption are centred with `left-1/2`, and inside they would
+          centre on the window rather than on the 3D view. */}
+      <div className="flex min-h-0 flex-1">
+        {bom && (
+          <ScopeRail
+            bom={bom}
+            pick={pick}
+            condition={pick ? property.condition[pick.roomId] ?? {} : {}}
+            onGrade={grade}
+            onSelectRoom={(roomId) => setPick({ roomId, element: null })}
+            onClear={() => setPick(null)}
+            onOpenFull={() => {
+              window.location.href = `/bom/${property.id}`;
+            }}
+            collapsed={railCollapsed}
+            onToggle={() => setRailCollapsed((v) => !v)}
+          />
+        )}
+
+      <div className="relative min-w-0 flex-1">
         <Canvas
           camera={{ fov: 60, near: 0.05, far: 200 }}
           dpr={[1, 2]}
@@ -581,18 +604,6 @@ export function TourViewer({
           />
         </Canvas>
 
-        {bom && pick && (
-          <BomPane
-            bom={bom}
-            pick={pick}
-            condition={property.condition[pick.roomId] ?? {}}
-            onGrade={grade}
-            onClear={() => setPick(null)}
-            onOpenFull={() => {
-              window.location.href = `/bom/${property.id}`;
-            }}
-          />
-        )}
 
         {onPropertyChange && (
           <FinishProcessing
@@ -714,6 +725,7 @@ export function TourViewer({
             </p>
           </div>
         )}
+      </div>
       </div>
     </div>
   );

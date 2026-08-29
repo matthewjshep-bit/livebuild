@@ -33,6 +33,7 @@ export function BomPane({
   onGrade,
   onClear,
   onOpenFull,
+  className,
 }: {
   bom: Bom;
   pick: Pick | null;
@@ -41,6 +42,12 @@ export function BomPane({
   onGrade: (roomId: string, element: Element, grade: Grade) => void;
   onClear: () => void;
   onOpenFull: () => void;
+  /**
+   * Where the pane sits. It floats over the canvas on its own and sits inside
+   * the scope rail when there is one - the contents are identical either way,
+   * so only the frame changes.
+   */
+  className?: string;
 }) {
   const detail = detailFor(bom, pick);
   if (!detail || !pick) return null;
@@ -53,7 +60,10 @@ export function BomPane({
       data-scope-pane
       data-heading={element ? ELEMENT_LABEL[element] : room.label}
       data-total={Math.round(total)}
-      className="absolute top-3 left-3 z-10 w-72 overflow-hidden rounded-lg border border-ink-600 bg-ink-800/95 backdrop-blur"
+      className={
+        className ??
+        "absolute top-3 left-3 z-10 w-72 overflow-hidden rounded-lg border border-ink-600 bg-ink-800/95 backdrop-blur"
+      }
     >
       <div className="flex items-start justify-between gap-2 border-b border-ink-700 px-3 py-2.5">
         <div className="min-w-0">

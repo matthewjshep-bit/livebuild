@@ -9,7 +9,8 @@ import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js
 import { type Element } from "@/lib/bom/condition";
 import { elementForPiece, type Pick } from "@/lib/bom/pickable";
 import { furnishRoom } from "@/lib/model/furniture";
-import { BASEBOARD_DEPTH, BASEBOARD_HEIGHT, PALETTE, floorColour } from "@/lib/model/materials";
+import { BASEBOARD_DEPTH, BASEBOARD_HEIGHT, PALETTE } from "@/lib/model/materials";
+import { DEFAULT_SCHEME, type Scheme, floorToneFor, recolour } from "@/lib/model/schemes";
 import {
   TEXTURE_METRES,
   applyWorldUvs,
@@ -84,11 +85,13 @@ function ExteriorShell({
   baseY,
   opacity,
   walking,
+  colour,
 }: {
   walls: WallSolid[];
   baseY: number;
   opacity: number;
   walking: boolean;
+  colour: string;
 }) {
   const groups = useMemo(() => {
     const byFacing = new Map<string, { normal: [number, number]; parts: THREE.BufferGeometry[] }>();
@@ -148,7 +151,7 @@ function ExteriorShell({
             ref={(m) => {
               materials.current[i] = m;
             }}
-            color={PALETTE.wallExterior}
+            color={colour}
             roughness={0.95}
             metalness={0}
             transparent
@@ -167,6 +170,7 @@ function LevelModel({
   opacity,
   furnished,
   walking,
+  scheme,
   pick,
   onPick,
   onHover,
@@ -177,6 +181,7 @@ function LevelModel({
   opacity: number;
   furnished: boolean;
   walking: boolean;
+  scheme: Scheme;
   pick: Pick | null;
   onPick?: (pick: Pick) => void;
   onHover?: (pick: Pick | null) => void;
@@ -249,7 +254,7 @@ function LevelModel({
       addSurface(
         room.id,
         "floor",
-        floorColour(room.label),
+        floorToneFor(room.label, scheme),
         boxGeometry([b.x0 + w / 2, baseY - SLAB / 2, b.y0 + d / 2], [w, SLAB, d]),
       );
 
@@ -258,7 +263,7 @@ function LevelModel({
         addSurface(
           room.id,
           "ceiling",
-          PALETTE.ceiling,
+          scheme.ceiling,
           boxGeometry(
             [b.x0 + w / 2, baseY + room.ceilingHeight + SLAB / 2, b.y0 + d / 2],
             [w, SLAB, d],
@@ -277,7 +282,7 @@ function LevelModel({
         boxGeometry([b.x0 + t / 2, y, b.y0 + d / 2], [t, h, d]),
         boxGeometry([b.x1 - t / 2, y, b.y0 + d / 2], [t, h, d]),
       ]) {
-        addSurface(room.id, "trim", PALETTE.baseboard, part);
+        addSurface(room.id, "trim", scheme.trim, part);
       }
 
       if (furnished) {
@@ -289,7 +294,7 @@ function LevelModel({
             addSurface(
               room.id,
               element ?? "floor",
-              box.colour,
+              recolour(box.colour, scheme),
               boxGeometry(
                 [b.x0 + box.center[0], baseY + box.center[1], b.y0 + box.center[2]],
                 box.size,
@@ -354,7 +359,7 @@ function LevelModel({
       frames: merged(frameParts),
       glass: merged(glassParts),
     };
-  }, [plan, level, baseY, furnished, walking]);
+  }, [plan, level, baseY, furnished, walking, scheme]);
 
   return (
     <group>
@@ -416,7 +421,7 @@ function LevelModel({
       {built.interior && (
         <mesh geometry={built.interior} castShadow receiveShadow>
           <meshStandardMaterial
-            color={PALETTE.wallInterior}
+            color={scheme.wall}
             roughness={0.95}
             metalness={0}
             transparent
@@ -425,7 +430,13 @@ function LevelModel({
         </mesh>
       )}
 
-      <ExteriorShell walls={built.exterior} baseY={baseY} opacity={opacity} walking={walking} />
+      <ExteriorShell
+        walls={built.exterior}
+        baseY={baseY}
+        opacity={opacity}
+        walking={walking}
+        colour={scheme.wallExterior}
+      />
 
       {built.frames && (
         <mesh geometry={built.frames}>
@@ -466,6 +477,7 @@ export function Model({
   onHover,
   onMeasurePoint,
   walking = false,
+  scheme = DEFAULT_SCHEME,
 }: {
   plan: Plan;
   opacity: number;
@@ -490,6 +502,8 @@ export function Model({
   onHover?: (pick: Pick | null) => void;
   /** Set while the tape measure is out; receives the exact point clicked. */
   onMeasurePoint?: (point: THREE.Vector3) => void;
+  /** The interior direction. Changes the whole house together. */
+  scheme?: Scheme;
 }) {
   const levels = useMemo(() => {
     const all = levelsOf(plan);
@@ -514,6 +528,7 @@ export function Model({
           opacity={opacity}
           furnished={furnished}
           walking={walking}
+          scheme={scheme}
           pick={pick}
           onPick={onPick}
           onHover={onHover}

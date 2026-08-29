@@ -80,7 +80,10 @@ await page.screenshot({ path: "shots/P1-pane-surface.png" });
 let regraded = null;
 if (clicked) {
   const before = clicked.total;
-  const select = page.locator("select").first();
+  // Scoped to the pane. `select` first-on-page used to be unambiguous and is
+  // not any more - the toolbar now carries an interior-scheme picker, and the
+  // first select on the page became that one.
+  const select = page.locator("[data-scope-pane] select").first();
   const current = await select.inputValue();
   // To "good" specifically. Flooring triggers on both dated and poor, so
   // swapping between them is a no-op - the honest way to prove condition drives

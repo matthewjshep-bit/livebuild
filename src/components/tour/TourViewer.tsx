@@ -7,6 +7,7 @@ import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "rea
 import { CameraRig, type TransitionState, type ViewState } from "@/components/tour/CameraRig";
 import { Lighting } from "@/components/tour/Lighting";
 import { Measure, type MeasurePoints } from "@/components/tour/Measure";
+import { SCHEMES, type Scheme, schemeByName } from "@/lib/model/schemes";
 import { dayOfYear, solarPosition } from "@/lib/model/sun";
 import { WalkControls, type WalkState } from "@/components/tour/WalkControls";
 import { BomPane } from "@/components/bom/BomPane";
@@ -69,6 +70,7 @@ function Scene({
   measuring,
   measurePoints,
   onMeasurePoint,
+  scheme,
 }: {
   property: Property;
   view: ViewState;
@@ -82,6 +84,7 @@ function Scene({
   measuring: boolean;
   measurePoints: MeasurePoints;
   onMeasurePoint: (point: THREE.Vector3) => void;
+  scheme: Scheme;
 }) {
   const [dollOpacity, setDollOpacity] = useState(1);
   // Which storey the walker is standing on, which changes under them on the
@@ -115,6 +118,10 @@ function Scene({
         dayOfYear={dayOfYear}
         hour={hour}
         interior={view.mode === "walk" || view.mode === "node"}
+        plan={property.plan}
+        // Lit indoors, and after dark whatever the view. Nobody wants a
+        // dollhouse glowing from inside at midday.
+        lamps={view.mode === "walk" || hour < 7.5 || hour > 18.5}
       />
 
       <CameraRig
@@ -139,6 +146,7 @@ function Scene({
         onPick={onPick}
         onMeasurePoint={measuring ? onMeasurePoint : undefined}
         walking={view.mode === "walk"}
+        scheme={scheme}
       />
 
       <Measure points={measurePoints} displayUnits={property.displayUnits} />
@@ -274,6 +282,12 @@ export function TourViewer({
     );
   }, []);
 
+  // The interior direction. A single palette made every house this tool builds
+  // look like the same house, which is strange for something whose claim is
+  // that it builds yours.
+  const [schemeName, setSchemeName] = useState<string>(SCHEMES[1].name);
+  const scheme = schemeByName(schemeName);
+
   const [locked, setLocked] = useState(false);
   useEffect(() => {
     const onChange = () => setLocked(Boolean(document.pointerLockElement));
@@ -385,6 +399,19 @@ export function TourViewer({
           >
             Dollhouse
           </button>
+          <select
+            value={schemeName}
+            onChange={(e) => setSchemeName(e.target.value)}
+            aria-label="Interior scheme"
+            title={scheme.blurb}
+            className="rounded border border-ink-500 bg-ink-700 px-2 py-1 text-xs text-mist-200 outline-none focus:border-accent-dim"
+          >
+            {SCHEMES.map((s) => (
+              <option key={s.name} value={s.name}>
+                {s.name}
+              </option>
+            ))}
+          </select>
           <button
             onClick={() => {
               setMeasuring((on) => !on);
@@ -463,6 +490,7 @@ export function TourViewer({
             measuring={measuring}
             measurePoints={measurePoints}
             onMeasurePoint={addMeasurePoint}
+            scheme={scheme}
           />
         </Canvas>
 

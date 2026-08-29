@@ -5,7 +5,10 @@ import { useEffect, useMemo } from "react";
 import * as THREE from "three";
 
 import { SKY_RAYS, sunState } from "@/lib/model/sun";
-import type { Site } from "@/lib/schema";
+import { boundsOf } from "@/lib/plan/autolayout";
+import { levelBase } from "@/lib/plan/geometry";
+import { roomKind } from "@/lib/plan/room-kind";
+import type { Plan, Site } from "@/lib/schema";
 
 /**
  * Daylight, from where the house actually is.
@@ -30,11 +33,15 @@ export function Lighting({
   hour,
   /** True indoors, where the sky matters more than the key light. */
   interior,
+  plan,
+  lamps,
 }: {
   site: Site | null | undefined;
   dayOfYear: number;
   hour: number;
   interior: boolean;
+  plan: Plan;
+  lamps: boolean;
 }) {
   const scene = useThree((s) => s.scene);
   const sun = useMemo(
@@ -47,9 +54,12 @@ export function Lighting({
     scene.background = new THREE.Color(sun.sky[0], sun.sky[1], sun.sky[2]);
   }, [scene, sun]);
 
+  const lampLights = lamps ? <Lamps plan={plan} /> : null;
+
   if (!sun) {
     return (
       <>
+        {lampLights}
         {/*
           No site, so no sun. One key light with real shadows, a cool sky fill
           and very little ambient - flat ambient light is what made the old
@@ -130,6 +140,61 @@ export function Lighting({
 
       {/* Just enough to keep a shadowed corner from going black. */}
       <ambientLight intensity={0.2 + 0.12 * sun.day} />
+      {lampLights}
+    </>
+  );
+}
+
+/**
+ * A light in the middle of each room's ceiling.
+ *
+ * Daylight only reaches where a window lets it, which is correct and leaves the
+ * middle of a plan dim in the afternoon and unusable after dark. A house has
+ * lights in it; modelling that is both more honest and the difference between
+ * a tour you can take at any hour and one that only works at noon.
+ *
+ * No shadows from these. Twenty shadow-casting lights would cost more than the
+ * rest of the scene put together, and a ceiling light casting no shadow is a
+ * far smaller lie than a room nobody can see.
+ */
+function Lamps({ plan }: { plan: Plan }) {
+  const positions = useMemo(
+    () =>
+      plan.rooms
+        // Nothing outdoors, and nothing in a cupboard.
+        .filter((room) => {
+          const kind = roomKind(room.label);
+          return kind !== "outside" && kind !== "closet";
+        })
+        .map((room) => {
+          const b = boundsOf(room.polygon);
+          return {
+            id: room.id,
+            position: [
+              (b.x0 + b.x1) / 2,
+              levelBase(plan, room.level) + room.ceilingHeight - 0.25,
+              (b.y0 + b.y1) / 2,
+            ] as [number, number, number],
+            // Bigger rooms get a longer reach, so a hallway is not as bright as
+            // a living room lit by the same fitting.
+            distance: Math.max(3.5, Math.hypot(b.x1 - b.x0, b.y1 - b.y0) * 0.9),
+          };
+        }),
+    [plan],
+  );
+
+  return (
+    <>
+      {positions.map((lamp) => (
+        <pointLight
+          key={lamp.id}
+          position={lamp.position}
+          intensity={2.4}
+          distance={lamp.distance}
+          decay={1.6}
+          color="#ffe9c9"
+        />
+      ))}
     </>
   );
 }

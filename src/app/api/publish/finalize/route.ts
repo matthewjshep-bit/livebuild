@@ -29,7 +29,7 @@ export async function POST(request: Request) {
     return Response.json({ error: "bad-request" }, { status: 400 });
   }
 
-  if (!isAdmin(body.adminKey)) {
+  if (!isAdmin((body.adminKey ?? "").trim())) {
     return Response.json({ error: "unauthorised" }, { status: 401 });
   }
 

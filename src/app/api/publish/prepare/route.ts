@@ -25,7 +25,9 @@ export async function POST(request: Request) {
     return Response.json({ error: "bad-request" }, { status: 400 });
   }
 
-  if (!isAdmin(body.adminKey)) {
+  // Trimmed on the way in too: the passphrase is typed by a person, and a
+  // trailing space from a copy-paste is not a different passphrase.
+  if (!isAdmin((body.adminKey ?? "").trim())) {
     return Response.json({ error: "unauthorised" }, { status: 401 });
   }
 

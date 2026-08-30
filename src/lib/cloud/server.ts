@@ -22,8 +22,14 @@ import { BUCKET, SUPABASE_URL } from "@/lib/cloud/config";
  * reports itself unconfigured no matter what the dashboard says. Reading inside
  * the function costs nothing and cannot be stale.
  */
-const serviceRoleKey = () => process.env.SUPABASE_SERVICE_ROLE_KEY ?? "";
-const adminKey = () => process.env.MATTERMATT_ADMIN_KEY ?? "";
+/**
+ * Trimmed, because a dashboard field will happily hold a trailing newline and
+ * then show you nothing to distinguish it from a clean one. `isAdmin` compares
+ * lengths before anything else, so one invisible character rejects the correct
+ * passphrase - and the operator has no way to see why.
+ */
+const serviceRoleKey = () => (process.env.SUPABASE_SERVICE_ROLE_KEY ?? "").trim();
+const adminKey = () => (process.env.MATTERMATT_ADMIN_KEY ?? "").trim();
 
 export function serviceClient() {
   const key = serviceRoleKey();

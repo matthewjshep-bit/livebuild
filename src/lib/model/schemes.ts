@@ -150,8 +150,88 @@ export const SCHEMES: Scheme[] = [
 
 export const DEFAULT_SCHEME = SCHEMES[1];
 
-export function schemeByName(name: string | null | undefined): Scheme {
-  return SCHEMES.find((s) => s.name === name) ?? DEFAULT_SCHEME;
+/** The name given to a scheme derived from the building's own colours. */
+export const THIS_HOUSE = "This house";
+
+/**
+ * A CSS colour name or hex to `#rrggbb`, or null if it is neither.
+ *
+ * Deliberately a short list rather than the full CSS set: these are the words
+ * OpenStreetMap mappers and a vision model actually use for a building, and a
+ * complete table would be a hundred lines of colours no house is painted.
+ */
+const NAMED: Record<string, string> = {
+  white: "#f2f0eb", offwhite: "#eeeae2", cream: "#efe6d2", beige: "#e4d9c3",
+  ivory: "#f2ece0", grey: "#9c9c9c", gray: "#9c9c9c", lightgrey: "#c8c8c6",
+  lightgray: "#c8c8c6", darkgrey: "#5c5c5c", darkgray: "#5c5c5c",
+  silver: "#c0c0c0", black: "#2b2b2b", charcoal: "#3c3f42", brown: "#7a5c42",
+  tan: "#c9a882", sand: "#ddc9a3", red: "#9e3b30", brick: "#8b4a3a",
+  terracotta: "#a85c3f", orange: "#c17a45", yellow: "#d9c06a", cream_yellow: "#e8dba6",
+  green: "#5c7355", olive: "#6f7350", sage: "#9aa88f", blue: "#4a6b8a",
+  lightblue: "#a8c0d4", navy: "#33455c", slate: "#5a6672", stone: "#b8b2a5",
+};
+
+export function toHex(colour: string | null | undefined): string | null {
+  if (!colour) return null;
+  const value = colour.trim().toLowerCase();
+  if (/^#[0-9a-f]{6}$/.test(value)) return value;
+  if (/^#[0-9a-f]{3}$/.test(value)) {
+    return `#${value[1]}${value[1]}${value[2]}${value[2]}${value[3]}${value[3]}`;
+  }
+  return NAMED[value.replace(/[^a-z]/g, "")] ?? null;
+}
+
+/**
+ * A scheme wearing this building's own colours.
+ *
+ * Derived by *tinting a copy* of an existing scheme rather than built from the
+ * two colours we know, and that is not laziness. A `Scheme` owes a tone for
+ * every floor finish and a whole upholstery palette that `recolour` matches by
+ * exact string; a scheme assembled from a wall colour and a roof colour would
+ * have holes in both, and the holes show up as untextured floors and furniture
+ * that ignores the scheme entirely.
+ *
+ * Only the exterior is repainted from what was observed. The reading is of the
+ * *outside* of the house - satellite and street level see nothing else - and
+ * painting the interior brick red because the walls are brick would be
+ * asserting something nobody looked at.
+ */
+export function houseScheme(exterior: {
+  walls?: { colour?: string | null } | null;
+  roof?: { colour?: string | null } | null;
+} | null | undefined): Scheme | null {
+  const wall = toHex(exterior?.walls?.colour);
+  const roof = toHex(exterior?.roof?.colour);
+  if (!wall && !roof) return null;
+
+  const base = DEFAULT_SCHEME;
+  return {
+    ...base,
+    name: THIS_HOUSE,
+    blurb: wall
+      ? "The colours read off the building itself, inside left as it is."
+      : "The roof read off the building itself.",
+    wallExterior: wall ?? base.wallExterior,
+    floors: { ...base.floors },
+    furniture: { ...base.furniture },
+  };
+}
+
+/**
+ * The schemes on offer for one property.
+ *
+ * `SCHEMES` is a module constant that several places index by name, so a
+ * house-specific entry is prepended to a copy rather than pushed into it -
+ * mutating the shared array would give every other property in the tab this
+ * one's colours.
+ */
+export function schemesFor(exterior: Parameters<typeof houseScheme>[0]): Scheme[] {
+  const own = houseScheme(exterior);
+  return own ? [own, ...SCHEMES] : SCHEMES;
+}
+
+export function schemeByName(name: string | null | undefined, from: Scheme[] = SCHEMES): Scheme {
+  return from.find((s) => s.name === name) ?? from.find((s) => s.name === DEFAULT_SCHEME.name) ?? from[0];
 }
 
 /** A room's floor colour under a given scheme. */

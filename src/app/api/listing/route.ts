@@ -3,6 +3,8 @@ import type { FootprintMiss, ListingFootprint, ListingResult } from "@/lib/listi
 import { addressFromZillowUrl, looksLikeUrl } from "@/lib/listing/url";
 import { ListingError, fetchZillowListing } from "@/lib/listing/zillow";
 import { inferStoreys, prepareFootprint } from "@/lib/plan/footprint";
+import type { Exterior } from "@/lib/schema";
+import { exteriorFromOsm } from "@/lib/site/osm";
 
 /**
  * Address in, listing photos and facts out.
@@ -28,17 +30,29 @@ export async function GET() {
 }
 
 /**
- * The building's outline, or null.
+ * The building's outline and where it stands, or null.
  *
  * Isolated from the listing lookup and failing quietly on purpose. The outline
  * makes the model better; the listing makes it possible. Letting a slow
  * Overpass mirror or a suburb OSM has never mapped turn a successful
  * three-minute scrape into an error would be the wrong trade by a wide margin.
+ *
+ * The point is returned alongside, and that is not incidental. Without a
+ * scraper the listing carries no coordinates, so geocoding here and then
+ * dropping the answer left an address-built house with `site: null` - no
+ * bearing for the plan's axes, and a studio key light instead of the daylight
+ * this house actually gets. The lookup already knows where the building is; it
+ * only had to say so.
  */
 async function outlineFor(
   listing: ListingResult,
   why?: { reason: FootprintMiss },
-): Promise<ListingFootprint | null> {
+): Promise<{
+  footprint: ListingFootprint | null;
+  point: { lat: number; lon: number } | null;
+  exterior: Exterior | null;
+}> {
+  let located: { lat: number; lon: number } | null = null;
   try {
     const point = listing.location ?? (await geocode(listing.address));
     if (!point) {
@@ -47,42 +61,60 @@ async function outlineFor(
       // the town of Gold Bar, Washington and not Pine Road within it - and the
       // fix for the user is different in each case.
       if (why) why.reason = "not-located";
-      return null;
+      return { footprint: null, point: null, exterior: null };
     }
+    located = point;
 
     const found = await fetchFootprint(point.lat, point.lon);
     if (!found) {
       if (why) why.reason = "no-building";
-      return null;
+      return { footprint: null, point: located, exterior: null };
     }
 
     // The outline is the ground floor, so the listing's total area has to be
     // divided by the number of floors standing on it. Zillow's own storey field
     // is usually absent, so it is only a hint - the areas decide.
     const raw = prepareFootprint(found.ring);
-    const stories = listing.facts.sqft
-      ? Math.max(
-          Math.round(listing.facts.stories ?? 1),
-          inferStoreys(listing.facts.sqft, raw.areaSqft),
-        )
-      : Math.max(1, Math.round(listing.facts.stories ?? 1));
+    // What the map recorded about the outside, which is survey data and beats
+    // anything read off a photograph later.
+    const exterior = exteriorFromOsm({ tags: found.tags, outbuildings: found.outbuildings });
+
+    // A surveyed storey count settles it. The area ratio is a good estimate of
+    // exactly the thing `building:levels` states outright, so where a mapper
+    // has written it down there is nothing left to infer.
+    const stories =
+      exterior?.storeys ??
+      (listing.facts.sqft
+        ? Math.max(
+            Math.round(listing.facts.stories ?? 1),
+            inferStoreys(listing.facts.sqft, raw.areaSqft),
+          )
+        : Math.max(1, Math.round(listing.facts.stories ?? 1)));
     const groundSqft = listing.facts.sqft ? listing.facts.sqft / stories : undefined;
 
     const prepared = prepareFootprint(found.ring, groundSqft);
 
     return {
-      ring: found.ring,
-      outline: prepared.outline.map(([x, y]) => [x, y] as [number, number]),
-      rects: prepared.rects,
-      areaSqft: prepared.areaSqft,
-      rotationDeg: prepared.rotationDeg,
-      storeys: stories,
-      wayId: found.wayId,
-      attribution: OSM_ATTRIBUTION,
+      footprint: {
+        ring: found.ring,
+        outline: prepared.outline.map(([x, y]) => [x, y] as [number, number]),
+        rects: prepared.rects,
+        areaSqft: prepared.areaSqft,
+        rotationDeg: prepared.rotationDeg,
+        storeys: stories,
+        wayId: found.wayId,
+        attribution: OSM_ATTRIBUTION,
+      },
+      point: located,
+      exterior: exterior
+        ? { ...exterior, attribution: [OSM_ATTRIBUTION] }
+        : null,
     };
   } catch {
     if (why) why.reason = "lookup-failed";
-    return null;
+    // A point already resolved survives a later failure: knowing where the
+    // house is does not depend on Overpass having answered about its shape.
+    return { footprint: null, point: located, exterior: null };
   }
 }
 
@@ -118,10 +150,12 @@ async function footprintOnly(query: string): Promise<Response> {
   // a dead end for the user. The address still names the property and the
   // house still gets built - just as a rectangle, the way it always was.
   const why: { reason: FootprintMiss } = { reason: "no-building" };
-  const footprint = await outlineFor(listing, why);
+  const { footprint, point, exterior } = await outlineFor(listing, why);
   return Response.json({
     ...listing,
+    location: point,
     footprint,
+    exterior,
     footprintMiss: footprint ? null : why.reason,
     scraperConfigured: Boolean(process.env.APIFY_TOKEN),
   });
@@ -148,10 +182,12 @@ export async function POST(request: Request) {
   try {
     const listing = await fetchZillowListing(query, token);
     const why: { reason: FootprintMiss } = { reason: "no-building" };
-    const footprint = await outlineFor(listing, why);
+    const { footprint, point, exterior } = await outlineFor(listing, why);
     return Response.json({
       ...listing,
+      location: listing.location ?? point,
       footprint,
+      exterior,
       footprintMiss: footprint ? null : why.reason,
       scraperConfigured: true,
     });

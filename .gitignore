@@ -1,7 +1,10 @@
 node_modules/
 .next/
 out/
-build/
+# Anchored, because unanchored it matches a `build` directory at any depth -
+# which quietly swallowed src/lib/build/ and would have left the shared build
+# pipeline out of the repository with no warning.
+/build/
 .DS_Store
 *.pem
 .env*

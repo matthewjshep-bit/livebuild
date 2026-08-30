@@ -347,9 +347,16 @@ export function prepareFootprint(
     }
   }
 
-  const rects = decompose(outline).filter(
-    (r) => rectArea(r) / (M_PER_FT * M_PER_FT) >= MIN_RECT_SQFT,
-  );
+  // Largest first, and published that way.
+  //
+  // The packer wants them in this order and used to sort a copy for itself,
+  // which quietly made `footprint.rects[i]` and the packer's own `i` two
+  // different rectangles. Nothing depended on that yet; anything handed an
+  // assignment indexed against the published array would have put the living
+  // room in the sliver, with no error and a plausible-looking house.
+  const rects = decompose(outline)
+    .filter((r) => rectArea(r) / (M_PER_FT * M_PER_FT) >= MIN_RECT_SQFT)
+    .sort((a, b) => rectArea(b) - rectArea(a));
 
   return {
     outline,
@@ -426,12 +433,81 @@ function capacityOf(rect: Rect): number {
  * app: the stated goal is that the general layout and shape are right, and the
  * shape is the part that is actually known here.
  */
+/**
+ * Which rooms go where, when something knows better than the packer does.
+ *
+ * Given as **rows**, because rows are the unit the packer actually lays out:
+ * each spans the full width of its rectangle, and the rows stack to its full
+ * height. That is what makes this safe to hand to anything - a description, a
+ * model, a person - since *any* partition that uses every room exactly once
+ * still fills the outline exactly, and filling exactly is the invariant the
+ * whole file turns on.
+ *
+ * It is also the only lever with real reach. A room-to-rectangle assignment
+ * sounds like the powerful knob and mostly is not: a plain rectangular house
+ * decomposes to a single rectangle, so every room lands in the same one and the
+ * entire layout is decided by how that rectangle is cut into rows.
+ *
+ * Indices are into `labels`. Rectangle order is `footprint.rects` as published,
+ * which `prepareFootprint` now sorts so the two cannot disagree.
+ */
+export type PackPlan = {
+  /** rows[rect][row] = room indices, left to right; rows run y0 to y1. */
+  rows: number[][][];
+};
+
+/**
+ * Is this partition one the packer can honour without breaking anything.
+ *
+ * Rejected rather than repaired, and the caller falls back to deriving its own.
+ * A partition that is nearly right is not better than the heuristic: the two
+ * dimension checks in particular guard `distribute`'s equal-split branch, which
+ * still fills the outline but does it with rooms too narrow to stand in - and
+ * `MIN_ROOM_DIM` exists because a room nobody could sleep in reads as a broken
+ * model, where a room a foot out reads as a floor plan.
+ */
+export function validatePackPlan(
+  plan: PackPlan,
+  labels: string[],
+  rects: Rect[],
+): boolean {
+  if (plan.rows.length !== rects.length) return false;
+
+  const seen = new Set<number>();
+  for (let r = 0; r < rects.length; r++) {
+    const rows = plan.rows[r];
+    if (!Array.isArray(rows) || rows.length === 0) return false;
+
+    const width = rects[r].x1 - rects[r].x0;
+    const height = rects[r].y1 - rects[r].y0;
+    if (rows.length > Math.max(1, Math.floor(height / MIN_ROOM_DIM))) return false;
+
+    for (const row of rows) {
+      if (!Array.isArray(row) || row.length === 0) return false;
+      if (row.length > Math.max(1, Math.floor(width / MIN_ROOM_DIM))) return false;
+      for (const index of row) {
+        if (!Number.isInteger(index) || index < 0 || index >= labels.length) return false;
+        if (seen.has(index)) return false;
+        seen.add(index);
+      }
+    }
+  }
+
+  // Every room placed, and no rectangle left empty - an empty one is a hole in
+  // the middle of the house.
+  return seen.size === labels.length;
+}
+
 export function packIntoFootprint(
   labels: string[],
   footprint: Footprint,
   level = 0,
+  /** An externally chosen partition. Ignored unless it validates. */
+  given?: PackPlan,
 ): Room[] {
-  const rects = [...footprint.rects].sort((a, b) => rectArea(b) - rectArea(a));
+  // Already largest first, from `prepareFootprint`, so an index here and an
+  // index into `footprint.rects` mean the same rectangle.
+  const rects = footprint.rects;
   if (labels.length === 0 || rects.length === 0) return [];
 
   const sizes = labels.map((label) => typicalSize(label));
@@ -493,9 +569,15 @@ export function packIntoFootprint(
 
   const rooms: Room[] = new Array(labels.length);
 
+  // A supplied partition replaces the derivation above and nothing else. Every
+  // dimension below still comes from `distribute` and `MIN_ROOM_DIM`, so an
+  // outside answer can choose the arrangement and cannot produce a gap or a
+  // room too small to be one.
+  const supplied = given && validatePackPlan(given, labels, rects) ? given : null;
+
   rects.forEach((rect, r) => {
     const indices = assignment[r].sort((a, b) => a - b);
-    if (indices.length === 0) return;
+    if (!supplied && indices.length === 0) return;
 
     const width = rect.x1 - rect.x0;
     const height = rect.y1 - rect.y0;
@@ -518,7 +600,7 @@ export function packIntoFootprint(
       rows[Math.floor((i * finalRows) / indices.length)].push(index);
     });
 
-    const filled = rows.filter((rowItems) => rowItems.length > 0);
+    const filled = supplied ? supplied.rows[r] : rows.filter((rowItems) => rowItems.length > 0);
 
     // Share space by **area**, not by wanted width or depth.
     //

@@ -58,13 +58,22 @@ function doorwayWalls(plan: Plan, room: Room): string[] {
 }
 
 /**
- * Compass heading (0 = north, 90 = east) to the app's own convention
- * (0 = plan +y, 90 = plan +x).
+ * A *room-frame* compass heading (0 = north, 90 = east) to the app's own
+ * convention (0 = plan +y, 90 = plan +x).
  *
  * The two differ by a reflection, not an offset: north is *decreasing* y on a
  * plan drawn with y downward, while the app measures from increasing y. Adding
  * 180 gets north and south right and leaves east and west swapped, which points
  * half the photos at the wrong wall while looking plausible on the other half.
+ *
+ * **This is not a true-compass converter, despite reading like one.** The
+ * "north" it takes is the room's own `y0` wall - the pseudo-compass `/api/pose`
+ * describes a room in, matching `doorwayWalls` above - and the formula is the
+ * general one with the plan's bearing pinned at 90. A real compass bearing put
+ * through it is wrong by exactly the angle the footprint was rotated to square
+ * it up, which is 78 degrees on one of the test fixtures: enough to put a
+ * building's front door on the wrong side of it. For a real bearing use
+ * `planFromBearing` in `model/sun.ts`, which is given the site and knows.
  */
 export function compassToPlanHeading(compassDeg: number): number {
   return ((180 - compassDeg) % 360 + 360) % 360;

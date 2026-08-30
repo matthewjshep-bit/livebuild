@@ -65,10 +65,23 @@ const RETRYABLE = new Set([429, 500, 502, 503, 504]);
 export type FetchedFootprint = {
   /** The outline as [lat, lon] pairs, unclosed. */
   ring: Array<[number, number]>;
-  /** OSM tags, which sometimes carry the address and the storey count. */
+  /**
+   * OSM tags. Mappers record more than the address here - storey count, roof
+   * shape and direction, wall material and colour - and all of it is survey
+   * data rather than something a model had to read off a photograph.
+   */
   tags: Record<string, string>;
   /** OSM way id, for attribution and for checking a match by hand. */
   wayId: number;
+  /**
+   * The other buildings on the parcel, as bearings from this one's centre.
+   *
+   * They are filtered out of the house search as outbuildings, which is right -
+   * a detached garage is not the dwelling. But *where the garage is* says which
+   * side of the house the driveway comes in on, and that is worth keeping
+   * rather than discarding with it.
+   */
+  outbuildings: Array<{ bearing: number; kind: string }>;
 };
 
 async function overpass(query: string): Promise<unknown> {
@@ -157,9 +170,8 @@ out geom;`;
     (p.lat - lat) * 111_320,
   ];
 
-  const candidates = (data.elements ?? [])
+  const measured = (data.elements ?? [])
     .filter((e) => e.type === "way" && (e.geometry?.length ?? 0) >= 4)
-    .filter((e) => !OUTBUILDINGS.has(e.tags?.building ?? ""))
     .map((element) => {
       const points = element.geometry!.map(toLocal);
 
@@ -189,8 +201,17 @@ out geom;`;
         }
       }
 
-      return { element, areaSqm, inside, distance: Math.hypot(centroid[0], centroid[1]) };
-    })
+      return {
+        element,
+        areaSqm,
+        inside,
+        centroid,
+        distance: Math.hypot(centroid[0], centroid[1]),
+      };
+    });
+
+  const candidates = measured
+    .filter((c) => !OUTBUILDINGS.has(c.element.tags?.building ?? ""))
     .filter((c) => c.areaSqm >= MIN_HOUSE_SQM);
 
   if (candidates.length === 0) return null;
@@ -211,7 +232,22 @@ out geom;`;
     ring.pop();
   }
 
-  return { ring, tags: chosen.tags ?? {}, wayId: chosen.id };
+  // Bearings are measured in the query point's local frame, where +x is east
+  // and +y is north, so this is a plain compass bearing and needs no site.
+  const chosenCentroid = candidates[0].centroid;
+  const outbuildings = measured
+    .filter((c) => c.element.id !== chosen.id)
+    .filter((c) => OUTBUILDINGS.has(c.element.tags?.building ?? ""))
+    .map((c) => ({
+      kind: c.element.tags?.building ?? "",
+      bearing:
+        ((Math.atan2(c.centroid[0] - chosenCentroid[0], c.centroid[1] - chosenCentroid[1]) * 180) /
+          Math.PI +
+          360) %
+        360,
+    }));
+
+  return { ring, tags: chosen.tags ?? {}, wayId: chosen.id, outbuildings };
 }
 
 /**

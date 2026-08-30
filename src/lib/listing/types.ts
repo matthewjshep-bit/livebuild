@@ -1,3 +1,5 @@
+import type { Exterior } from "@/lib/schema";
+
 /** What a listing lookup returns. Shared by the server route and the wizard. */
 export type ListingFacts = {
   beds: number | null;
@@ -66,6 +68,12 @@ export type ListingResult = {
   /** Parcel coordinates from the listing, which beat geocoding the address. */
   location: { lat: number; lon: number } | null;
   footprint: ListingFootprint | null;
+  /**
+   * What the map recorded about the outside of the building - storeys, roof,
+   * materials, where the garage is. Survey data, and absent far more often than
+   * it is present.
+   */
+  exterior?: Exterior | null;
   /** Set when `footprint` is null, saying which of the three happened. */
   footprintMiss?: FootprintMiss | null;
   /** Whether listing scraping is configured, so the UI can say what is missing. */

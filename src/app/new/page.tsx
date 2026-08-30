@@ -8,20 +8,28 @@ import { PropertyStart } from "@/components/wizard/PropertyStart";
 import { PhotoReview } from "@/components/wizard/PhotoReview";
 import { PlanBuilder } from "@/components/wizard/PlanBuilder";
 import { DepthEstimator, type DepthProgress } from "@/lib/depth/client";
-import { classifyPhotos } from "@/lib/listing/client";
-import { refinePoses } from "@/lib/listing/pose";
+import {
+  type BuildStep,
+  estimateDepth,
+  labelPhotos,
+  placePhotos,
+  posePhotos,
+  roomHints,
+} from "@/lib/build/pipeline";
 import {
   factsToDescription,
   type ListingFacts,
   type ListingFootprint,
   type ListingResult,
 } from "@/lib/listing/types";
-import { deleteMedia, getMedia, mediaRef, putMedia, refToKey } from "@/lib/media-store";
-import { layoutFromSpec, placeNodesInRoom } from "@/lib/plan/autolayout";
+import { deleteMedia, refToKey } from "@/lib/media-store";
+import { readExterior } from "@/lib/site/client";
+import { mergeExterior } from "@/lib/site/osm";
+import { layoutFromSpec } from "@/lib/plan/autolayout";
 import { layoutFromFootprint, prepareFootprint } from "@/lib/plan/footprint";
 import { type HouseSpec, describeToSpec } from "@/lib/plan/describe";
 import { saveProperty } from "@/lib/property-store";
-import type { Plan, Property } from "@/lib/schema";
+import type { Exterior, Plan, Property } from "@/lib/schema";
 import { requestPersistence } from "@/lib/storage/db";
 import {
   type Draft,
@@ -44,8 +52,6 @@ import { M_PER_FT, sqftToM2 } from "@/lib/units";
  */
 type Stage = "photos" | "building" | "review";
 
-type BuildStep = { label: string; done: number; total: number };
-
 function newPropertyId(): string {
   const now = new Date();
   return `home-${now.toISOString().slice(0, 10)}-${now.getHours()}${String(
@@ -65,6 +71,8 @@ export default function NewTourPage() {
   const [footprint, setFootprint] = useState<ListingFootprint | null>(null);
   /** Parcel coordinates from the listing, for the sun. */
   const [listingSite, setListingSite] = useState<{ lat: number; lon: number } | null>(null);
+  /** What the map recorded about the outside - storeys, roof, materials. */
+  const [exterior, setExterior] = useState<Exterior | null>(null);
   const [plan, setPlan] = useState<Plan | null>(null);
   const [property, setProperty] = useState<Property | null>(null);
 
@@ -75,6 +83,19 @@ export default function NewTourPage() {
   const [restoring, setRestoring] = useState(true);
   const [resumable, setResumable] = useState<Draft | null>(null);
   const estimatorRef = useRef<DepthEstimator | null>(null);
+
+  /**
+   * Rooms seen through an opening from another room, from the last labelling
+   * pass. Kept in a ref rather than state because nothing renders it, and it
+   * has to survive into the same run that produced it.
+   *
+   * It used to be stashed on the `build` callback object itself, which quietly
+   * misbehaved on the second press: labelling is skipped when every photo
+   * already has a room, so "Rebuild from the photos" reused whatever the
+   * previous run happened to leave there - or lost it, if `useCallback` had
+   * handed out a new function since.
+   */
+  const adjacencyRef = useRef<Array<[string, string]>>([]);
 
   useEffect(() => () => estimatorRef.current?.dispose(), []);
   useEffect(() => {
@@ -119,6 +140,7 @@ export default function NewTourPage() {
       setFacts(listing.facts);
       setFootprint(listing.footprint);
       setListingSite(listing.location);
+      setExterior(listing.exterior ?? null);
       if (!label && listing.address) setLabel(listing.address);
 
       // Only describe the house when the listing actually said something about
@@ -134,10 +156,12 @@ export default function NewTourPage() {
         // instead from its floor area against the building's footprint. It
         // matters here rather than only for scale: it is what puts the bedrooms
         // upstairs instead of spreading them across one enormous floor.
-        const storeys = Math.max(
-          listing.footprint?.storeys ?? 1,
-          Math.round(listing.facts.stories ?? 1),
-        );
+        // A surveyed storey count wins outright. This is also the only moment
+        // it can matter: the levels go into the spec here, and by the time
+        // `build` runs they are already decided.
+        const storeys =
+          listing.exterior?.storeys ??
+          Math.max(listing.footprint?.storeys ?? 1, Math.round(listing.facts.stories ?? 1));
         const sentence = factsToDescription(
           { ...listing.facts, stories: storeys > 1 ? storeys : listing.facts.stories },
           listing.remarks,
@@ -165,9 +189,12 @@ export default function NewTourPage() {
     if (facts?.sqft) items.push(`${facts.sqft.toLocaleString()} sqft`);
     if (facts?.yearBuilt) items.push(`built ${facts.yearBuilt}`);
     if (footprint) items.push(`real outline, ${Math.round(footprint.areaSqft)} sqft ground floor`);
+    if (exterior?.storeys) items.push(`${exterior.storeys} storeys, from the map`);
+    if (exterior?.roof?.shape) items.push(`${exterior.roof.shape} roof`);
+    if (exterior?.walls?.material) items.push(exterior.walls.material);
     if (photos.length > 0) items.push(`${photos.length} photos`);
     return items;
-  }, [facts, footprint, photos.length]);
+  }, [facts, footprint, exterior, photos.length]);
 
   /**
    * Enough to build something.
@@ -181,51 +208,6 @@ export default function NewTourPage() {
     footprint !== null ||
     Boolean(facts?.sqft || facts?.beds) ||
     description.trim().length > 0;
-
-  /**
-   * Put the labelled photos into a plan's rooms.
-   *
-   * Run again on every structural change, not just at build time. Replacing the
-   * layout - by drawing one, or by dragging a room away - creates rooms with new
-   * ids, and nodes still pointing at the old ones are silently orphaned: the
-   * tour loses those photos and nothing says why.
-   *
-   * Exact names are matched first across every room, so a loose match can never
-   * take photos that had a perfect home.
-   */
-  const placePhotos = useCallback(
-    (targetPlan: Plan, source: ImportedPhoto[]) => {
-      const remaining = source.filter((p) => p.roomLabel);
-      const take = (predicate: (label: string) => boolean) => {
-        const taken = remaining.filter((p) => predicate(p.roomLabel!));
-        for (const photo of taken) remaining.splice(remaining.indexOf(photo), 1);
-        return taken;
-      };
-      const key = (label: string) => label.toLowerCase().replace(/[^a-z]/g, "");
-
-      const exact = new Map(targetPlan.rooms.map((r) => [r.id, take((l) => l === r.label)]));
-      const loose = new Map(
-        targetPlan.rooms.map((r) => [
-          r.id,
-          take((l) => key(l).startsWith(key(r.label)) || key(r.label).startsWith(key(l))),
-        ]),
-      );
-
-      const nodes = targetPlan.rooms.flatMap((room) =>
-        placeNodesInRoom(
-          room,
-          [...(exact.get(room.id) ?? []), ...(loose.get(room.id) ?? [])].map((p) => ({
-            id: p.id,
-            photo: p.ref,
-            depth: null,
-          })),
-        ),
-      );
-
-      return { nodes, unplaced: remaining.length };
-    },
-    [],
-  );
 
   useEffect(() => {
     if (restoring || resumable || photos.length === 0) return;
@@ -283,54 +265,14 @@ export default function NewTourPage() {
     const gathered: string[] = [];
 
     // --- 1. What room is each photo? ---
-    let labelled = photos;
-    const untagged = photos.filter((p) => !p.roomLabel);
-    if (untagged.length > 0) {
-      setStep({ label: "Looking at your photos", done: 0, total: untagged.length });
-      const blobs = (
-        await Promise.all(
-          untagged.map(async (photo) => {
-            const blob = await getMedia(refToKey(photo.ref));
-            return blob ? { id: photo.id, blob } : null;
-          }),
-        )
-      ).filter(Boolean) as Array<{ id: string; blob: Blob }>;
-
-      const hints = spec
-        ? spec.rooms.map((r) => r.label)
-        : ["Living Room", "Kitchen", "Dining Room", "Primary Bedroom", "Bedroom 2",
-           "Bedroom 3", "Bathroom", "Hallway", "Entry", "Office", "Laundry", "Garage", "Outside"];
-
-      const assignments = await classifyPhotos(blobs, hints, (done, total) =>
-        setStep({ label: "Looking at your photos", done, total }),
+    const read = await labelPhotos(photos, roomHints(spec), setStep);
+    const labelled = read.photos;
+    if (read.labelled > 0) setPhotos(labelled);
+    if (read.adjacency.length > 0) {
+      adjacencyRef.current = read.adjacency;
+      gathered.push(
+        `Spotted ${read.adjacency.length} connection${read.adjacency.length === 1 ? "" : "s"} between rooms in the photos.`,
       );
-
-      const byId = new Map(assignments.map((a) => [a.id, a]));
-      labelled = photos.map((photo) => {
-        const found = byId.get(photo.id);
-        return found && !photo.roomLabel
-          ? { ...photo, roomLabel: found.room, guessed: found.confidence }
-          : photo;
-      });
-      setPhotos(labelled);
-
-      // Rooms seen through an opening from another room. This is what makes the
-      // arrangement resemble the actual house rather than merely a house.
-      const pairs = new Set<string>();
-      for (const assignment of assignments) {
-        for (const other of assignment.connectsTo ?? []) {
-          if (other && other !== assignment.room) {
-            pairs.add([assignment.room, other].sort().join("|"));
-          }
-        }
-      }
-      const adjacency = [...pairs].map((p) => p.split("|") as [string, string]);
-      if (adjacency.length > 0) {
-        gathered.push(
-          `Spotted ${adjacency.length} connection${adjacency.length === 1 ? "" : "s"} between rooms in the photos.`,
-        );
-      }
-      (build as unknown as { adjacency?: Array<[string, string]> }).adjacency = adjacency;
     }
 
     const roomLabels: string[] = [];
@@ -361,8 +303,7 @@ export default function NewTourPage() {
       gathered.push("No room details were available, so this is a typical three-bedroom plan — correct it below.");
     }
 
-    const adjacency =
-      (build as unknown as { adjacency?: Array<[string, string]> }).adjacency ?? [];
+    const adjacency = adjacencyRef.current;
     // Pack into the building's real outline when the address gave us one.
     // The shape of the house is the thing a viewer recognises, and it is the
     // one part of this that is measured rather than inferred - so it wins over
@@ -408,6 +349,34 @@ export default function NewTourPage() {
       );
     }
 
+    // --- 2b. What does the house look like from outside? ---
+    //
+    // After the layout because the outline is what makes the reading useful:
+    // the model is asked to annotate a shape it is given rather than to work
+    // one out. Skipped entirely without a site, and failing quietly - a house
+    // down a private track has no street view, and that is not an error.
+    let outside = exterior;
+    if (listingSite) {
+      setStep({ label: "Looking at the outside", done: 0, total: 1 });
+      const read = await readExterior({
+        lat: listingSite.lat,
+        lon: listingSite.lon,
+        outline: footprint?.outline ?? [],
+        storeys: exterior?.storeys ?? null,
+      });
+      outside = mergeExterior(exterior, read);
+      if (read) {
+        const said = [
+          read.storeys ? `${read.storeys} storeys` : null,
+          read.roof?.shape ? `a ${read.roof.shape} roof` : null,
+          read.walls?.material ?? null,
+        ].filter(Boolean);
+        if (said.length > 0) {
+          gathered.push(`Looked at the house from the street and the air: ${said.join(", ")}.`);
+        }
+      }
+    }
+
     // --- 3. Put the photos in the rooms ---
     const placed = placePhotos(nextPlan, labelled);
 
@@ -434,6 +403,9 @@ export default function NewTourPage() {
           : listingSite
             ? { ...listingSite, planXBearing: 90 }
             : null,
+      // Survey data about the outside. Optional everywhere it is read, so a
+      // house with none behaves exactly as it always has.
+      exterior: outside,
     };
     if (placed.unplaced > 0) {
       gathered.push(
@@ -443,20 +415,13 @@ export default function NewTourPage() {
     saveProperty(assembled);
 
     // --- 4. Where was each photo taken from? ---
-    setStep({ label: "Placing the cameras", done: 0, total: assembled.nodes.length });
-    try {
-      const refined = await refinePoses(nextPlan, assembled.nodes, (done, total) =>
-        setStep({ label: "Placing the cameras", done, total }),
+    const posed = await posePhotos(nextPlan, assembled.nodes, setStep);
+    assembled = { ...assembled, nodes: posed.nodes };
+    saveProperty(assembled);
+    if (posed.refined > 0) {
+      gathered.push(
+        `Aimed ${posed.refined} camera${posed.refined === 1 ? "" : "s"} from what the photo${posed.refined === 1 ? " shows" : "s show"}.`,
       );
-      assembled = { ...assembled, nodes: refined.nodes };
-      saveProperty(assembled);
-      if (refined.refined > 0) {
-        gathered.push(
-          `Aimed ${refined.refined} camera${refined.refined === 1 ? "" : "s"} from what the photo${refined.refined === 1 ? " shows" : "s show"}.`,
-        );
-      }
-    } catch {
-      // Keeps the corner heuristic, which is still usable.
     }
 
     setProperty(assembled);
@@ -466,36 +431,13 @@ export default function NewTourPage() {
     await clearDraft(false);
 
     // --- 5. Depth, in the background, while they look around ---
-    const jobs = (
-      await Promise.all(
-        assembled.nodes.map(async (node) => {
-          const room = nextPlan.rooms.find((r) => r.id === node.roomId);
-          const blob = room ? await getMedia(refToKey(node.photo)) : null;
-          return room && blob ? { node, room, blob } : null;
-        }),
-      )
-    ).filter(Boolean) as Array<{
-      node: Property["nodes"][number];
-      room: Plan["rooms"][number];
-      blob: Blob;
-    }>;
-
     const estimator = new DepthEstimator();
     estimatorRef.current = estimator;
-    let working = assembled;
-    await estimator.run(jobs, setDepth, async (nodeId, blob) => {
-      const mediaKey = `${propertyId}/${nodeId}/depth`;
-      await putMedia(mediaKey, blob);
-      working = {
-        ...working,
-        nodes: working.nodes.map((n) =>
-          n.id === nodeId ? { ...n, depth: mediaRef(mediaKey) } : n,
-        ),
-      };
-      saveProperty(working);
-      setProperty(working);
+    await estimateDepth(estimator, assembled, setDepth, (updated) => {
+      saveProperty(updated);
+      setProperty(updated);
     });
-  }, [photos, spec, facts, footprint, listingSite, propertyId, label, placePhotos]);
+  }, [photos, spec, facts, footprint, listingSite, exterior, propertyId, label]);
 
   if (restoring) {
     return (

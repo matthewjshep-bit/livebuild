@@ -455,6 +455,13 @@ function autoStairs(rooms: Room[], startCounter: number): Opening[] {
 export function placeNodesInRoom(
   room: Room,
   photos: Array<{ id: string; photo: string; depth?: string | null }>,
+  /**
+   * Spots already occupied in this room, so a later addition does not stand a
+   * new camera exactly on top of an existing one. Empty on a first build, which
+   * is every call this had until photographs could be added to a finished
+   * house.
+   */
+  taken: Vec2[] = [],
 ): TourNode[] {
   const { x0, y0, x1, y1 } = boundsOf(room.polygon);
   const inset = Math.min((x1 - x0) / 4, (y1 - y0) / 4, 1.1);
@@ -473,8 +480,16 @@ export function placeNodesInRoom(
     [x1 - inset, (y0 + y1) / 2],
   ];
 
+  // Free spots first, in order, and only then back round the list. Eight is
+  // more than a room realistically has photographs of, so in practice this is
+  // "carry on where the last batch stopped".
+  const isTaken = (spot: Vec2) =>
+    taken.some((t) => Math.hypot(t[0] - spot[0], t[1] - spot[1]) < 0.05);
+  const free = spots.filter((spot) => !isTaken(spot));
+  const order = free.length > 0 ? free : spots;
+
   return photos.map((photo, i) => {
-    const position = spots[i % spots.length];
+    const position = order[i % order.length];
     return {
       id: photo.id,
       roomId: room.id,

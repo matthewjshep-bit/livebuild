@@ -1,3 +1,4 @@
+import { planDirToHeading } from "@/lib/plan/geometry";
 import type { Site, Vec2 } from "@/lib/schema";
 
 /**
@@ -21,6 +22,25 @@ const RAD = Math.PI / 180;
 export function planFromBearing(site: Site, bearingDeg: number): Vec2 {
   const b = (bearingDeg - site.planXBearing) * RAD;
   return [Math.cos(b), Math.cos(b - Math.PI / 2)];
+}
+
+/**
+ * A compass bearing as a `TourNode.heading`, for a house that knows where it is.
+ *
+ * Composed rather than derived, and deliberately so. Three conventions meet
+ * here - the plan is projected with +x east and +y *south*, headings run
+ * clockwise from +y, and a bearing runs clockwise from north - so the frames
+ * are mirrored against each other and a hand-written formula is one sign away
+ * from pointing every façade at the wrong wall. Both halves already exist and
+ * are already exercised: `planFromBearing` by the daylight, `planDirToHeading`
+ * by every camera the wizard places.
+ *
+ * The room-frame lookalike in `listing/pose.ts` is not this and cannot stand in
+ * for it; it assumes the plan's +x points east, which is only true of a
+ * building that happened to need no rotation.
+ */
+export function bearingToPlanHeading(site: Site, bearingDeg: number): number {
+  return planDirToHeading(planFromBearing(site, bearingDeg));
 }
 
 /**

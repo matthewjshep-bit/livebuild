@@ -144,6 +144,72 @@ export const Site = z.object({
 });
 export type Site = z.infer<typeof Site>;
 
+/**
+ * What the outside of the building is like.
+ *
+ * Everything else in the model is either drawn by the user or inferred from
+ * their photographs, both of which describe the inside. This describes the
+ * outside, and it comes from two places that are worth keeping apart:
+ * OpenStreetMap's own tags, which are survey data, and a reading of satellite
+ * and street-level imagery, which is a model looking at a picture. `source`
+ * says which, because a measurement and a good guess should not be presented as
+ * the same thing.
+ *
+ * Every field is optional and the whole object is nullish. A house drawn by
+ * hand has no site and no exterior; a mapped one may have storeys and nothing
+ * else. Consumers must treat every absence as normal, the way the footprint
+ * miss already is.
+ */
+export const RoofShape = z.enum([
+  "gable", "hip", "flat", "shed", "gambrel", "mansard", "pyramidal", "round", "complex",
+]);
+export type RoofShape = z.infer<typeof RoofShape>;
+
+export const Exterior = z.object({
+  storeys: z.number().int().positive().nullish(),
+  roof: z
+    .object({
+      shape: RoofShape.nullish(),
+      /**
+       * Compass bearing of the ridge line, degrees. Only meaningful for a shape
+       * that has a ridge - a hip or a pyramid does not.
+       */
+      ridgeBearing: z.number().nullish(),
+      pitchDeg: z.number().nullish(),
+      material: z.string().nullish(),
+      colour: z.string().nullish(),
+    })
+    .nullish(),
+  walls: z
+    .object({
+      material: z.string().nullish(),
+      colour: z.string().nullish(),
+    })
+    .nullish(),
+  /**
+   * Compass bearing from the middle of the building to its front door.
+   *
+   * The single most useful thing about a facade: it says which side of the
+   * house people arrive at, which is what an entry hall and a porch are for and
+   * what decides whether a plan reads the right way round.
+   */
+  frontDoorBearing: z.number().nullish(),
+  garage: z
+    .object({
+      bearing: z.number(),
+      bays: z.number().int().positive().nullish(),
+    })
+    .nullish(),
+  /** Which of the two sources this came from. */
+  source: z.enum(["map", "imagery", "both"]).default("map"),
+  /** How old the street-level photograph was, when one was read. */
+  imageryDate: z.string().nullish(),
+  confidence: z.enum(["high", "low"]).nullish(),
+  /** Required wherever any of this is shown. */
+  attribution: z.array(z.string()).default([]),
+});
+export type Exterior = z.infer<typeof Exterior>;
+
 export const Property = z.object({
   id: z.string().min(1),
   label: z.string().default(""),
@@ -160,6 +226,8 @@ export const Property = z.object({
   rates: z.record(z.string(), z.number()).default({}),
   /** Where on earth the house is, and which way it faces. */
   site: Site.nullish(),
+  /** What the outside looks like, from the map and from imagery. */
+  exterior: Exterior.nullish(),
 });
 export type Property = z.infer<typeof Property>;
 

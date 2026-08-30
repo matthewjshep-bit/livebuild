@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { usePlanView } from "@/components/editor/usePlanView";
+import { AddPhotos } from "@/components/editor/AddPhotos";
 import { Inspector } from "@/components/editor/Inspector";
 import {
   area,
@@ -349,6 +350,12 @@ export function PlanEditor({
     <div className="app-shell">
       <header className="flex items-center justify-between gap-4 border-b border-ink-600 bg-ink-800 px-4 py-2.5">
         <div className="flex items-center gap-3">
+          <a
+            href="/"
+            className="shrink-0 whitespace-nowrap text-xs text-mist-400 underline underline-offset-4"
+          >
+            &larr; All properties
+          </a>
           <input
             value={property.label}
             onChange={(e) => update({ ...property, label: e.target.value })}
@@ -526,7 +533,9 @@ export function PlanEditor({
           orphans={orphans}
           onUpdate={update}
           onSelect={setSelection}
-        />
+        >
+          <AddPhotos property={property} onUpdate={update} />
+        </Inspector>
       </div>
 
       <footer className="border-t border-ink-600 bg-ink-800 px-4 py-1.5 text-[11px] text-mist-400">

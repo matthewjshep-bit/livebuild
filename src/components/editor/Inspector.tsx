@@ -56,12 +56,16 @@ export function Inspector({
   orphans,
   onUpdate,
   onSelect,
+  children,
 }: {
   property: Property;
   selection: Selection;
   orphans: TourNode[];
   onUpdate: (next: Property) => void;
   onSelect: (selection: Selection) => void;
+  /** Pinned to the bottom of the panel, below whatever is selected. Work on the
+   *  whole house rather than on one thing in it. */
+  children?: React.ReactNode;
 }) {
   const room =
     selection?.kind === "room"
@@ -386,6 +390,8 @@ export function Inspector({
           </button>
         </div>
       )}
+
+      {children && <div className="border-t border-ink-600 pt-4">{children}</div>}
     </aside>
   );
 }

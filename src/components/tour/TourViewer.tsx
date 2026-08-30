@@ -1,6 +1,6 @@
 "use client";
 
-import { Canvas, useFrame } from "@react-three/fiber";
+import { Canvas, useFrame, useThree } from "@react-three/fiber";
 import * as THREE from "three";
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
@@ -8,8 +8,14 @@ import { CameraRig, type TransitionState, type ViewState } from "@/components/to
 import { Lighting } from "@/components/tour/Lighting";
 import { Measure, type MeasurePoints } from "@/components/tour/Measure";
 import { ScriptedTour, recordCanvas, supportedFormat } from "@/components/tour/ScriptedTour";
-import { buildTour, tourDuration } from "@/lib/model/tour-script";
-import { SCHEMES, type Scheme, schemeByName } from "@/lib/model/schemes";
+import { type Beat, buildTour, tourDuration } from "@/lib/model/tour-script";
+import {
+  DEFAULT_SCHEME,
+  THIS_HOUSE,
+  type Scheme,
+  schemeByName,
+  schemesFor,
+} from "@/lib/model/schemes";
 import { dayOfYear, solarPosition } from "@/lib/model/sun";
 import { WalkControls, type WalkState } from "@/components/tour/WalkControls";
 import { ArchitecturalPlan } from "@/components/plan2d/ArchitecturalPlan";
@@ -25,6 +31,12 @@ import { Minimap } from "@/components/tour/Minimap";
 import { PublishPanel } from "@/components/tour/PublishPanel";
 import { FlatShell, PhotoShell } from "@/components/tour/PhotoShell";
 import { levelName, levelsOf, nodeBaseY } from "@/lib/plan/geometry";
+import {
+  SHELL_MOUNT_M,
+  TOUR_REACH_M,
+  WALK_REACH_M,
+  shellProximity,
+} from "@/lib/render/proximity";
 import { hydrateMedia } from "@/lib/property-store";
 import type { Property, TourNode } from "@/lib/schema";
 
@@ -60,6 +72,100 @@ function dollhouseOpacity({ toNodeId, t }: TransitionState): number {
   return other + (target - other) * t;
 }
 
+/**
+ * Which photograph the camera is close enough to be shown, and how strongly.
+ *
+ * One at a time, and the nearest. The shell material writes depth, so two
+ * half-faded shells overlapping would z-fight rather than blend - and standing
+ * between two viewpoints ought to resolve to the one you are actually nearer,
+ * not to a double exposure.
+ *
+ * Two callers, one rule. On foot it hunts for whatever viewpoint you have
+ * wandered near; on a scripted tour the beat has already named one and the only
+ * question is how far the camera still has to fly. Both then fade by distance,
+ * which is what makes a photograph bloom in as the tour arrives instead of
+ * cutting.
+ *
+ * The live value goes into a ref the shell reads per frame, and only the
+ * quantised one reaches React - the same trick `DollhouseOpacityDriver` uses,
+ * for the same reason: this runs at 60Hz and must not cost a render.
+ */
+function NearbyShellDriver({
+  plan,
+  nodes,
+  levelOf,
+  walkState,
+  mode,
+  tourNodeId,
+  opacity,
+  onNodeChange,
+  onOpacityChange,
+}: {
+  plan: Property["plan"];
+  nodes: TourNode[];
+  levelOf: Map<string, number>;
+  walkState: React.MutableRefObject<WalkState>;
+  mode: "walk" | "tour" | "off";
+  tourNodeId: string | null;
+  opacity: React.MutableRefObject<number>;
+  onNodeChange: (nodeId: string | null) => void;
+  onOpacityChange: (value: number) => void;
+}) {
+  const camera = useThree((s) => s.camera);
+  const lastNode = useRef<string | null>(null);
+  const lastOpacity = useRef(-1);
+
+  useFrame(() => {
+    let nearest: TourNode | null = null;
+
+    if (mode === "tour") {
+      nearest = tourNodeId ? nodes.find((n) => n.id === tourNodeId) ?? null : null;
+    } else if (mode === "walk") {
+      const walk = walkState.current;
+      let best = SHELL_MOUNT_M;
+      for (const node of nodes) {
+        if ((levelOf.get(node.id) ?? 0) !== walk.level) continue;
+        const distance = Math.hypot(node.position[0] - walk.x, node.position[1] - walk.y);
+        if (distance < best) {
+          best = distance;
+          nearest = node;
+        }
+      }
+    }
+
+    const nodeId = nearest?.id ?? null;
+    if (nodeId !== lastNode.current) {
+      lastNode.current = nodeId;
+      onNodeChange(nodeId);
+    }
+
+    opacity.current = nearest
+      ? shellProximity(
+          nearest,
+          nodeBaseY(plan, nearest),
+          camera.position,
+          mode === "tour" ? TOUR_REACH_M : WALK_REACH_M,
+        )
+      : 0;
+
+    // A readout for the browser suite, alongside WalkControls' own `__walk`.
+    // Whether a photograph is actually on screen cannot be seen from outside
+    // the canvas any other way.
+    (window as unknown as { __shell?: unknown }).__shell = {
+      nodeId,
+      opacity: opacity.current,
+    };
+
+    const quantised = Math.round(opacity.current * 30) / 30;
+    if (quantised !== lastOpacity.current) {
+      lastOpacity.current = quantised;
+      onOpacityChange(quantised);
+    }
+  });
+
+  return null;
+}
+
 function Scene({
   property,
   view,
@@ -77,7 +183,8 @@ function Scene({
   scheme,
   tourBeats,
   touring,
-  onTourCaption,
+  tourNodeId,
+  onTourBeat,
   onTourFinish,
 }: {
   property: Property;
@@ -96,7 +203,9 @@ function Scene({
   scheme: Scheme;
   tourBeats: ReturnType<typeof buildTour>;
   touring: boolean;
-  onTourCaption: (caption: string) => void;
+  /** The viewpoint the running beat stands in, when it names one. */
+  tourNodeId: string | null;
+  onTourBeat: (beat: Beat | null) => void;
   onTourFinish: () => void;
 }) {
   const [dollOpacity, setDollOpacity] = useState(1);
@@ -104,6 +213,19 @@ function Scene({
   // stairs rather than being chosen from the toolbar.
   const [walkLevel, setWalkLevel] = useState(0);
   const walkState = useRef<WalkState>({ x: 0, y: 0, level: 0, yaw: 0 });
+
+  // The photograph the camera is standing in, if any - hunted for on foot,
+  // named by the beat on a scripted tour. The id drives what gets mounted; the
+  // ref carries the live fade, which the shell reads per frame.
+  const [nearbyNodeId, setNearbyNodeId] = useState<string | null>(null);
+  const [shellFade, setShellFade] = useState(0);
+  const shellOpacityRef = useRef(0);
+
+  // A node's storey is a property of its room, not of the photo.
+  const levelOf = useMemo(() => {
+    const rooms = new Map(property.plan.rooms.map((r) => [r.id, r.level]));
+    return new Map(property.nodes.map((n) => [n.id, rooms.get(n.roomId) ?? 0]));
+  }, [property.plan.rooms, property.nodes]);
   const aspects = useRef(new Map<string, number>());
   const reportAspect = useCallback((nodeId: string, aspect: number) => {
     aspects.current.set(nodeId, aspect);
@@ -119,10 +241,31 @@ function Scene({
       wanted.add(view.nodeId);
       for (const id of byId.get(view.nodeId)?.neighbors ?? []) wanted.add(id);
     }
+    // The photograph the camera has reached, on foot or on a scripted tour, so
+    // both resolve into real photography wherever there is any to resolve into.
+    if (nearbyNodeId) wanted.add(nearbyNodeId);
     const from = transition.current.fromNodeId;
     if (from) wanted.add(from);
     return [...wanted].map((id) => byId.get(id)).filter(Boolean) as TourNode[];
-  }, [property.nodes, view, transition]);
+  }, [property.nodes, view, transition, nearbyNodeId]);
+
+  /**
+   * How solid a shell is, asked once a frame.
+   *
+   * Walking and stepping ask different questions. Stepping cross-fades between
+   * two named nodes; walking - and flying a scripted tour - asks how near the
+   * camera is standing to one. Both are answered out of refs rather than props,
+   * so the 60Hz read costs no render.
+   */
+  const opacityFor = useCallback(
+    (node: TourNode) =>
+      view.mode === "walk" || touring
+        ? node.id === nearbyNodeId
+          ? shellOpacityRef.current
+          : 0
+        : shellOpacity(node.id, transition.current),
+    [view.mode, touring, nearbyNodeId, transition],
+  );
 
   return (
     <>
@@ -153,8 +296,16 @@ function Scene({
       <Model
         plan={property.plan}
         // Inside the house the walls are the thing you are looking at, so the
-        // dollhouse's see-through shell would be exactly wrong.
-        opacity={view.mode === "walk" ? 1 : dollOpacity}
+        // dollhouse's see-through shell would be exactly wrong - until a
+        // photograph fades up over them, at which point the model becomes the
+        // backdrop behind that shell's occlusion holes exactly as it does in a
+        // node, and has to go transparent to be sorted against it rather than
+        // z-fight the wall it was shot from.
+        opacity={
+          view.mode === "walk"
+            ? 1 - (1 - BACKDROP_OPACITY) * shellFade
+            : Math.min(dollOpacity, 1 - (1 - BACKDROP_OPACITY) * shellFade)
+        }
         showLabels={view.mode === "dollhouse"}
         displayUnits={property.displayUnits}
         onlyLevel={view.mode === "walk" ? walkLevel : onlyLevel}
@@ -171,7 +322,7 @@ function Scene({
       <ScriptedTour
         beats={tourBeats}
         running={touring}
-        onBeat={onTourCaption}
+        onBeat={onTourBeat}
         onFinish={onTourFinish}
       />
 
@@ -183,19 +334,31 @@ function Scene({
         enabled={view.mode === "walk"}
       />
 
+      <NearbyShellDriver
+        plan={property.plan}
+        nodes={property.nodes}
+        levelOf={levelOf}
+        walkState={walkState}
+        mode={touring ? "tour" : view.mode === "walk" ? "walk" : "off"}
+        tourNodeId={tourNodeId}
+        opacity={shellOpacityRef}
+        onNodeChange={setNearbyNodeId}
+        onOpacityChange={setShellFade}
+      />
+
       {resident.map((node) => (
         <Suspense key={node.id} fallback={null}>
           {node.depth ? (
             <PhotoShell
               node={node}
-              getOpacity={() => shellOpacity(node.id, transition.current)}
+              getOpacity={() => opacityFor(node)}
               onAspect={reportAspect}
               baseY={nodeBaseY(property.plan, node)}
             />
           ) : (
             <FlatShell
               node={node}
-              getOpacity={() => shellOpacity(node.id, transition.current)}
+              getOpacity={() => opacityFor(node)}
               baseY={nodeBaseY(property.plan, node)}
             />
           )}
@@ -311,22 +474,42 @@ export function TourViewer({
   // The interior direction. A single palette made every house this tool builds
   // look like the same house, which is strange for something whose claim is
   // that it builds yours.
-  const [schemeName, setSchemeName] = useState<string>(SCHEMES[1].name);
-  const scheme = schemeByName(schemeName);
+  // A house that was looked at from the street offers its own colours first,
+  // so the default is what the building actually is rather than a direction
+  // somebody might take it in.
+  const schemes = useMemo(() => schemesFor(property.exterior), [property.exterior]);
+  const [schemeName, setSchemeName] = useState<string | null>(null);
+  // Its own colours when it has any, and otherwise the direction that was
+  // always the default. A house nobody surveyed must look exactly as it did.
+  const scheme = schemeByName(
+    schemeName ?? (schemes[0].name === THIS_HOUSE ? THIS_HOUSE : DEFAULT_SCHEME.name),
+    schemes,
+  );
 
   // The scripted tour, and recording it.
   const [touring, setTouring] = useState(false);
   const [tourCaption, setTourCaption] = useState("");
+  // The viewpoint the running beat stands in, when it names one.
+  const [tourNodeId, setTourNodeId] = useState<string | null>(null);
   const [recording, setRecording] = useState(false);
   const stopRecording = useRef<null | (() => void)>(null);
+  // Given the nodes, a room that was photographed is shown from inside its own
+  // photograph rather than from above - which is what puts photography in the
+  // recorded film at all.
   const tourBeats = useMemo(
-    () => buildTour(property.plan, property.label || "This house"),
-    [property.plan, property.label],
+    () => buildTour(property.plan, property.label || "This house", property.nodes),
+    [property.plan, property.label, property.nodes],
   );
+
+  const onTourBeat = useCallback((beat: Beat | null) => {
+    setTourCaption(beat?.caption ?? "");
+    setTourNodeId(beat?.nodeId ?? null);
+  }, []);
 
   const finishTour = useCallback(() => {
     setTouring(false);
     setTourCaption("");
+    setTourNodeId(null);
     stopRecording.current?.();
     stopRecording.current = null;
     setRecording(false);
@@ -443,8 +626,19 @@ export function TourViewer({
   return (
     <div className="app-shell">
       <header className="flex items-center justify-between border-b border-ink-600 bg-ink-800 px-4 py-2.5">
-        <div className="flex items-baseline gap-3">
-          <span className="text-sm font-semibold tracking-tight">
+        <div className="flex min-w-0 items-baseline gap-3">
+          {/* Operator-only, on the same gate as Scope and Edit below. A
+              published tour is somebody else's listing opened from a link;
+              there is no property list of theirs to go back to. */}
+          {onPropertyChange && (
+            <a
+              href="/"
+              className="shrink-0 whitespace-nowrap text-xs text-mist-400 transition hover:text-mist-200"
+            >
+              &larr; All properties
+            </a>
+          )}
+          <span className="truncate text-sm font-semibold tracking-tight">
             {property.label || property.id}
           </span>
           <span className="text-xs text-mist-400">
@@ -525,13 +719,13 @@ export function TourViewer({
             </button>
           )}
           <select
-            value={schemeName}
+            value={scheme.name}
             onChange={(e) => setSchemeName(e.target.value)}
             aria-label="Interior scheme"
             title={scheme.blurb}
             className="rounded border border-ink-500 bg-ink-700 px-2 py-1 text-xs text-mist-200 outline-none focus:border-accent-dim"
           >
-            {SCHEMES.map((s) => (
+            {schemes.map((s) => (
               <option key={s.name} value={s.name}>
                 {s.name}
               </option>
@@ -675,7 +869,8 @@ export function TourViewer({
             scheme={scheme}
             tourBeats={tourBeats}
             touring={touring}
-            onTourCaption={setTourCaption}
+            tourNodeId={tourNodeId}
+            onTourBeat={onTourBeat}
             onTourFinish={finishTour}
           />
         </Canvas>

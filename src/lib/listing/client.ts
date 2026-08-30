@@ -52,6 +52,31 @@ export async function lookupListing(query: string): Promise<ListingResult> {
 }
 
 /**
+ * How long to wait for one photograph before giving up on it.
+ *
+ * The proxy already gives up on Zillow after thirty seconds, but that guards
+ * the wrong half: the browser had no limit of its own, and reading the body can
+ * stall long after the headers arrived. A live import of a 38-photo listing hung
+ * on photo 32 for a quarter of an hour behind a progress bar that never moved,
+ * which is indistinguishable from the app being broken - and is very likely how
+ * a house ends up built with no photographs in it at all.
+ *
+ * Generous rather than tight: these are 200-300KB JPEGs and a slow connection
+ * is not a failure. What matters is that there is a limit.
+ */
+const PHOTO_TIMEOUT_MS = 45_000;
+
+/**
+ * How many photographs to pull at once.
+ *
+ * One at a time meant a 38-photo listing spent well over a minute downloading
+ * before anything else could start, and every one of those seconds looked to
+ * the user like the app deciding whether to work. Four is enough to hide most
+ * of the latency without turning our own proxy into the bottleneck.
+ */
+const PHOTO_CONCURRENCY = 4;
+
+/**
  * Fetch a listing photo as a blob.
  *
  * Goes through our own proxy: Zillow serves the image happily but sends no CORS
@@ -59,9 +84,44 @@ export async function lookupListing(query: string): Promise<ListingResult> {
  * turned into a blob for storage.
  */
 export async function fetchListingPhoto(url: string): Promise<Blob> {
-  const response = await fetch(`/api/listing/photo?url=${encodeURIComponent(url)}`);
+  const response = await fetch(`/api/listing/photo?url=${encodeURIComponent(url)}`, {
+    signal: AbortSignal.timeout(PHOTO_TIMEOUT_MS),
+  });
   if (!response.ok) throw new Error(`Could not download a photo (${response.status})`);
   return response.blob();
+}
+
+/**
+ * Download a listing's gallery, in order, skipping whatever will not come.
+ *
+ * Order is preserved even though the requests overlap, because the filenames
+ * carry it and a gallery that arrives shuffled reads as a different house. One
+ * unreachable photograph costs that photograph and nothing else.
+ */
+export async function fetchListingPhotos(
+  urls: string[],
+  onProgress?: (done: number, total: number) => void,
+): Promise<Array<{ index: number; blob: Blob }>> {
+  const out: Array<{ index: number; blob: Blob }> = [];
+  let done = 0;
+
+  for (let i = 0; i < urls.length; i += PHOTO_CONCURRENCY) {
+    const batch = urls.slice(i, i + PHOTO_CONCURRENCY);
+    const settled = await Promise.all(
+      batch.map(async (url, offset) => {
+        try {
+          return { index: i + offset, blob: await fetchListingPhoto(url) };
+        } catch {
+          return null;
+        }
+      }),
+    );
+    for (const item of settled) if (item) out.push(item);
+    done = Math.min(i + PHOTO_CONCURRENCY, urls.length);
+    onProgress?.(done, urls.length);
+  }
+
+  return out.sort((a, b) => a.index - b.index);
 }
 
 /** Small JPEG data URL, sized for recognising a room rather than rendering it. */

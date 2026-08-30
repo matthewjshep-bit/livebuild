@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 
-import { fetchListingPhoto, lookupListing } from "@/lib/listing/client";
+import { fetchListingPhotos, lookupListing } from "@/lib/listing/client";
 import type { ListingResult } from "@/lib/listing/types";
 import { addressFromZillowUrl, looksLikeUrl } from "@/lib/listing/url";
 
@@ -56,20 +56,20 @@ export function PropertyStart({
     try {
       const listing = await lookupListing(query);
 
-      const files: File[] = [];
-      for (let i = 0; i < listing.photos.length; i++) {
-        setStage(`Downloading photo ${i + 1} of ${listing.photos.length}`);
-        try {
-          const blob = await fetchListingPhoto(listing.photos[i]);
-          files.push(
-            new File([blob], `listing-${String(i + 1).padStart(2, "0")}.jpg`, {
-              type: blob.type || "image/jpeg",
-            }),
-          );
-        } catch {
-          // One unreachable photo should not cost the other thirty-nine.
-        }
-      }
+      // A few at a time, each with a deadline. One unreachable photograph should
+      // cost that photograph and nothing else - and before there was a deadline
+      // it could cost the whole build, stalling on one image behind a progress
+      // bar that never moved.
+      const downloaded = await fetchListingPhotos(listing.photos, (done, total) =>
+        setStage(`Downloading photo ${done} of ${total}`),
+      );
+      const files = downloaded.map(
+        ({ index, blob }) =>
+          new File([blob], `listing-${String(index + 1).padStart(2, "0")}.jpg`, {
+            type: blob.type || "image/jpeg",
+          }),
+      );
+      const missed = listing.photos.length - files.length;
 
       // No photographs is a workable outcome rather than a failure, so long as
       // something was learned. The outline alone builds a house of the right
@@ -94,6 +94,12 @@ export function PropertyStart({
             : " The listing had no details either.";
 
         setError(`${outline}${details} You can still add photos below, or describe the house.`);
+      }
+
+      if (missed > 0 && files.length > 0) {
+        setError(
+          `${missed} of ${listing.photos.length} photos would not download and ${missed === 1 ? "was" : "were"} skipped. You can add ${missed === 1 ? "it" : "them"} by hand, or try again.`,
+        );
       }
 
       setStage(files.length > 0 ? `Saving ${files.length} photos` : "Reading the building");

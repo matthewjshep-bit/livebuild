@@ -23,7 +23,9 @@ export function ScriptedTour({
 }: {
   beats: Beat[];
   running: boolean;
-  onBeat: (caption: string) => void;
+  /** The whole beat, not just its caption: a beat may name the viewpoint it
+   *  stands in, and that is what puts a photograph on screen. */
+  onBeat: (beat: Beat | null) => void;
   onFinish: () => void;
 }) {
   const camera = useThree((s) => s.camera);
@@ -42,7 +44,7 @@ export function ScriptedTour({
     const forward = new THREE.Vector3();
     camera.getWorldDirection(forward);
     originTarget.current.copy(camera.position).addScaledVector(forward, 8);
-    onBeat(beats[0].caption);
+    onBeat(beats[0]);
   }, [running, beats, camera, onBeat]);
 
   useFrame(() => {
@@ -86,7 +88,7 @@ export function ScriptedTour({
       index.current += 1;
       startedAt.current = performance.now();
       const next = beats[index.current];
-      if (next) onBeat(next.caption);
+      if (next) onBeat(next);
       else onFinish();
     }
   });

@@ -12,12 +12,23 @@ import { BUCKET, SUPABASE_URL } from "@/lib/cloud/config";
  * build error rather than a silent leak of write access to every browser.
  */
 
-const SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY ?? "";
-const ADMIN_KEY = process.env.MATTERMATT_ADMIN_KEY ?? "";
+/**
+ * Read at call time, not when the module loads.
+ *
+ * Module-scope `process.env` is captured once, whenever the module is first
+ * evaluated - which on a serverless platform can be during the build rather
+ * than during a request. A value that was not set at that moment is then frozen
+ * as empty for the life of the deployment, and the symptom is a deployment that
+ * reports itself unconfigured no matter what the dashboard says. Reading inside
+ * the function costs nothing and cannot be stale.
+ */
+const serviceRoleKey = () => process.env.SUPABASE_SERVICE_ROLE_KEY ?? "";
+const adminKey = () => process.env.MATTERMATT_ADMIN_KEY ?? "";
 
 export function serviceClient() {
-  if (!SUPABASE_URL || !SERVICE_ROLE_KEY) return null;
-  return createClient(SUPABASE_URL, SERVICE_ROLE_KEY, {
+  const key = serviceRoleKey();
+  if (!SUPABASE_URL || !key) return null;
+  return createClient(SUPABASE_URL, key, {
     auth: { persistSession: false, autoRefreshToken: false },
   });
 }
@@ -33,15 +44,16 @@ export { BUCKET };
  * an unconfigured deployment must not be an open one.
  */
 export function isAdmin(provided: string | null | undefined): boolean {
-  if (!ADMIN_KEY || !provided) return false;
-  if (provided.length !== ADMIN_KEY.length) return false;
+  const expected = adminKey();
+  if (!expected || !provided) return false;
+  if (provided.length !== expected.length) return false;
   let diff = 0;
-  for (let i = 0; i < ADMIN_KEY.length; i++) {
-    diff |= ADMIN_KEY.charCodeAt(i) ^ provided.charCodeAt(i);
+  for (let i = 0; i < expected.length; i++) {
+    diff |= expected.charCodeAt(i) ^ provided.charCodeAt(i);
   }
   return diff === 0;
 }
 
 export function adminConfigured(): boolean {
-  return Boolean(ADMIN_KEY);
+  return Boolean(adminKey());
 }

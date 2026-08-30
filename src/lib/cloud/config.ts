@@ -7,8 +7,11 @@
  * explains itself rather than failing.
  */
 
-export const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL ?? "";
-export const SUPABASE_ANON_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "";
+// A trailing newline is easy to paste into a dashboard field and impossible to
+// see afterwards; it turns every request into one against a host that does not
+// exist. Trimmed here so it can only ever be wrong once.
+export const SUPABASE_URL = (process.env.NEXT_PUBLIC_SUPABASE_URL ?? "").trim();
+export const SUPABASE_ANON_KEY = (process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "").trim();
 
 /** Bucket holding published photos and depth maps. Public-read. */
 export const BUCKET = "tours";

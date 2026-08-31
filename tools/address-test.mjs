@@ -9,6 +9,14 @@
  * the one that proves the point. Without it there are no listing photographs at
  * all, so anything that appears came from the building's outline on the map and
  * from nothing the user supplied.
+ *
+ * The outline comes from Overpass, which is free, oversubscribed, and answers
+ * 504 often enough that `listing/footprint.ts` calls it "a normal Tuesday
+ * rather than an outage". So a failed *lookup* is skipped rather than failed:
+ * this suite cannot tell an outage from a broken outline, and a red run that
+ * means "somebody else's server is busy" is how a suite stops being read.
+ * `not-located` and `no-building` are different - they are real answers about a
+ * real address, and they stay assertions.
  */
 import { chromium } from "playwright";
 
@@ -37,6 +45,30 @@ if (await page.getByRole("button", { name: "Start over" }).count()) {
   await page.waitForTimeout(500);
 }
 
+// Ask the API directly first. If the map service is down there is nothing to
+// test, and finding that out through a browser timeout wastes three minutes and
+// reports it as a broken feature.
+const probe = await fetch(`${BASE}/api/listing`, {
+  method: "POST",
+  headers: { "content-type": "application/json" },
+  body: JSON.stringify({ address: ADDRESS, mode: "outline" }),
+}).then((r) => r.json()).catch(() => null);
+
+if (!probe || probe.footprintMiss === "lookup-failed") {
+  console.log(
+    JSON.stringify(
+      {
+        verdict: "SKIPPED - the map service (Overpass) is not answering, so there is no outline to test",
+        probe: probe?.footprintMiss ?? "no response",
+      },
+      null,
+      2,
+    ),
+  );
+  await browser.close();
+  process.exit(0);
+}
+
 // The address field must be the thing you land on, not something behind a
 // disclosure triangle - that is the whole point of the change.
 const field = page.getByLabel("Property address or listing link");
@@ -44,7 +76,11 @@ check("the address field is the front door", await field.count() === 1);
 check("no photos have been provided", (await page.locator("img").count()) === 0);
 
 await field.fill(ADDRESS);
-await page.getByRole("button", { name: "Build it" }).click();
+// "Find it" rather than "Build it". Locating the building is now the fast,
+// free half - a geocode and a map lookup, seconds - and pulling the listing's
+// photographs is a separate press, because it is minutes and a paid scrape and
+// is the wrong default for somebody who already has the pictures.
+await page.getByRole("button", { name: "Find it" }).click();
 
 // Overpass and Nominatim are public and sometimes slow.
 // "ground floor" rather than "outline": the page's own introduction talks
@@ -59,14 +95,35 @@ for (let i = 0; i < 90 && !found; i++) {
 check("the building was found on the map", found,
   (await page.evaluate(() => document.body.innerText)).slice(0, 300));
 
+// Finding the building must not have cost a scrape. That is the whole point of
+// splitting the two halves: an address is seconds, and pulling the listing's
+// photographs is a separate decision worth its own minutes.
+check("the lookup was quick, so no listing was scraped",
+  Date.now() - startedAt < 60_000, `${Math.round((Date.now() - startedAt) / 1000)}s`);
+check("no photographs arrived unasked", (await page.locator("img").count()) === 0);
+
 const summary = await page.evaluate(() => document.body.innerText);
 const outline = /real outline, ([\d,]+) sqft/.exec(summary);
 check("the outline reports a ground-floor area", Boolean(outline), outline?.[0]);
 console.log(`  lookup took ${Math.round((Date.now() - startedAt) / 1000)}s`);
 
 // And it must build without a single photograph.
+//
+// This is also the check that would have caught the regression the split
+// introduced. `canBuild` asked for photographs, an outline, listing facts or a
+// description, and never for "we know where the house is" - which was masked
+// while every address scraped and a scrape nearly always returned beds and
+// baths. Once an address did the map half alone, a building nobody has drawn
+// left a located property with no way to build it.
 const buildButton = page.getByRole("button", { name: "Build the house" });
 check("the build button is offered with no photos", await buildButton.count() === 1);
+
+// The same guarantee, stated where it can fail for the right reason: an address
+// that resolved is buildable, outline or no outline.
+const located = Boolean(probe.location);
+check("a located address is buildable whatever the map holds",
+  !located || (await buildButton.count()) === 1,
+  `located=${located} outline=${Boolean(probe.footprint)}`);
 
 if (await buildButton.count()) {
   await buildButton.click();

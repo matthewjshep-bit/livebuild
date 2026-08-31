@@ -203,8 +203,9 @@ export async function fetchFacades(
   return shots.filter(Boolean) as Facade[];
 }
 
-/** Attribution, which the terms require wherever the imagery is shown. */
-export const GOOGLE_ATTRIBUTION = "Satellite and Street View imagery © Google";
+/** Re-exported so server callers need only one import. Defined in the pure
+ *  half because the wizard credits the shape too, and cannot import this file. */
+export { GOOGLE_ATTRIBUTION } from "@/lib/site/geo";
 
 async function fetchAsBase64(url: string): Promise<string | null> {
   try {

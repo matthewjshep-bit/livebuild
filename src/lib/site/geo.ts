@@ -29,6 +29,16 @@ export const TILE_SCALE = 2;
 /** How much wider than the building the overhead frame should be. */
 export const TILE_MARGIN = 1.8;
 
+/**
+ * Attribution, which the terms require wherever the imagery is shown - or
+ * wherever something derived from it is, which now includes a building outline
+ * traced off the satellite frame.
+ *
+ * Here rather than beside the fetching because the wizard has to credit the
+ * shape it built the house on, and cannot import a `server-only` module.
+ */
+export const GOOGLE_ATTRIBUTION = "Satellite and Street View imagery © Google";
+
 /** Compass bearing from one lat/lon to another, degrees clockwise from north. */
 export function bearingBetween(
   from: { lat: number; lon: number },

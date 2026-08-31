@@ -23,13 +23,23 @@ import type { ListingResult } from "@/lib/listing/types";
 const CLASSIFY_EDGE = 768;
 const CLASSIFY_BATCH = 6;
 
-/** Look a property up by street address or by listing URL. */
-export async function lookupListing(query: string): Promise<ListingResult> {
+/**
+ * Look a property up by street address or by listing URL.
+ *
+ * `outline` asks for the map half only - where the building is, its real
+ * outline, and what the map records about the outside. That is seconds and
+ * costs nothing. `full` adds the listing scrape, which is minutes and a paid
+ * token, and is worth asking for separately.
+ */
+export async function lookupListing(
+  query: string,
+  mode: "outline" | "full" = "full",
+): Promise<ListingResult> {
   const isUrl = /^https?:\/\//i.test(query.trim());
   const response = await fetch("/api/listing", {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify(isUrl ? { url: query } : { address: query }),
+    body: JSON.stringify({ ...(isUrl ? { url: query } : { address: query }), mode }),
   });
 
   if (!response.ok) {

@@ -22,6 +22,17 @@ export type SiteRead = {
    */
   condition: Partial<Record<HouseElement, Grade>>;
   conditionNotes: string;
+  /**
+   * The building's outline, traced from the satellite frame.
+   *
+   * Only ever present when the map had no building to begin with, and only
+   * when the trace was confident and plausible - the route drops anything that
+   * looks like a shed or a whole parcel rather than passing the judgement on.
+   * `[lat, lon]` pairs, the same shape OpenStreetMap returns.
+   */
+  tracedRing: Array<[number, number]> | null;
+  /** How sure the trace was. Passed on so a build can say, rather than imply. */
+  tracedConfidence: "high" | "low" | null;
 };
 
 export async function readExterior(input: {
@@ -42,6 +53,8 @@ export async function readExterior(input: {
       exterior: (data.exterior as Exterior | null) ?? null,
       condition: (data.condition ?? {}) as Partial<Record<HouseElement, Grade>>,
       conditionNotes: typeof data.conditionNotes === "string" ? data.conditionNotes : "",
+      tracedRing: (data.tracedRing as Array<[number, number]> | null) ?? null,
+      tracedConfidence: (data.tracedConfidence as "high" | "low" | null) ?? null,
     };
   } catch {
     return null;

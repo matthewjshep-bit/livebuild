@@ -165,10 +165,22 @@ export async function POST(request: Request) {
   const token = process.env.APIFY_TOKEN;
 
   let query: string;
+  /**
+   * How much to do.
+   *
+   * The two halves of an address lookup have wildly different costs. The map
+   * half - geocode, building outline, the tags a surveyor left - takes a couple
+   * of seconds and needs no key. The listing half is a scrape that takes
+   * minutes and then downloads forty photographs. Doing both on every address
+   * meant that typing where the house is, when you already had the pictures in
+   * hand, cost you the whole scrape anyway.
+   */
+  let mode: "outline" | "full" = "full";
   try {
     const body = await request.json();
     const raw = body?.url ?? body?.address;
     query = typeof raw === "string" ? raw.trim() : "";
+    if (body?.mode === "outline") mode = "outline";
   } catch {
     return Response.json({ error: "bad-request" }, { status: 400 });
   }
@@ -177,7 +189,8 @@ export async function POST(request: Request) {
     return Response.json({ error: "bad-address" }, { status: 400 });
   }
 
-  if (!token) return footprintOnly(query);
+  // Asked for the map half only, or there is no scraper to ask anyway.
+  if (mode === "outline" || !token) return footprintOnly(query);
 
   try {
     const listing = await fetchZillowListing(query, token);

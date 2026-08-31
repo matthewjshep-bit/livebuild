@@ -33,6 +33,18 @@ export function PropertyStart({
   const [query, setQuery] = useState("");
   const [stage, setStage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  /**
+   * What the last lookup came back with, for the address currently in the box.
+   *
+   * Both halves of the answer matter to what is said next. Locating the house
+   * and finding a drawn building are separate outcomes, and OpenStreetMap
+   * frequently has the first without the second - so saying "found the
+   * building, its outline and which way it faces" for a house nobody has
+   * mapped would be claiming something that did not happen.
+   */
+  const [found, setFound] = useState<
+    { mode: "outline" | "full"; located: boolean; outlined: boolean } | null
+  >(null);
 
   useEffect(() => {
     fetch("/api/listing")
@@ -45,16 +57,24 @@ export function PropertyStart({
   // obvious the right house was understood before anything slow begins.
   const pastedAddress = looksLikeUrl(query) ? addressFromZillowUrl(query) : null;
 
-  const run = async () => {
+  /**
+   * Find the building, and optionally pull the listing with it.
+   *
+   * `outline` is the default because it is seconds and free, and because the
+   * address is often not where the photographs are coming from. Typing where
+   * the house is used to cost a multi-minute scrape even when the pictures were
+   * already in hand, which made recording the address feel expensive.
+   */
+  const run = async (mode: "outline" | "full") => {
     setError(null);
     setStage(
-      photosAvailable
+      mode === "full"
         ? "Looking up the listing… this can take a couple of minutes"
         : "Finding the building on the map…",
     );
 
     try {
-      const listing = await lookupListing(query);
+      const listing = await lookupListing(query, mode);
 
       // A few at a time, each with a deadline. One unreachable photograph should
       // cost that photograph and nothing else - and before there was a deadline
@@ -75,7 +95,11 @@ export function PropertyStart({
       // something was learned. The outline alone builds a house of the right
       // shape; only the walk-through needs pictures.
       const learnedNothing =
-        files.length === 0 && !listing.footprint && !listing.facts.sqft && !listing.facts.beds;
+        files.length === 0 &&
+        !listing.footprint &&
+        !listing.facts.sqft &&
+        !listing.facts.beds &&
+        !listing.location;
       if (learnedNothing) {
         // Say which thing failed. The old message ran three unrelated causes
         // together - an unconfigured scraper, an address the map has never
@@ -89,9 +113,11 @@ export function PropertyStart({
               : "The address was located, but no building is drawn there on the map.";
 
         const details =
-          listing.scraperConfigured === false
-            ? " Listing lookup is not configured on this deployment, so no photos or room counts could be fetched either — set APIFY_TOKEN to enable it."
-            : " The listing had no details either.";
+          mode === "outline"
+            ? ""
+            : listing.scraperConfigured === false
+              ? " Listing lookup is not configured on this deployment, so no photos or room counts could be fetched either — set APIFY_TOKEN to enable it."
+              : " The listing had no details either.";
 
         setError(`${outline}${details} You can still add photos below, or describe the house.`);
       }
@@ -105,7 +131,13 @@ export function PropertyStart({
       setStage(files.length > 0 ? `Saving ${files.length} photos` : "Reading the building");
       await onImported(files, listing);
       setStage(null);
-      setQuery("");
+      // The address stays put. It is the name of the house being worked on, and
+      // clearing it made the field look like it had forgotten.
+      setFound({
+        mode,
+        located: Boolean(listing.location),
+        outlined: Boolean(listing.footprint),
+      });
     } catch (e) {
       setError(e instanceof Error ? e.message : "Lookup failed.");
       setStage(null);
@@ -120,12 +152,15 @@ export function PropertyStart({
         className="flex gap-2"
         onSubmit={(e) => {
           e.preventDefault();
-          void run();
+          void run("outline");
         }}
       >
         <input
           value={query}
-          onChange={(e) => setQuery(e.target.value)}
+          onChange={(e) => {
+            setQuery(e.target.value);
+            setFound(null);
+          }}
           disabled={working}
           aria-label="Property address or listing link"
           placeholder="123 Main St, Seattle, WA 98101 — or paste a Zillow link"
@@ -135,9 +170,23 @@ export function PropertyStart({
           disabled={working || query.trim().length < 6}
           className="shrink-0 rounded-lg bg-accent px-6 py-3 text-sm font-semibold text-ink-900 disabled:opacity-35"
         >
-          {working ? "Working…" : "Build it"}
+          {working ? "Working…" : "Find it"}
         </button>
       </form>
+
+      {/* The expensive half, asked for rather than assumed.
+          Only offered once the address has been located, and only where a
+          scraper is configured - it is minutes of waiting and forty downloads,
+          which is the wrong default for somebody who already has the photos. */}
+      {found?.located && photosAvailable && found.mode === "outline" && !working && (
+        <button
+          onClick={() => void run("full")}
+          className="mt-2 w-full rounded-lg border border-ink-500 px-4 py-2.5 text-xs text-mist-200 transition hover:bg-ink-600"
+        >
+          Also pull the photos and room counts from the listing
+          <span className="ml-1 text-mist-400">&mdash; a couple of minutes</span>
+        </button>
+      )}
 
       {pastedAddress && !stage && (
         <p className="mt-2 text-xs text-mist-400">
@@ -148,11 +197,19 @@ export function PropertyStart({
       {stage && <p className="mt-2 text-xs text-mist-400">{stage}</p>}
       {error && <p className="mt-2 text-xs text-warn">{error}</p>}
 
+      {found?.mode === "outline" && found.located && !working && (
+        <p className="mt-2 text-xs text-mist-400">
+          {found.outlined
+            ? "Found the building, its outline and which way it faces. Add photographs below to fill it in."
+            : "Found where it is, but no building is drawn there on the map. It will still be built on the right site, facing the right way — add photographs below, or pull the listing."}
+        </p>
+      )}
+
       {photosAvailable === false && !stage && (
         <p className="mt-2 text-xs text-mist-400">
-          Listing photos are not configured here, so this will build the house from its
-          outline on the map &ndash; the right shape and the right way round. Add your own
-          photos below to fill it in.
+          Listing photos are not configured here, so this builds the house from its outline
+          on the map &ndash; the right shape and the right way round. Add your own photos
+          below to fill it in.
         </p>
       )}
     </div>

@@ -11,6 +11,7 @@ import { z } from "zod";
  */
 export const maxDuration = 120;
 
+import { TRACE_FRAME_PX, outlineIsPlausible, pixelsToRing } from "@/lib/site/trace";
 import {
   GOOGLE_ATTRIBUTION,
   fetchFacades,
@@ -97,24 +98,73 @@ const ReadSchema = z.object({
   confidence: z.enum(["high", "low"]).describe("low when the imagery is obstructed, dated, or shows the wrong building"),
   notes: z.string().describe("Anything the caller should know, in one sentence. Empty string if nothing."),
   condition: ConditionSchema,
+  /**
+   * The building's outline, only when the map had none and we asked for it.
+   *
+   * Absolute pixels in the satellite image as sent - models are markedly worse
+   * at normalised or 0-1000 coordinate systems than at the frame's own.
+   */
+  outlinePixels: z
+    .array(z.tuple([z.number(), z.number()]))
+    .describe(
+      "The main dwelling's outline as [x, y] pixel pairs in the satellite image, going around the building once. Empty array unless you were asked to trace it.",
+    ),
+  outlineConfidence: z
+    .enum(["high", "low"])
+    .describe("How sure you are that this outline is the dwelling and not a garage, a shadow or the parcel."),
 });
 
-function systemPrompt(outline: string, storeysHint: number | null): string {
+/**
+ * Which building we are talking about, and whether its shape is known.
+ *
+ * These used to be one prompt with the outline substituted in, and with no
+ * outline it substituted the literal string "not available" - leaving three
+ * rules that referred to a shape which had never been supplied, including "the
+ * one matching the outline above". Nothing had noticed because nothing
+ * downstream used the answer.
+ *
+ * They are two prompts now because they are two jobs. Annotating a surveyed
+ * outline is a different task from recovering one, and the rule that matters
+ * most in each contradicts the other outright.
+ */
+function knownShape(outline: string, frame: number): string {
+  return `You are given the building's true outline, surveyed from a map, in metres:
+${outline}
+
+Note it has been rotated to square it up and its origin moved to a corner, so it will not sit over the image; use it to know the building's size and shape, not its position. The building is the one near the middle of the ${frame}px frame.
+
+- Do NOT describe the building's outline, footprint or plan. That is already known and is not what you are being asked for. Never trace or estimate the shape.
+- Leave outlinePixels empty and outlineConfidence "low".`;
+}
+
+function unknownShape(frame: number): string {
+  return `**No map has this building, so you are also being asked to trace it.**
+
+Return its outline in outlinePixels as [x, y] pairs in the satellite image's own pixels - absolute, not normalised - going around the building once. The image is exactly ${frame} by ${frame} pixels, x to the right, y downward, origin top left.
+
+- Trace the **main dwelling** and only that. A detached garage, a shed, a pool, a patio, a carport and a neighbour's roof are not it, and a driveway is certainly not. If the garage is attached and under the same roofline, include it.
+- Follow the roof's outer edge, which is what you can actually see. Six to twelve corners is normal for a house; do not trace every jog of a bay window or an eave.
+- Do not close the ring by repeating the first point.
+- **outlineConfidence is about the satellite view alone.** You are tracing a roof from above; whether the facade is screened from the street has nothing to do with it, and a house completely hidden behind trees at ground level is often perfectly plain from the air. Judge only whether you can see this building's roof clearly enough to follow its edge.
+- Set outlineConfidence to "low" when the roof itself is obscured by tree canopy or deep shadow, when the building runs past the edge of the frame, or when you genuinely cannot tell the dwelling from an outbuilding. A wrong outline puts every room of the house into the wrong shape, and it will not look wrong enough for anybody to check it. Refusing costs nothing: a plain rectangle is used instead.`;
+}
+
+function systemPrompt(
+  shape: string,
+  storeysHint: number | null,
+): string {
   return `You are describing the outside of one specific house, from a satellite photograph and one or more street-level photographs of it.
 
-You are given the building's true outline, surveyed from a map, in metres:
-${outline}
+${shape}
 
 The satellite image is north-up. The street-level images are labelled with the compass bearing the camera was pointing along.
 ${storeysHint ? `\nA map source says this building has ${storeysHint} storeys. Treat that as more reliable than your own count unless the photograph plainly contradicts it.\n` : ""}
 Rules:
-- Do NOT describe the building's outline, footprint or plan. That is already known and is not what you are being asked for. Never trace or estimate the shape.
 - Report only what is visible in the images. If a facade is hidden by a tree, a fence or a parked van, say so through a low confidence rather than filling it in.
-- The satellite image may show several buildings. The one you are describing is the one matching the outline above, at the centre of the frame. A detached garage or shed is not it.
 - Bearings are true compass degrees, 0 = north, 90 = east. For the front door, give the direction FROM the centre of the house TO the door - so a door on the south side is 180.
 - Colours must be a CSS colour name or a #rrggbb hex, chosen to match what you can see. Do not name a colour you cannot see because of shadow; return null.
 - Storeys means habitable floors above ground. Count rows of windows. A finished attic with dormers is not a storey; a raised basement with full windows is.
-- Set confidence to "low" whenever the imagery is obstructed, obviously old, or you are not certain it shows the same building as the outline. A wrong answer here repaints the whole house and puts its front door on the wrong side, and nobody will check it.
+- Set confidence to "low" whenever the imagery is obstructed, obviously old, or you are not certain it shows the building you were asked about. A wrong answer here repaints the whole house and puts its front door on the wrong side, and nobody will check it.
 
 You are also grading the condition of what you can see, for a renovation scope of work. Use exactly these grades:
 - good — recently done or as-new. No work needed.
@@ -183,7 +233,13 @@ export async function POST(request: Request) {
         Math.max(...outline.map((p) => p[0])) - Math.min(...outline.map((p) => p[0])),
         Math.max(...outline.map((p) => p[1])) - Math.min(...outline.map((p) => p[1])),
       )
-    : 18;
+    // Nothing is known about the building's size, so the frame has to be
+    // generous rather than typical. Guessing 18m framed a real ranch so tightly
+    // that it ran off two edges and the trace was refused for it - and the tile
+    // is centred on the parcel point, not the house, so a building set back
+    // behind trees is off-centre as well as large. Thirty metres roughly
+    // doubles the ground covered and still resolves at about 6cm a pixel.
+    : 30;
 
   // The free metadata probe first, so a property with no coverage costs nothing
   // beyond one unbilled request.
@@ -224,7 +280,9 @@ export async function POST(request: Request) {
   }
   content.push({
     type: "text",
-    text: "Describe this building's exterior. Do not describe its footprint.",
+    text: outline.length
+      ? "Describe this building's exterior. Do not describe its footprint."
+      : "Describe this building's exterior, and trace the outline of the main dwelling in the satellite image.",
   });
 
   const outlineText = outline.length
@@ -241,7 +299,12 @@ export async function POST(request: Request) {
       // recognition - the same kind of task as reading a hand-drawn plan, which
       // also runs high.
       output_config: { effort: "high", format: zodOutputFormat(ReadSchema) },
-      system: systemPrompt(outlineText, body.storeys ?? null),
+      system: systemPrompt(
+        outline.length
+          ? knownShape(outlineText, overhead?.size ?? TRACE_FRAME_PX)
+          : unknownShape(overhead?.size ?? TRACE_FRAME_PX),
+        body.storeys ?? null,
+      ),
       messages: [{ role: "user", content }],
     });
 
@@ -253,6 +316,46 @@ export async function POST(request: Request) {
     }
 
     const read = response.parsed_output;
+
+    let traced: Array<[number, number]> | null = null;
+    // Why a trace was not used, said out loud.
+    //
+    // A refusal and a building nobody tried to trace look identical from
+    // outside, and both end with the same rectangle - so without this the only
+    // way to tell "the model would not commit" from "the polygon was a shed"
+    // is to instrument the route and run it again.
+    let traceRefused: string | null = null;
+
+    if (!outline.length && overhead) {
+      if (read.outlinePixels.length < 4) {
+        traceRefused = "no outline was returned";
+      } else {
+        const ring = pixelsToRing(
+          read.outlinePixels as Array<[number, number]>,
+          { lat, lon },
+          overhead.metresPerPixel,
+          overhead.size,
+        );
+        // Judged on the shape, not on how sure the model said it was.
+        //
+        // Requiring "high" as well threw away perfectly good outlines: a real
+        // ranch came back the right size and the right proportions, and was
+        // refused only because tree canopy covered one wing. The shape gate is
+        // objective and already turns away sheds, whole parcels and driveways;
+        // stated confidence was a second, softer opinion about the same thing,
+        // and the alternative it fell back to is a rectangle invented from a
+        // table of typical room sizes. A partly-obscured trace of the actual
+        // building beats that, and the confidence is passed on so the build can
+        // say how sure it was rather than implying certainty.
+        const verdict = outlineIsPlausible(ring);
+        if (verdict.ok) {
+          traced = ring;
+        } else {
+          traceRefused = verdict.why;
+        }
+      }
+    }
+
     const bearing = (value: number | null) =>
       typeof value === "number" && Number.isFinite(value) ? ((value % 360) + 360) % 360 : null;
 
@@ -298,6 +401,16 @@ export async function POST(request: Request) {
         ).filter(([, grade]) => grade !== "not_visible"),
       ),
       conditionNotes: read.condition.conditionNotes,
+      // The traced outline, already converted out of pixels.
+      //
+      // Done here rather than by the caller because only here are the tile's
+      // centre, zoom and ground resolution all in hand - and the conversion
+      // silently produces a plausible-but-wrong building if any of them is
+      // guessed. A ring that fails the plausibility gate is dropped rather than
+      // returned, so a caller cannot accidentally build on a garden shed.
+      tracedRing: traced,
+      tracedConfidence: traced ? read.outlineConfidence : null,
+      traceRefused,
       notes: read.notes,
       saw: { overhead: Boolean(overhead), facades: facades.length },
     });

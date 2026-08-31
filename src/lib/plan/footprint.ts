@@ -1,7 +1,10 @@
 import { autoOpenings, rectangle, typicalSize } from "@/lib/plan/autolayout";
-import { isStairs } from "@/lib/plan/room-kind";
+import { isStairs, roomKind } from "@/lib/plan/room-kind";
 import type { Opening, Room, Vec2 } from "@/lib/schema";
 import { M_PER_FT } from "@/lib/units";
+
+/** The garden, the deck, the yard - a place, but not a room in the building. */
+const isOutside = (label: string) => roomKind(label) === "outside";
 
 /**
  * Turn a real building outline into something rooms can be packed into.
@@ -664,28 +667,88 @@ export function layoutFromFootprint(
   spec: { rooms: Array<{ label: string; level: number }> },
   footprint: Footprint,
   adjacency?: Array<[string, string]>,
+  /**
+   * An arrangement chosen elsewhere, per storey.
+   *
+   * Indices are into the labels of that storey **in the order this function
+   * receives them**, which is why supplying one also turns off the reordering
+   * below. Reordering first and then applying indices from before the reorder
+   * puts rooms in the wrong rectangles with nothing to show for it - no error,
+   * no warning, just a house that is subtly not the one that was designed.
+   */
+  plans?: Map<number, PackPlan>,
 ): { rooms: Room[]; openings: Opening[] } {
   const levels = [...new Set(spec.rooms.map((r) => r.level))].sort((a, b) => a - b);
   const all: Room[] = [];
   let counter = 1;
 
   for (const level of levels) {
-    const labels = spec.rooms.filter((r) => r.level === level).map((r) => r.label);
-    if (labels.length === 0) continue;
+    const onLevel = spec.rooms.filter((r) => r.level === level);
+    // The garden is not a room in the building.
+    //
+    // Exterior photographs get classified as "Outside" and became a room like
+    // any other, so a house with nine of them handed 700 square feet of its own
+    // floor to the yard. Every other consumer already knows better - it is
+    // excluded from living area, from windows, from lamps, from where a walker
+    // starts and from the scripted tour. Only the packer treated it as inside.
+    const labels = onLevel.filter((r) => !isOutside(r.label)).map((r) => r.label);
+    const outsides = onLevel.filter((r) => isOutside(r.label)).map((r) => r.label);
 
-    // Photographed connections order the rooms; the footprint decides where
-    // they go. Both signals are weak on their own and neither overrides the
-    // other - the arrangement pass only chooses which room comes first.
-    const ordered = orderForAdjacency(labels, adjacency ?? []);
-    const laid = packIntoFootprint(ordered, footprint, level).map((room) => ({
-      ...room,
-      id: `r${counter++}`,
-    }));
-    all.push(...laid);
+    if (labels.length > 0) {
+      const given = plans?.get(level);
+      // Photographed connections order the rooms; the footprint decides where
+      // they go. Both signals are weak on their own and neither overrides the
+      // other - the arrangement pass only chooses which room comes first.
+      //
+      // Skipped entirely when an arrangement was supplied, because that
+      // arrangement was chosen against this exact list and reordering it would
+      // silently invalidate every index in it.
+      const ordered = given ? labels : orderForAdjacency(labels, adjacency ?? []);
+      const laid = packIntoFootprint(ordered, footprint, level, given).map((room) => ({
+        ...room,
+        id: `r${counter++}`,
+      }));
+      all.push(...laid);
+    }
+
+    for (const label of outsides) {
+      all.push({ ...outsideRoom(footprint, label, level), id: `r${counter++}` });
+    }
   }
 
   alignStairwells(all, levels);
   return { rooms: all, openings: autoOpenings(all) };
+}
+
+/**
+ * Somewhere to stand outside the house.
+ *
+ * A record still has to exist even though it is not a room: a viewpoint must
+ * belong to one, floor heights are looked up through it, and the exterior
+ * grading finds its photographs precisely by asking which room is the outside.
+ * Deleting it would strand every exterior shot and quietly switch that grading
+ * off.
+ *
+ * So it is placed against the building rather than inside it. Touching, not
+ * detached - `autoOpenings` derives a doorway from rooms that share a wall, and
+ * a garden nobody can walk into is an orphan the walk graph will complain
+ * about.
+ */
+function outsideRoom(footprint: Footprint, label: string, level: number): Room {
+  const xs = footprint.outline.map((p) => p[0]);
+  const ys = footprint.outline.map((p) => p[1]);
+  const x0 = Math.min(...xs);
+  const x1 = Math.max(...xs);
+  const y1 = Math.max(...ys);
+  const depth = Math.max((y1 - Math.min(...ys)) * 0.4, 4);
+
+  return {
+    id: "outside",
+    label,
+    polygon: rectangle(x0, y1, x1 - x0, depth),
+    ceilingHeight: 2.7,
+    level,
+  };
 }
 
 /**

@@ -32,6 +32,27 @@ export function publicUrl(path: string): string {
  * `/t/123-main-st` tells a recipient what they are opening in a way a uuid
  * never will.
  */
+/**
+ * A slug nobody can guess.
+ *
+ * Lives here rather than with the syncing because it is pure and because it
+ * belongs next to `toSlug`, which is the thing it exists to *not* be: a slug
+ * derived from an address is findable by typing that address, and the tours
+ * table has no read policy, so the slug is the entire access control.
+ *
+ * 24 characters of 36 is about 124 bits. The alphabet is taken modulo 36 from
+ * random bytes, which is very slightly biased toward its first four letters -
+ * irrelevant at this width, and worth knowing rather than discovering.
+ *
+ * The `t-` prefix keeps the first character a letter, which the publish route's
+ * slug pattern requires, and marks a minted slug apart from a typed one.
+ */
+export function newSlug(): string {
+  const alphabet = "abcdefghijklmnopqrstuvwxyz0123456789";
+  const bytes = crypto.getRandomValues(new Uint8Array(24));
+  return `t-${Array.from(bytes, (b) => alphabet[b % alphabet.length]).join("")}`;
+}
+
 export function toSlug(input: string): string {
   const base = input
     .toLowerCase()

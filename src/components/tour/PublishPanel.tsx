@@ -26,7 +26,13 @@ export function PublishPanel({ property }: { property: Property }) {
   const [available, setAvailable] = useState<{ storage: boolean; admin: boolean } | null>(null);
   const [open, setOpen] = useState(false);
   const [adminKey, setAdminKey] = useState("");
-  const [slug, setSlug] = useState(() => toSlug(property.label || property.id));
+  // A tour that has already synced keeps the slug it went up under. Defaulting
+  // to the address instead would publish a second copy of the same house at a
+  // guessable link, leaving two rows that drift apart - and quietly undo the
+  // reason the slug is random in the first place.
+  const [slug, setSlug] = useState(
+    () => property.cloud?.slug ?? toSlug(property.label || property.id),
+  );
   const [progress, setProgress] = useState<PublishProgress | null>(null);
   const [result, setResult] = useState<{ url: string; bytes: number } | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -161,6 +167,11 @@ export function PublishPanel({ property }: { property: Property }) {
                 className="min-w-0 flex-1 rounded border border-ink-600 bg-ink-700 px-2 py-1 text-mist-200 outline-none focus:border-accent-dim"
               />
             </div>
+            <p className="mt-1 text-[11px] leading-relaxed text-mist-400">
+              The link is the only way in &ndash; nothing lists what is published.
+              A random one cannot be found by guessing an address; a memorable
+              one can.
+            </p>
           </label>
 
           {available.admin && (

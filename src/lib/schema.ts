@@ -228,6 +228,24 @@ export const Property = z.object({
   site: Site.nullish(),
   /** What the outside looks like, from the map and from imagery. */
   exterior: Exterior.nullish(),
+  /**
+   * Where this tour lives in the cloud, once it has been sent there.
+   *
+   * The slug is kept on the document so a later sync updates the same row
+   * rather than minting a second copy of the same house, and so the link can be
+   * offered without asking anyone to remember it.
+   *
+   * It is a long random string, and that is the access control: there is no
+   * account model, the table has no read policy, and `/t/<slug>` is the only
+   * way in. Guessing one is the whole difficulty, so it must never be derived
+   * from the address.
+   */
+  cloud: z
+    .object({
+      slug: z.string().min(1),
+      syncedAt: z.number(),
+    })
+    .nullish(),
 });
 export type Property = z.infer<typeof Property>;
 

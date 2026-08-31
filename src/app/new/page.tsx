@@ -4,6 +4,7 @@ import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "rea
 import { useSearchParams } from "next/navigation";
 
 import { DescribeHouse } from "@/components/wizard/DescribeHouse";
+import { DriveImport } from "@/components/wizard/DriveImport";
 import { PhotoDrop, type ImportedPhoto } from "@/components/wizard/PhotoDrop";
 import { PropertyStart } from "@/components/wizard/PropertyStart";
 import { PhotoReview } from "@/components/wizard/PhotoReview";
@@ -25,12 +26,17 @@ import {
 } from "@/lib/listing/types";
 import { deleteMedia, mediaKeys, mediaRef, refToKey, resolveMediaUrl } from "@/lib/media-store";
 import { readExterior } from "@/lib/site/client";
+import { syntheticRing } from "@/lib/site/trace";
+import { GOOGLE_ATTRIBUTION } from "@/lib/site/geo";
 import { mergeExterior } from "@/lib/site/osm";
 import { layoutFromSpec } from "@/lib/plan/autolayout";
-import { layoutFromFootprint, prepareFootprint } from "@/lib/plan/footprint";
+import { type PackPlan, layoutFromFootprint, prepareFootprint } from "@/lib/plan/footprint";
+import { arrangeRooms } from "@/lib/plan/layout-client";
+import { roomKind } from "@/lib/plan/room-kind";
 import { type HouseSpec, describeToSpec } from "@/lib/plan/describe";
 import { buildBom } from "@/lib/bom/build";
 import { type GradeProgress, gradeProperty } from "@/lib/bom/grade-client";
+import { canSync, rememberAdminKey, syncBlocker, syncProperty } from "@/lib/cloud/sync";
 import { loadProperty, saveProperty } from "@/lib/property-store";
 import type { HouseCondition } from "@/lib/bom/condition";
 import type { Exterior, Plan, Property } from "@/lib/schema";
@@ -122,6 +128,14 @@ function NewTourInner() {
   /** How far the condition scan has got, or null when it is not running. */
   const [scan, setScan] = useState<GradeProgress | null>(null);
   const [scanned, setScanned] = useState(0);
+  /** How the copy on the server is doing: uploading, done, or refused. */
+  const [sync, setSync] = useState<
+    | { state: "off" }
+    | { state: "needs-key" }
+    | { state: "uploading"; done: number; total: number }
+    | { state: "done"; slug: string }
+    | { state: "failed"; why: string }
+  >({ state: "off" });
   /** What the scope comes to as the scan fills it in. */
   const scopeTotal = useMemo(
     () =>
@@ -318,12 +332,22 @@ function NewTourInner() {
    * Enough to build something.
    *
    * Any one of these is enough on its own: photographs, the building's outline,
-   * the listing's facts, or a typed description. Requiring photographs was the
-   * old rule and it is what forced an upload before anything could happen.
+   * the listing's facts, a typed description - or simply knowing where the
+   * house is. Requiring photographs was the old rule and it is what forced an
+   * upload before anything could happen.
+   *
+   * Knowing where it is belongs on that list and was missing, which only showed
+   * once an address stopped scraping by default. Before, a lookup nearly always
+   * came back with beds and baths and those carried it; now an address does the
+   * map half alone, so a building OpenStreetMap has never drawn left a located
+   * property with no way to build it - a field that appeared to have done
+   * nothing. `build` already handles exactly this, falling back to a typical
+   * three-bed on the right site, and only needed permission to be reached.
    */
   const canBuild =
     photos.length > 0 ||
     footprint !== null ||
+    listingSite !== null ||
     Boolean(facts?.sqft || facts?.beds) ||
     description.trim().length > 0;
 
@@ -446,6 +470,46 @@ function NewTourInner() {
     }
   }, []);
 
+  /**
+   * Put the finished tour somewhere other than this browser.
+   *
+   * Deliberately the last thing and deliberately unable to fail the build: the
+   * tour is already saved locally and complete before this runs, so a project
+   * that is not configured, a passphrase nobody has entered, or a network that
+   * drops halfway all leave exactly what existed before - a working local
+   * tour - and say so rather than throwing it away.
+   */
+  const syncUp = useCallback(async (id: string) => {
+    // A missing passphrase is worth saying out loud - it is one field away
+    // from working, and staying silent is what would make "syncs automatically"
+    // quietly untrue. A project that is not configured at all is not the
+    // operator's problem, and says nothing.
+    if (!canSync()) {
+      setSync(syncBlocker() === "no-key" ? { state: "needs-key" } : { state: "off" });
+      return;
+    }
+    const stored = loadProperty(id);
+    if (!stored) return;
+
+    setSync({ state: "uploading", done: 0, total: 0 });
+    try {
+      const result = await syncProperty(stored, (done, total) =>
+        setSync({ state: "uploading", done, total }),
+      );
+      if (result.ok) {
+        setSync({ state: "done", slug: result.slug });
+        setProperty(loadProperty(id) ?? stored);
+      } else {
+        setSync({ state: "failed", why: result.error });
+      }
+    } catch (error) {
+      setSync({
+        state: "failed",
+        why: error instanceof Error ? error.message : "upload failed",
+      });
+    }
+  }, []);
+
   const build = useCallback(async () => {
     setStage("building");
     setFailed(null);
@@ -468,7 +532,62 @@ function NewTourInner() {
       if (photo.roomLabel && !roomLabels.includes(photo.roomLabel)) roomLabels.push(photo.roomLabel);
     }
 
-    // --- 2. What shape is the house? ---
+    // --- 2. What does the house look like from outside? ---
+    //
+    // After the layout because the outline is what makes the reading useful:
+    // one out - and, when the map has no building at all, to trace one.
+    //
+    // This runs BEFORE the layout, which is the whole point. It used to run
+    // after, so nothing it saw could reach the floor plan: a ranch was read
+    // correctly as a single-storey hip-roofed house and then packed into a
+    // rectangle invented from a table of typical room sizes. Skipped entirely
+    // without a site, and failing quietly - a house down a private track has
+    // no street view, and that is not an error.
+    let outside = exterior;
+    // The building's own outline, when the map had none and the satellite
+    // could see one. Dropped by the route unless it was both confident and
+    // plausible, so anything that arrives here is worth building on.
+    let tracedRing: Array<[number, number]> | null = null;
+    let tracedConfidence: "high" | "low" | null = null;
+    // What the same look at the house says about its condition. The roof is
+    // usually the largest single number in a rehab and no listing photograph
+    // shows it, so this is the only evidence there is for it.
+    let houseCondition: HouseCondition = {};
+    if (listingSite) {
+      setStep({ label: "Looking at the outside", done: 0, total: 1 });
+      const read = await readExterior({
+        lat: listingSite.lat,
+        lon: listingSite.lon,
+        outline: footprint?.outline ?? [],
+        storeys: exterior?.storeys ?? null,
+      });
+      outside = mergeExterior(exterior, read?.exterior ?? null);
+      houseCondition = read?.condition ?? {};
+      tracedRing = read?.tracedRing ?? null;
+      tracedConfidence = read?.tracedConfidence ?? null;
+
+      const seen = read?.exterior;
+      if (seen) {
+        const said = [
+          seen.storeys ? `${seen.storeys} storeys` : null,
+          seen.roof?.shape ? `a ${seen.roof.shape} roof` : null,
+          seen.walls?.material ?? null,
+        ].filter(Boolean);
+        if (said.length > 0) {
+          gathered.push(`Looked at the house from the street and the air: ${said.join(", ")}.`);
+        }
+      }
+      const needing = Object.entries(houseCondition).filter(
+        ([, grade]) => grade === "dated" || grade === "poor",
+      );
+      if (needing.length > 0) {
+        gathered.push(
+          `Graded the outside from that: ${needing.map(([element, grade]) => `${element} ${grade}`).join(", ")}.`,
+        );
+      }
+    }
+
+    // --- 3. What shape is the house? ---
     setStep({ label: "Working out the layout", done: 0, total: 1 });
     const described = spec?.rooms ?? [];
     const describedLabels = new Set(described.map((r) => r.label));
@@ -492,10 +611,6 @@ function NewTourInner() {
     }
 
     const adjacency = adjacencyRef.current;
-    // Pack into the building's real outline when the address gave us one.
-    // The shape of the house is the thing a viewer recognises, and it is the
-    // one part of this that is measured rather than inferred - so it wins over
-    // the invented rectangle whenever it exists.
     // Trust the count derived from the two areas over the number of levels the
     // room list happens to use - a description that never mentioned an upstairs
     // would otherwise squash a two-storey house onto one floor.
@@ -503,18 +618,84 @@ function NewTourInner() {
       footprint?.storeys ?? 1,
       new Set(rooms.map((r) => r.level)).size,
     );
-    const built = footprint
-      ? layoutFromFootprint(
-          { rooms },
-          prepareFootprint(
-            footprint.ring,
-            // The outline is the ground floor, so the listing's total area has
-            // to be divided by the storeys standing on it.
-            facts?.sqft ? facts.sqft / storeys : undefined,
-            Math.max(1, rooms.filter((r) => r.level === 0).length),
-          ),
-          adjacency,
+
+    /**
+     * A shape to pack into, whatever the map had.
+     *
+     * The map first, because it is measured. Then the satellite trace, because
+     * a shape read off a photograph of the actual building beats a rectangle
+     * invented from a table of typical room sizes. Then, failing both, that
+     * rectangle - but with a house's proportions rather than a square, which is
+     * the difference between a ranch and a block of flats.
+     *
+     * Three sources, one pipeline: each produces a `[lat, lon]` ring, so
+     * `prepareFootprint` and everything after it cannot tell them apart and
+     * every house gets the same exact-fill guarantee.
+     */
+    let ring = footprint?.ring ?? null;
+    let shapeFrom: "map" | "traced" | "invented" = "map";
+
+    if (!ring && tracedRing) {
+      ring = tracedRing;
+      shapeFrom = "traced";
+      gathered.push(
+        tracedConfidence === "low"
+          ? "No building is drawn on the map here, so the outline was read off the satellite image — parts of it were obscured, so check the shape below."
+          : "No building is drawn on the map here, so the outline was read off the satellite image.",
+      );
+    }
+    if (!ring && listingSite) {
+      ring = syntheticRing(listingSite, facts?.sqft ? facts.sqft / storeys : 1600);
+      shapeFrom = "invented";
+      gathered.push(
+        "Neither the map nor the satellite gave a usable outline, so this is a typical single-storey shape — drag it about below.",
+      );
+    }
+    // Prepared once and kept, because the angle it had to turn the building
+    // through to square it up is also what tells the sun which way the house
+    // faces. Preparing it twice would be cheap; forgetting the rotation is how
+    // a traced house ends up lit from the wrong side.
+    const groundRooms = Math.max(1, rooms.filter((r) => r.level === 0).length);
+    const prepared = ring
+      ? prepareFootprint(
+          ring,
+          // The outline is the ground floor, so the listing's total area has to
+          // be divided by the storeys standing on it.
+          facts?.sqft ? facts.sqft / storeys : undefined,
+          groundRooms,
         )
+      : null;
+
+    /**
+     * Where the rooms go, asked rather than shelf-packed.
+     *
+     * Only the ground floor, and only when there is something to arrange. It is
+     * one more call on a build that already makes several, and it is the one
+     * that decides whether the plan looks like a house - the packer's own
+     * answer fills the outline correctly and arranges it like a spreadsheet.
+     *
+     * Ground-floor labels are taken here in the same order `layoutFromFootprint`
+     * will see them, because the indices that come back mean nothing otherwise.
+     */
+    const plans = new Map<number, PackPlan>();
+    if (prepared) {
+      setStep({ label: "Arranging the rooms", done: 0, total: 1 });
+      const groundLabels = rooms
+        .filter((r) => r.level === 0 && roomKind(r.label) !== "outside")
+        .map((r) => r.label);
+      const arranged = await arrangeRooms(prepared, groundLabels, adjacency, {
+        frontDoorBearing: outside?.frontDoorBearing ?? null,
+        garageBearing: outside?.garage?.bearing ?? null,
+        planXBearing: 90 + prepared.rotationDeg,
+      });
+      if (arranged) {
+        plans.set(0, arranged.plan);
+        if (arranged.reasoning) gathered.push(arranged.reasoning);
+      }
+    }
+
+    const built = prepared
+      ? layoutFromFootprint({ rooms }, prepared, adjacency, plans)
       : layoutFromSpec(
           { rooms },
           facts?.sqft ? sqftToM2(facts.sqft) : undefined,
@@ -529,58 +710,20 @@ function NewTourInner() {
     gathered.push(
       `${built.rooms.length} rooms, ${built.openings.length} doorways.`,
     );
-    if (footprint) {
-      // Worth saying out loud. It is the one measurement in the whole build,
-      // and it is also an attribution the ODbL requires wherever it is shown.
+    // Worth saying out loud, and saying *which* - a surveyed outline and one
+    // read off a photograph are not the same claim, and each carries a licence
+    // that requires crediting wherever it is shown.
+    if (footprint && shapeFrom === "map") {
       gathered.push(
         `Shaped to the real building outline from the map (${Math.round(footprint.areaSqft)} sqft ground floor). ${footprint.attribution}.`,
       );
-    }
-
-    // --- 2b. What does the house look like from outside? ---
-    //
-    // After the layout because the outline is what makes the reading useful:
-    // the model is asked to annotate a shape it is given rather than to work
-    // one out. Skipped entirely without a site, and failing quietly - a house
-    // down a private track has no street view, and that is not an error.
-    let outside = exterior;
-    // What the same look at the house says about its condition. The roof is
-    // usually the largest single number in a rehab and no listing photograph
-    // shows it, so this is the only evidence there is for it.
-    let houseCondition: HouseCondition = {};
-    if (listingSite) {
-      setStep({ label: "Looking at the outside", done: 0, total: 1 });
-      const read = await readExterior({
-        lat: listingSite.lat,
-        lon: listingSite.lon,
-        outline: footprint?.outline ?? [],
-        storeys: exterior?.storeys ?? null,
-      });
-      outside = mergeExterior(exterior, read?.exterior ?? null);
-      houseCondition = read?.condition ?? {};
-
-      const seen = read?.exterior;
-      if (seen) {
-        const said = [
-          seen.storeys ? `${seen.storeys} storeys` : null,
-          seen.roof?.shape ? `a ${seen.roof.shape} roof` : null,
-          seen.walls?.material ?? null,
-        ].filter(Boolean);
-        if (said.length > 0) {
-          gathered.push(`Looked at the house from the street and the air: ${said.join(", ")}.`);
-        }
-      }
-      const needing = Object.entries(houseCondition).filter(
-        ([, grade]) => grade === "dated" || grade === "poor",
+    } else if (prepared && shapeFrom === "traced") {
+      gathered.push(
+        `Shaped to the building as seen from above (${Math.round(prepared.areaSqft)} sqft ground floor). ${GOOGLE_ATTRIBUTION}.`,
       );
-      if (needing.length > 0) {
-        gathered.push(
-          `Graded the outside from that: ${needing.map(([element, grade]) => `${element} ${grade}`).join(", ")}.`,
-        );
-      }
     }
 
-    // --- 3. Put the photos in the rooms ---
+    // --- 4. Put the photos in the rooms ---
     const placed = placePhotos(nextPlan, labelled);
 
     let assembled: Property = {
@@ -601,8 +744,8 @@ function NewTourInner() {
       // turning it by that angle puts plan +x that many degrees round from
       // east.
       site:
-        listingSite && footprint
-          ? { ...listingSite, planXBearing: 90 + footprint.rotationDeg }
+        listingSite && prepared
+          ? { ...listingSite, planXBearing: 90 + prepared.rotationDeg }
           : listingSite
             ? { ...listingSite, planXBearing: 90 }
             : null,
@@ -617,7 +760,7 @@ function NewTourInner() {
     }
     saveProperty(assembled);
 
-    // --- 4. Where was each photo taken from? ---
+    // --- 5. Where was each photo taken from? ---
     const posed = await posePhotos(nextPlan, assembled.nodes, setStep);
     assembled = { ...assembled, nodes: posed.nodes };
     saveProperty(assembled);
@@ -635,7 +778,7 @@ function NewTourInner() {
     // tour's now, under the same keys. Only the working state goes.
     await clearIntake(propertyId);
 
-    // --- 5. Depth and the condition scan, while they look around ---
+    // --- 6. Depth and the condition scan, while they look around ---
     //
     // Both run after the review screen is up, for the same reason: the house
     // should appear as fast as it always did, and neither of these changes what
@@ -644,7 +787,7 @@ function NewTourInner() {
     const estimator = new DepthEstimator();
     estimatorRef.current = estimator;
 
-    void scanCondition(assembled);
+    const scanning = scanCondition(assembled);
     await estimateDepth(estimator, assembled, setDepth, (updated) => {
       // Depth and the scan both write, so each re-reads rather than saving a
       // snapshot it took minutes ago - otherwise whichever finished last would
@@ -654,6 +797,15 @@ function NewTourInner() {
       saveProperty(merged);
       setProperty(merged);
     });
+
+    // --- 7. Off this machine ---
+    //
+    // Waits for the scan as well as the depth pass, because the point is to
+    // send up the finished tour rather than a half-graded one, and the two run
+    // concurrently. Re-read rather than reusing `assembled`, which by now is
+    // several passes out of date.
+    await scanning;
+    await syncUp(propertyId);
     } catch (error) {
       // Most of the pipeline already fails soft - a classify batch, a pose
       // batch and the exterior read all swallow their own errors. What is left
@@ -665,7 +817,7 @@ function NewTourInner() {
       setStep(null);
       setStage("photos");
     }
-  }, [photos, spec, facts, footprint, listingSite, exterior, propertyId, label]);
+  }, [photos, spec, facts, footprint, listingSite, exterior, propertyId, label, syncUp]);
 
   if (restoring) {
     return (
@@ -683,9 +835,9 @@ function NewTourInner() {
             <div className="mx-auto mb-6 max-w-3xl text-center">
               <h1 className="text-2xl font-semibold tracking-tight">Make a house</h1>
               <p className="mt-2 text-sm leading-relaxed text-mist-400">
-                Give it an address or a listing link and it will find the photos, the room
-                counts and the building&rsquo;s real outline, then build the house from them.
-                Photos of your own are optional.
+                The address gives the building&rsquo;s real outline, which way it faces and
+                what the outside is made of. The photographs can come from anywhere &mdash;
+                dropped in, a Drive folder someone sent you, or pulled from the listing.
               </p>
             </div>
 
@@ -728,8 +880,8 @@ function NewTourInner() {
                   : "Add photos"}{" "}
                 <span className="text-mist-400">
                   &mdash; {canBuild
-                    ? "optional; they add the 3D walk-through and let it read the condition"
-                    : "or start from photos alone, with no address at all"}
+                    ? "drop them, or paste a Drive folder link"
+                    : "drop them, paste a Drive folder link, or start from photos alone"}
                 </span>
               </summary>
               <div className="border-t border-ink-600 p-4">
@@ -742,6 +894,10 @@ function NewTourInner() {
                     if (photo) void deleteMedia(refToKey(photo.ref));
                   }}
                 />
+                {/* Photographs arrive as a Drive link far more often than as a
+                    folder on the machine doing the building. Same destination:
+                    `addPhotos` is what the file input calls too. */}
+                <DriveImport onFiles={addPhotos} busy={stage !== "photos"} />
               </div>
             </details>
 
@@ -851,6 +1007,82 @@ function NewTourInner() {
                 Scope &amp; costs
               </a>
             </div>
+
+            {/* The copy on the server.
+                Shown only once there is something to say: a tour that is not
+                syncing is the local-first tour this always was, and does not
+                need a row explaining an absence. The link is the whole of the
+                access control, so it is offered plainly and never derived from
+                the address. */}
+            {sync.state !== "off" && (
+              <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-ink-600 bg-ink-800 px-4 py-2.5 text-xs">
+                {sync.state === "needs-key" && (
+                  <>
+                    <span className="text-mist-400">
+                      Saved on this computer only. Enter the publish passphrase
+                      to keep tours on your site too &ndash; asked once per browser.
+                    </span>
+                    <form
+                      className="flex shrink-0 items-center gap-2"
+                      onSubmit={(e) => {
+                        e.preventDefault();
+                        const field = new FormData(e.currentTarget).get("key");
+                        const key = typeof field === "string" ? field.trim() : "";
+                        if (!key) return;
+                        rememberAdminKey(key);
+                        void syncUp(propertyId);
+                      }}
+                    >
+                      <input
+                        type="password"
+                        name="key"
+                        aria-label="Publish passphrase"
+                        className="w-40 rounded border border-ink-600 bg-ink-700 px-2 py-1.5 text-mist-200 outline-none focus:border-accent-dim"
+                      />
+                      <button
+                        type="submit"
+                        className="rounded border border-ink-500 px-3 py-1.5 text-mist-200 hover:bg-ink-600"
+                      >
+                        Save
+                      </button>
+                    </form>
+                  </>
+                )}
+                {sync.state === "uploading" && (
+                  <span className="text-mist-400">
+                    Saving to your site
+                    {sync.total > 0 ? ` · ${sync.done}/${sync.total} files` : "…"}
+                  </span>
+                )}
+                {sync.state === "done" && (
+                  <>
+                    <span className="text-mist-400">
+                      Saved to your site. Anyone with this link can open it.
+                    </span>
+                    <a
+                      href={`/t/${sync.slug}`}
+                      className="shrink-0 rounded border border-ink-500 px-4 py-2 text-mist-200 hover:bg-ink-600"
+                    >
+                      Shareable link
+                    </a>
+                  </>
+                )}
+                {sync.state === "failed" && (
+                  <>
+                    <span className="text-mist-400">
+                      Saved on this computer, but not to your site &mdash; {sync.why}.
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => void syncUp(propertyId)}
+                      className="shrink-0 rounded border border-ink-500 px-4 py-2 text-mist-200 hover:bg-ink-600"
+                    >
+                      Try again
+                    </button>
+                  </>
+                )}
+              </div>
+            )}
 
             {depth.stage !== "done" && depth.total > 0 && (
               <div className="mb-4 rounded-lg border border-ink-600 bg-ink-800 px-4 py-2.5">

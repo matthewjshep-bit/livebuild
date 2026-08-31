@@ -47,67 +47,102 @@ async function thumbnail(blob: Blob): Promise<string | null> {
 
 export type GradeProgress = { room: string; done: number; total: number };
 
+/**
+ * How many rooms to grade at once.
+ *
+ * One at a time was right when a person pressed a button and watched, and wrong
+ * once this runs on its own after every build: a dozen rooms sequentially at
+ * high effort is minutes of a house sitting there uncosted. Rooms are graded
+ * independently by design - the comment above says why mixing them is not an
+ * option - so widening costs nothing in accuracy and is the same shape
+ * `refinePoses` already uses.
+ */
+const GRADE_BATCH = 3;
+
+/** The photographs for one room, as data URLs, or an empty list if it has none. */
+async function photosForRoom(property: Property, roomId: string): Promise<string[]> {
+  const nodes = property.nodes.filter((n) => n.roomId === roomId).slice(0, MAX_PER_ROOM);
+  const photos: string[] = [];
+  for (const node of nodes) {
+    // Locally-built tours store their photos; bundled samples reference files.
+    // Handling both means the demo house can be costed like any other, which
+    // is the first thing anyone will try.
+    const blob = isManagedRef(node.photo)
+      ? await getMedia(refToKey(node.photo))
+      : await fetch(node.photo)
+          .then((r) => (r.ok ? r.blob() : null))
+          .catch(() => null);
+    if (!blob) continue;
+    const dataUrl = await thumbnail(blob);
+    if (dataUrl) photos.push(dataUrl);
+  }
+  return photos;
+}
+
 export async function gradeProperty(
   property: Property,
   onProgress?: (progress: GradeProgress) => void,
+  /**
+   * Called as each room's grades arrive.
+   *
+   * Without it this returns everything at the end, which is fine for a button
+   * somebody is watching and not fine for a pass that runs on its own for two
+   * minutes - a closed tab would throw all of it away. Saving each room as it
+   * lands is what depth estimation already does, for the same reason.
+   */
+  onRoom?: (roomId: string, grades: Record<string, Grade>) => void,
 ): Promise<{ condition: ConditionMap; graded: number; unseen: number }> {
   const condition: ConditionMap = {};
   let graded = 0;
   let unseen = 0;
+  let done = 0;
 
-  const rooms = property.plan.rooms;
+  const rooms = property.plan.rooms.filter(
+    (room) => elementsFor(roomKind(room.label)).length > 0,
+  );
 
-  for (let i = 0; i < rooms.length; i++) {
-    const room = rooms[i];
-    onProgress?.({ room: room.label, done: i, total: rooms.length });
+  for (let i = 0; i < rooms.length; i += GRADE_BATCH) {
+    const batch = rooms.slice(i, i + GRADE_BATCH);
+    onProgress?.({ room: batch[0]?.label ?? "", done, total: rooms.length });
 
-    const elements = elementsFor(roomKind(room.label));
-    if (elements.length === 0) continue;
+    await Promise.all(
+      batch.map(async (room) => {
+        const elements = elementsFor(roomKind(room.label));
+        const photos = await photosForRoom(property, room.id);
 
-    const nodes = property.nodes.filter((n) => n.roomId === room.id).slice(0, MAX_PER_ROOM);
-    const photos: string[] = [];
-    for (const node of nodes) {
-      // Locally-built tours store their photos; bundled samples reference files.
-      // Handling both means the demo house can be costed like any other, which
-      // is the first thing anyone will try.
-      const blob = isManagedRef(node.photo)
-        ? await getMedia(refToKey(node.photo))
-        : await fetch(node.photo)
-            .then((r) => (r.ok ? r.blob() : null))
-            .catch(() => null);
-      if (!blob) continue;
-      const dataUrl = await thumbnail(blob);
-      if (dataUrl) photos.push(dataUrl);
-    }
+        if (photos.length === 0) {
+          unseen += 1;
+          // Left absent rather than written as not_visible: the BOM already
+          // treats a missing grade that way, and an empty map is what "never
+          // graded" looks like.
+          return;
+        }
 
-    if (photos.length === 0) {
-      unseen += 1;
-      // Left absent rather than written as not_visible: the BOM already treats
-      // a missing grade that way, and an empty map is what "never graded" looks
-      // like.
-      continue;
-    }
+        try {
+          const response = await fetch("/api/condition", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ room: room.label, elements, photos }),
+          });
+          if (!response.ok) return;
 
-    try {
-      const response = await fetch("/api/condition", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ room: room.label, elements, photos }),
-      });
-      if (!response.ok) continue;
+          const data = await response.json();
+          const entry: Record<string, Grade> = {};
+          for (const item of data.grades ?? []) {
+            if (elements.includes(item.element)) entry[item.element] = item.grade;
+          }
+          if (Object.keys(entry).length > 0) {
+            condition[room.id] = entry as ConditionMap[string];
+            graded += 1;
+            onRoom?.(room.id, entry);
+          }
+        } catch {
+          // One room failing leaves it ungraded, which the BOM shows as unknown.
+        }
+      }),
+    );
 
-      const data = await response.json();
-      const entry: Record<string, Grade> = {};
-      for (const item of data.grades ?? []) {
-        if (elements.includes(item.element)) entry[item.element] = item.grade;
-      }
-      if (Object.keys(entry).length > 0) {
-        condition[room.id] = entry as ConditionMap[string];
-        graded += 1;
-      }
-    } catch {
-      // One room failing leaves it ungraded, which the BOM shows as unknown.
-    }
+    done = Math.min(i + GRADE_BATCH, rooms.length);
   }
 
   onProgress?.({ room: "", done: rooms.length, total: rooms.length });

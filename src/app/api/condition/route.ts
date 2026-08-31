@@ -19,6 +19,14 @@ import { GRADES } from "@/lib/bom/condition";
  * decides what that state costs.
  */
 
+/**
+ * Grading now runs on its own after every build, several rooms at a time, so
+ * this is on a hot path rather than behind a button somebody pressed. An
+ * opus-5 call at high effort over six photographs will outrun a platform
+ * default, and the failure would only show up on a deployment.
+ */
+export const maxDuration = 120;
+
 const MAX_PHOTOS = 6;
 
 const ConditionSchema = z.object({

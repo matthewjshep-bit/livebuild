@@ -1,5 +1,6 @@
 "use client";
 
+import type { Grade, HouseElement } from "@/lib/bom/condition";
 import type { Exterior } from "@/lib/schema";
 
 /**
@@ -9,12 +10,26 @@ import type { Exterior } from "@/lib/schema";
  * route reports itself unavailable, this returns null, and the house is built
  * from the map and the photographs exactly as it always was.
  */
+export type SiteRead = {
+  exterior: Exterior | null;
+  /**
+   * What the roof, siding, windows, landscaping and foundation are in.
+   *
+   * Read off the same satellite and street-level pictures as the appearance,
+   * in the same request. Elements the imagery could not show are absent rather
+   * than marked unseen, because the bill of materials already reads an absent
+   * grade that way and an explicit one would claim somebody looked.
+   */
+  condition: Partial<Record<HouseElement, Grade>>;
+  conditionNotes: string;
+};
+
 export async function readExterior(input: {
   lat: number;
   lon: number;
   outline: Array<[number, number]>;
   storeys: number | null;
-}): Promise<Exterior | null> {
+}): Promise<SiteRead | null> {
   try {
     const response = await fetch("/api/site/read", {
       method: "POST",
@@ -23,7 +38,11 @@ export async function readExterior(input: {
     });
     if (!response.ok) return null;
     const data = await response.json();
-    return (data.exterior as Exterior | null) ?? null;
+    return {
+      exterior: (data.exterior as Exterior | null) ?? null,
+      condition: (data.condition ?? {}) as Partial<Record<HouseElement, Grade>>,
+      conditionNotes: typeof data.conditionNotes === "string" ? data.conditionNotes : "",
+    };
   } catch {
     return null;
   }

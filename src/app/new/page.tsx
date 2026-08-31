@@ -1,6 +1,7 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useSearchParams } from "next/navigation";
 
 import { DescribeHouse } from "@/components/wizard/DescribeHouse";
 import { PhotoDrop, type ImportedPhoto } from "@/components/wizard/PhotoDrop";
@@ -22,23 +23,26 @@ import {
   type ListingFootprint,
   type ListingResult,
 } from "@/lib/listing/types";
-import { deleteMedia, refToKey } from "@/lib/media-store";
+import { deleteMedia, mediaKeys, mediaRef, refToKey, resolveMediaUrl } from "@/lib/media-store";
 import { readExterior } from "@/lib/site/client";
 import { mergeExterior } from "@/lib/site/osm";
 import { layoutFromSpec } from "@/lib/plan/autolayout";
 import { layoutFromFootprint, prepareFootprint } from "@/lib/plan/footprint";
 import { type HouseSpec, describeToSpec } from "@/lib/plan/describe";
-import { saveProperty } from "@/lib/property-store";
+import { buildBom } from "@/lib/bom/build";
+import { type GradeProgress, gradeProperty } from "@/lib/bom/grade-client";
+import { loadProperty, saveProperty } from "@/lib/property-store";
+import type { HouseCondition } from "@/lib/bom/condition";
 import type { Exterior, Plan, Property } from "@/lib/schema";
 import { requestPersistence } from "@/lib/storage/db";
 import {
-  type Draft,
-  clearDraft,
-  loadDraft,
-  resolveDraftUrls,
-  saveDraft,
-  storeDraftPhoto,
-} from "@/lib/storage/drafts";
+  type Intake,
+  clearIntake,
+  loadIntake,
+  resolveIntakeUrls,
+  saveIntake,
+  storeIntakePhoto,
+} from "@/lib/storage/intake";
 import { M_PER_FT, sqftToM2 } from "@/lib/units";
 
 /**
@@ -52,17 +56,53 @@ import { M_PER_FT, sqftToM2 } from "@/lib/units";
  */
 type Stage = "photos" | "building" | "review";
 
+/**
+ * A readable id that cannot collide.
+ *
+ * The date is kept because it sorts sensibly and stays legible in a URL, but it
+ * used to be the whole id at minute resolution - so two tours started in the
+ * same minute shared a document, a photo prefix, and each other's fate. The
+ * suffix is what makes it an identifier rather than a timestamp.
+ */
 function newPropertyId(): string {
   const now = new Date();
-  return `home-${now.toISOString().slice(0, 10)}-${now.getHours()}${String(
-    now.getMinutes(),
-  ).padStart(2, "0")}`;
+  const day = now.toISOString().slice(0, 10);
+  const clock = `${String(now.getHours()).padStart(2, "0")}${String(now.getMinutes()).padStart(2, "0")}`;
+  const unique = Math.random().toString(36).slice(2, 7);
+  return `home-${day}-${clock}-${unique}`;
 }
 
-export default function NewTourPage() {
+/**
+ * Photographs already in storage for a tour, when the import record is gone.
+ *
+ * The record is an optimisation, not the only proof a photograph exists - the
+ * blobs are the truth, and they are keyed by the property they belong to. This
+ * is what makes a crash between writing a picture and writing the record
+ * recoverable rather than a silent loss.
+ */
+async function photosFromStorage(propertyId: string): Promise<ImportedPhoto[]> {
+  const keys = await mediaKeys();
+  const mine = keys
+    .filter((key) => key.startsWith(`${propertyId}/`) && key.endsWith("/photo"))
+    .sort();
+
+  const found: ImportedPhoto[] = [];
+  for (const key of mine) {
+    const url = await resolveMediaUrl(mediaRef(key));
+    if (!url) continue;
+    const id = key.slice(propertyId.length + 1, -"/photo".length);
+    found.push({ id, name: id, file: null, ref: mediaRef(key), url, roomLabel: null });
+  }
+  return found;
+}
+
+function NewTourInner() {
+  const params = useSearchParams();
+  const resumeId = params.get("id");
+
   const [stage, setStage] = useState<Stage>("photos");
   const [photos, setPhotos] = useState<ImportedPhoto[]>([]);
-  const [propertyId, setPropertyId] = useState(newPropertyId);
+  const [propertyId] = useState(() => resumeId ?? newPropertyId());
   const [label, setLabel] = useState("");
   const [description, setDescription] = useState("");
   const [spec, setSpec] = useState<HouseSpec | null>(null);
@@ -79,9 +119,30 @@ export default function NewTourPage() {
   const [step, setStep] = useState<BuildStep | null>(null);
   const [notes, setNotes] = useState<string[]>([]);
   const [depth, setDepth] = useState<DepthProgress>({ stage: "idle", completed: 0, total: 0 });
+  /** How far the condition scan has got, or null when it is not running. */
+  const [scan, setScan] = useState<GradeProgress | null>(null);
+  const [scanned, setScanned] = useState(0);
+  /** What the scope comes to as the scan fills it in. */
+  const scopeTotal = useMemo(
+    () =>
+      property
+        ? buildBom(property.plan, property.condition, property.rates, property.houseCondition)
+            .total
+        : 0,
+    [property],
+  );
 
+  /**
+   * True until a resumed import has been read back.
+   *
+   * Kept even though the resume *prompt* is gone. `/new?id=x` mounts with no
+   * photos and fills them in asynchronously, so an ungated persist effect would
+   * fire at 400ms and write an empty import over the one it is in the middle of
+   * restoring - the same shape of bug as the missing stage guard that started
+   * all of this.
+   */
   const [restoring, setRestoring] = useState(true);
-  const [resumable, setResumable] = useState<Draft | null>(null);
+  const [failed, setFailed] = useState<string | null>(null);
   const estimatorRef = useRef<DepthEstimator | null>(null);
 
   /**
@@ -102,24 +163,81 @@ export default function NewTourPage() {
     void requestPersistence();
   }, []);
 
+  /**
+   * Pick up a named import, or start clean.
+   *
+   * With no id there is nothing to read, so the common case - "make a house" -
+   * never touches IndexedDB before the first photograph. That also means it can
+   * no longer hang on the database being blocked by another tab, which is what
+   * "Checking for saved work…" used to do forever.
+   */
   useEffect(() => {
-    let cancelled = false;
-    loadDraft().then((draft) => {
-      if (cancelled) return;
-      if (draft && draft.photos.length > 0) setResumable(draft);
+    if (!resumeId) {
       setRestoring(false);
-    });
+      return;
+    }
+
+    let cancelled = false;
+    void (async () => {
+      try {
+        const [intake, saved] = await Promise.all([
+          loadIntake(resumeId),
+          Promise.resolve(loadProperty(resumeId)),
+        ]);
+        if (cancelled) return;
+
+        if (saved?.label) setLabel(saved.label);
+        if (intake) {
+          const urls = await resolveIntakeUrls(intake);
+          if (cancelled) return;
+          if (intake.label) setLabel(intake.label);
+          if (intake.description) {
+            setDescription(intake.description);
+            setSpec(describeToSpec(intake.description));
+          }
+          if (intake.facts) setFacts(intake.facts);
+          if (intake.footprint) setFootprint(intake.footprint);
+          if (intake.site) setListingSite(intake.site);
+          setPhotos(
+            intake.photos.map((photo) => ({
+              id: photo.id,
+              name: photo.name,
+              file: null,
+              ref: photo.ref,
+              url: urls.get(photo.id) ?? "",
+              roomLabel: photo.roomLabel,
+              guessed: photo.guessed,
+            })),
+          );
+        } else {
+          // No import record, but the photographs may still be there - a crash
+          // between writing a blob and writing the record leaves exactly that.
+          // The names and the room labels are gone; the pictures are not, and
+          // they are the expensive half.
+          const recovered = await photosFromStorage(resumeId);
+          if (!cancelled && recovered.length > 0) setPhotos(recovered);
+        }
+      } catch {
+        // A refusal from IndexedDB must not strand the page on a spinner.
+      } finally {
+        if (!cancelled) setRestoring(false);
+      }
+    })();
+
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [resumeId]);
 
   const addPhotos = useCallback(
     async (files: File[]) => {
       const added: ImportedPhoto[] = [];
       for (let i = 0; i < files.length; i++) {
-        const id = `p${Date.now().toString(36)}${i}`;
-        const record = await storeDraftPhoto(propertyId, id, files[i]);
+        // `Date.now()` alone collides for two batches dropped in the same
+        // millisecond, and `putMedia` is an upsert - so the collision silently
+        // overwrote a photograph rather than erroring.
+        const id = `p${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}${i}`;
+        const record = await storeIntakePhoto(propertyId, id, files[i]);
         added.push({
           id,
           name: files[i].name,
@@ -209,48 +327,84 @@ export default function NewTourPage() {
     Boolean(facts?.sqft || facts?.beds) ||
     description.trim().length > 0;
 
+  /**
+   * Anything worth keeping is worth saving now.
+   *
+   * The tour becomes a real, listed property the moment there is something in
+   * it, rather than at step three of a build that may never finish. Before
+   * this, an interruption anywhere earlier - a closed tab, a refresh, a throw -
+   * persisted nothing at all, and the only record was a draft that the wizard
+   * then went on to delete.
+   *
+   * The document and the import record are written separately and on purpose.
+   * The document is the tour; the import record is the wizard's working state,
+   * and it lives in IndexedDB beside the photographs it references so the two
+   * cannot get out of step.
+   */
+  const anythingWorthKeeping =
+    photos.length > 0 ||
+    footprint !== null ||
+    Boolean(facts?.sqft || facts?.beds) ||
+    description.trim().length > 0 ||
+    label.trim().length > 0;
+
   useEffect(() => {
-    if (restoring || resumable || photos.length === 0) return;
+    // Never write an untouched blank one. Bouncing off `/new` would otherwise
+    // leave an empty tour on the home page every single time - the rule the
+    // editor already states for the same reason.
+    if (restoring || stage !== "photos" || !anythingWorthKeeping) return;
+
     const timer = setTimeout(() => {
-      void saveDraft({
+      // The document first, so a crash leaves a tour that is merely empty
+      // rather than photographs under a prefix nothing names.
+      if (!loadProperty(propertyId)) {
+        saveProperty({
+          id: propertyId,
+          label: label || "Untitled",
+          displayUnits: "ft",
+          plan: { scaleRef: { px: 1, meters: M_PER_FT }, rooms: [], openings: [] },
+          nodes: [],
+          splats: [],
+          condition: {},
+          houseCondition: {},
+          rates: {},
+        });
+      } else if (label) {
+        const stored = loadProperty(propertyId);
+        if (stored && stored.label !== label) saveProperty({ ...stored, label });
+      }
+
+      void saveIntake({
         propertyId,
         label,
-        step: stage === "review" ? "arrange" : "photos",
-        plan,
         description,
+        facts,
+        footprint,
+        site: listingSite,
         photos: photos.map((p) => ({
           id: p.id,
           name: p.name,
           ref: p.ref,
           roomLabel: p.roomLabel,
+          guessed: p.guessed,
         })),
         updatedAt: Date.now(),
       });
     }, 400);
-    return () => clearTimeout(timer);
-  }, [photos, stage, plan, label, description, propertyId, restoring, resumable]);
 
-  const resume = async (draft: Draft) => {
-    const urls = await resolveDraftUrls(draft);
-    setPropertyId(draft.propertyId);
-    setLabel(draft.label);
-    setPlan(draft.plan);
-    if (draft.description) {
-      setDescription(draft.description);
-      setSpec(describeToSpec(draft.description));
-    }
-    setPhotos(
-      draft.photos.map((photo) => ({
-        id: photo.id,
-        name: photo.name,
-        file: null,
-        ref: photo.ref,
-        url: urls.get(photo.id) ?? "",
-        roomLabel: photo.roomLabel,
-      })),
-    );
-    setResumable(null);
-  };
+    return () => clearTimeout(timer);
+  }, [
+    photos,
+    stage,
+    label,
+    description,
+    facts,
+    footprint,
+    listingSite,
+    propertyId,
+    restoring,
+    anythingWorthKeeping,
+  ]);
 
   /**
    * Everything between "here are my photos" and "here is your house".
@@ -260,9 +414,43 @@ export default function NewTourPage() {
    * and poses have to be settled before depth, because the far anchor that
    * turns relative depth into metres depends on which way the camera faces.
    */
+  /**
+   * Grade every room from its photographs, after the house is on screen.
+   *
+   * Saving room by room rather than at the end: this takes minutes on a large
+   * house, and a closed tab used to throw all of it away. Each room re-reads
+   * the stored document because the depth pass is writing to it at the same
+   * time, and a snapshot taken at the start would undo whatever landed since.
+   */
+  const scanCondition = useCallback(async (property: Property) => {
+    setScan({ room: "", done: 0, total: property.plan.rooms.length });
+    try {
+      const result = await gradeProperty(
+        property,
+        (progress) => setScan(progress),
+        (roomId, grades) => {
+          const stored = loadProperty(property.id);
+          if (!stored) return;
+          const next: Property = {
+            ...stored,
+            condition: { ...stored.condition, [roomId]: grades },
+          };
+          saveProperty(next);
+          setProperty(next);
+        },
+      );
+      setScan(null);
+      setScanned(result.graded);
+    } catch {
+      setScan(null);
+    }
+  }, []);
+
   const build = useCallback(async () => {
     setStage("building");
+    setFailed(null);
     const gathered: string[] = [];
+    try {
 
     // --- 1. What room is each photo? ---
     const read = await labelPhotos(photos, roomHints(spec), setStep);
@@ -356,6 +544,10 @@ export default function NewTourPage() {
     // one out. Skipped entirely without a site, and failing quietly - a house
     // down a private track has no street view, and that is not an error.
     let outside = exterior;
+    // What the same look at the house says about its condition. The roof is
+    // usually the largest single number in a rehab and no listing photograph
+    // shows it, so this is the only evidence there is for it.
+    let houseCondition: HouseCondition = {};
     if (listingSite) {
       setStep({ label: "Looking at the outside", done: 0, total: 1 });
       const read = await readExterior({
@@ -364,16 +556,27 @@ export default function NewTourPage() {
         outline: footprint?.outline ?? [],
         storeys: exterior?.storeys ?? null,
       });
-      outside = mergeExterior(exterior, read);
-      if (read) {
+      outside = mergeExterior(exterior, read?.exterior ?? null);
+      houseCondition = read?.condition ?? {};
+
+      const seen = read?.exterior;
+      if (seen) {
         const said = [
-          read.storeys ? `${read.storeys} storeys` : null,
-          read.roof?.shape ? `a ${read.roof.shape} roof` : null,
-          read.walls?.material ?? null,
+          seen.storeys ? `${seen.storeys} storeys` : null,
+          seen.roof?.shape ? `a ${seen.roof.shape} roof` : null,
+          seen.walls?.material ?? null,
         ].filter(Boolean);
         if (said.length > 0) {
           gathered.push(`Looked at the house from the street and the air: ${said.join(", ")}.`);
         }
+      }
+      const needing = Object.entries(houseCondition).filter(
+        ([, grade]) => grade === "dated" || grade === "poor",
+      );
+      if (needing.length > 0) {
+        gathered.push(
+          `Graded the outside from that: ${needing.map(([element, grade]) => `${element} ${grade}`).join(", ")}.`,
+        );
       }
     }
 
@@ -390,7 +593,7 @@ export default function NewTourPage() {
       // Filled in once someone grades the property; the BOM treats an empty
       // map as 'nothing seen yet' rather than 'nothing needed'.
       condition: {},
-      houseCondition: {},
+      houseCondition,
       rates: {},
       // Where the house is, so the daylight can be its own rather than a
       // studio light. The bearing follows from the rotation the footprint
@@ -428,52 +631,46 @@ export default function NewTourPage() {
     setNotes(gathered);
     setStep(null);
     setStage("review");
-    await clearDraft(false);
+    // The import is finished with, but its photographs are not - they are the
+    // tour's now, under the same keys. Only the working state goes.
+    await clearIntake(propertyId);
 
-    // --- 5. Depth, in the background, while they look around ---
+    // --- 5. Depth and the condition scan, while they look around ---
+    //
+    // Both run after the review screen is up, for the same reason: the house
+    // should appear as fast as it always did, and neither of these changes what
+    // it looks like. The scan is what makes a new tour arrive with a price on
+    // it rather than $0 until somebody finds the button.
     const estimator = new DepthEstimator();
     estimatorRef.current = estimator;
+
+    void scanCondition(assembled);
     await estimateDepth(estimator, assembled, setDepth, (updated) => {
-      saveProperty(updated);
-      setProperty(updated);
+      // Depth and the scan both write, so each re-reads rather than saving a
+      // snapshot it took minutes ago - otherwise whichever finished last would
+      // undo the other.
+      const stored = loadProperty(updated.id);
+      const merged = stored ? { ...stored, nodes: updated.nodes } : updated;
+      saveProperty(merged);
+      setProperty(merged);
     });
+    } catch (error) {
+      // Most of the pipeline already fails soft - a classify batch, a pose
+      // batch and the exterior read all swallow their own errors. What is left
+      // is mostly the media store refusing to open, and without this the page
+      // sat on the building screen forever with nothing said and no way back.
+      // The photographs are safe either way: they and the import record were
+      // written before any of this started.
+      setFailed(error instanceof Error ? error.message : "Something went wrong building the house.");
+      setStep(null);
+      setStage("photos");
+    }
   }, [photos, spec, facts, footprint, listingSite, exterior, propertyId, label]);
 
   if (restoring) {
     return (
       <main className="grid min-h-screen place-items-center text-sm text-mist-400">
         Checking for saved work…
-      </main>
-    );
-  }
-
-  if (resumable) {
-    const done = resumable.photos.filter((p) => p.roomLabel).length;
-    return (
-      <main className="grid min-h-screen place-items-center px-6">
-        <div className="w-full max-w-md rounded-xl border border-ink-600 bg-ink-800 p-6 text-center">
-          <div className="text-4xl">📦</div>
-          <h1 className="mt-3 text-lg font-medium">You have a tour in progress</h1>
-          <p className="mt-2 text-sm leading-relaxed text-mist-400">
-            {resumable.photos.length} photo{resumable.photos.length === 1 ? "" : "s"}
-            {done > 0 && `, ${done} already placed`}. Saved{" "}
-            {new Date(resumable.updatedAt).toLocaleString()}.
-          </p>
-          <div className="mt-5 flex gap-2">
-            <button
-              onClick={() => void resume(resumable)}
-              className="flex-1 rounded bg-accent px-4 py-2.5 text-sm font-medium text-ink-900"
-            >
-              Pick up where I left off
-            </button>
-            <button
-              onClick={() => void clearDraft(true).then(() => setResumable(null))}
-              className="rounded border border-ink-500 px-4 py-2.5 text-sm"
-            >
-              Start over
-            </button>
-          </div>
-        </div>
       </main>
     );
   }
@@ -491,6 +688,16 @@ export default function NewTourPage() {
                 Photos of your own are optional.
               </p>
             </div>
+
+            {failed && (
+              <div className="mx-auto mb-5 max-w-2xl rounded-lg border border-warn/40 bg-ink-800 px-4 py-3 text-xs leading-relaxed text-mist-200">
+                The build stopped: {failed}
+                <span className="mt-1 block text-mist-400">
+                  Your photographs are saved and the tour is on the home page. Try building
+                  again &mdash; nothing has been lost.
+                </span>
+              </div>
+            )}
 
             <PropertyStart onImported={importListing} />
 
@@ -613,6 +820,38 @@ export default function NewTourPage() {
               </a>
             </div>
 
+            {/* The scope, as it fills in.
+                A freshly built tour used to be worth $0 until somebody found
+                the scope page - and nothing on this screen linked to it, or
+                mentioned money at all. */}
+            <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-ink-600 bg-ink-800 px-4 py-3">
+              <div className="min-w-0">
+                <div className="text-[10px] uppercase tracking-wide text-mist-400">
+                  Scope of work
+                </div>
+                <div className="text-lg font-semibold tabular-nums text-mist-200">
+                  {scopeTotal.toLocaleString("en-US", {
+                    style: "currency",
+                    currency: "USD",
+                    maximumFractionDigits: 0,
+                  })}
+                </div>
+                <div className="mt-0.5 text-[11px] leading-relaxed text-mist-400">
+                  {scan
+                    ? `Reading the photos${scan.room ? ` · ${scan.room}` : ""} · ${scan.done}/${scan.total} rooms`
+                    : scanned > 0
+                      ? `Graded ${scanned} room${scanned === 1 ? "" : "s"} from the photos. Furnace, wiring and plumbing were not looked at — no photograph shows them.`
+                      : "Nothing graded yet. Open the scope to grade it by hand."}
+                </div>
+              </div>
+              <a
+                href={`/bom/${propertyId}`}
+                className="shrink-0 rounded border border-ink-500 px-4 py-2 text-xs text-mist-200 hover:bg-ink-600"
+              >
+                Scope &amp; costs
+              </a>
+            </div>
+
             {depth.stage !== "done" && depth.total > 0 && (
               <div className="mb-4 rounded-lg border border-ink-600 bg-ink-800 px-4 py-2.5">
                 <div className="flex items-center justify-between text-xs text-mist-400">
@@ -694,5 +933,24 @@ export default function NewTourPage() {
         )}
       </div>
     </main>
+  );
+}
+
+/**
+ * `useSearchParams` needs a boundary, and the fallback is what a fresh start
+ * looks like for the instant before the params resolve. The editor already
+ * splits this way for the same reason.
+ */
+export default function NewTourPage() {
+  return (
+    <Suspense
+      fallback={
+        <main className="grid min-h-screen place-items-center text-sm text-mist-400">
+          Getting ready…
+        </main>
+      }
+    >
+      <NewTourInner />
+    </Suspense>
   );
 }

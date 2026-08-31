@@ -2,6 +2,15 @@ import Anthropic from "@anthropic-ai/sdk";
 import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";
 import { z } from "zod";
 
+/**
+ * A vision call over four images at high effort is not a fast request, and this
+ * one now reads appearance and condition together. `/api/listing` is the only
+ * other route that sets this, for the same reason: the platform default is
+ * short enough to cut it off, and it would only ever be discovered on a
+ * deployment.
+ */
+export const maxDuration = 120;
+
 import {
   GOOGLE_ATTRIBUTION,
   fetchFacades,
@@ -29,6 +38,31 @@ import {
  * paints the whole house the wrong colour and puts the front door on the wrong
  * side, and nobody checks a thing that looks decided.
  */
+
+/**
+ * Grades for the parts of a house you can see from outside it.
+ *
+ * Read from the same pictures, in the same call. The imagery is already
+ * downloaded here - a satellite frame and up to three shots aimed at the
+ * building - and until now only its colours were kept and the pixels dropped.
+ * Meanwhile the exterior was being graded from listing photographs that an
+ * off-market property does not have, which is most of them. The roof is usually
+ * the largest single number in a rehab; guessing it from an absent photograph
+ * was the weakest link in the whole estimate.
+ *
+ * Systems - furnace, wiring, plumbing, water heater - are deliberately absent.
+ * A furnace does not appear in a photograph of a house.
+ */
+const Grade = z.enum(["good", "fair", "dated", "poor", "not_visible"]);
+
+const ConditionSchema = z.object({
+  roof: Grade,
+  exterior: Grade.describe("siding and paint"),
+  windows: Grade.describe("the window units themselves"),
+  landscaping: Grade,
+  foundation: Grade.describe("only what is visible: stem wall, cracking, settlement"),
+  conditionNotes: z.string().describe("A few words on what was actually seen. Empty if nothing."),
+});
 
 const ReadSchema = z.object({
   storeys: z
@@ -62,6 +96,7 @@ const ReadSchema = z.object({
   garageBays: z.number().int().nullable(),
   confidence: z.enum(["high", "low"]).describe("low when the imagery is obstructed, dated, or shows the wrong building"),
   notes: z.string().describe("Anything the caller should know, in one sentence. Empty string if nothing."),
+  condition: ConditionSchema,
 });
 
 function systemPrompt(outline: string, storeysHint: number | null): string {
@@ -79,7 +114,27 @@ Rules:
 - Bearings are true compass degrees, 0 = north, 90 = east. For the front door, give the direction FROM the centre of the house TO the door - so a door on the south side is 180.
 - Colours must be a CSS colour name or a #rrggbb hex, chosen to match what you can see. Do not name a colour you cannot see because of shadow; return null.
 - Storeys means habitable floors above ground. Count rows of windows. A finished attic with dormers is not a storey; a raised basement with full windows is.
-- Set confidence to "low" whenever the imagery is obstructed, obviously old, or you are not certain it shows the same building as the outline. A wrong answer here repaints the whole house and puts its front door on the wrong side, and nobody will check it.`;
+- Set confidence to "low" whenever the imagery is obstructed, obviously old, or you are not certain it shows the same building as the outline. A wrong answer here repaints the whole house and puts its front door on the wrong side, and nobody will check it.
+
+You are also grading the condition of what you can see, for a renovation scope of work. Use exactly these grades:
+- good — recently done or as-new. No work needed.
+- fair — serviceable and unremarkable. No work needed.
+- dated — sound and functional, but the style or finish is old. Needs refreshing, not replacing.
+- poor — damaged, failing, missing, or worn out. Needs replacing.
+- not_visible — the imagery does not show this well enough to judge.
+
+What each element means:
+- roof — covering condition. Curling, cupped or missing shingles, patching, moss, sagging ridge lines. The satellite view is often the best evidence you have for this; use it.
+- exterior — siding and paint. Peeling, chalking, rot, damaged boards, mismatched repairs.
+- windows — the units themselves. Single-glazed aluminium or rotten timber frames are poor; sound but old timber is dated; recent double glazing is good.
+- landscaping — the yard as it presents. Overgrowth, dead lawn, weeds through hardstanding, failing fences and retaining walls.
+- foundation — only what is visible: the exposed stem wall, obvious cracking, settlement, a sagging porch.
+
+Grading rules, which matter more than the appearance ones because this becomes a price:
+- not_visible is a good answer and is frequently the right one. A street-level shot of the front tells you nothing about the back of the roof, and a satellite frame tells you nothing about a stem wall.
+- Street View imagery can be years old. You are told its date. Judge what is visible, and do not read a sunny well-kept photograph as proof of present condition.
+- Do not infer from the building's style or age. Do not guess a roof's remaining life from the shape you identified above.
+- Do not be generous and do not be harsh. This drives a real cost estimate in both directions.`;
 }
 
 export async function GET() {
@@ -228,6 +283,21 @@ export async function POST(request: Request) {
         confidence: read.confidence,
         attribution: [GOOGLE_ATTRIBUTION],
       },
+      // Only the grades that mean something. `not_visible` is dropped rather
+      // than stored, because the bill of materials already treats an absent
+      // grade that way and an explicit one would claim somebody looked.
+      condition: Object.fromEntries(
+        (
+          [
+            ["roof", read.condition.roof],
+            ["exterior", read.condition.exterior],
+            ["windows", read.condition.windows],
+            ["landscaping", read.condition.landscaping],
+            ["foundation", read.condition.foundation],
+          ] as const
+        ).filter(([, grade]) => grade !== "not_visible"),
+      ),
+      conditionNotes: read.condition.conditionNotes,
       notes: read.notes,
       saw: { overhead: Boolean(overhead), facades: facades.length },
     });

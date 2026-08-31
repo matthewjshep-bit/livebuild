@@ -11,7 +11,7 @@ import {
   saveProperty,
 } from "@/lib/property-store";
 import { formatBytes, requestPersistence, storageUsage } from "@/lib/storage/db";
-import { type Draft, clearDraft, loadDraft } from "@/lib/storage/drafts";
+import { type Intake, clearIntake, listIntakes } from "@/lib/storage/intake";
 import { parseProperty } from "@/lib/schema";
 
 /**
@@ -34,8 +34,7 @@ type Row = {
 
 export default function StoragePanel() {
   const [rows, setRows] = useState<Row[]>([]);
-  const [draft, setDraft] = useState<Draft | null>(null);
-  const [draftBytes, setDraftBytes] = useState(0);
+  const [intakes, setIntakes] = useState<Array<Intake & { bytes: number }>>([]);
   const [usage, setUsage] = useState<{ used: number; quota: number } | null>(null);
   /**
    * Measured from what we actually hold, rather than taken from
@@ -76,9 +75,10 @@ export default function StoragePanel() {
       }),
     );
 
-    const current = await loadDraft();
-    setDraft(current);
-    setDraftBytes(current ? bytesUnder(`${current.propertyId}/`) : 0);
+    const pending = await listIntakes();
+    setIntakes(
+      pending.map((intake) => ({ ...intake, bytes: bytesUnder(`${intake.propertyId}/`) })),
+    );
     let total = 0;
     for (const size of sizes.values()) total += size;
     setMeasured(total);
@@ -146,42 +146,48 @@ export default function StoragePanel() {
         </p>
       </div>
 
-      {draft && (
+      {intakes.length > 0 && (
         <>
           <h2 className="mt-8 mb-2 text-xs uppercase tracking-wide text-mist-400">
-            In progress
+            Still importing
           </h2>
-          <div className="flex items-center justify-between rounded border border-ink-600 bg-ink-800 px-4 py-3">
-            <div>
-              <div className="text-sm font-medium">
-                {draft.label || "Unnamed tour"}{" "}
-                <span className="text-xs font-normal text-mist-400">
-                  &middot; step {draft.step}
-                </span>
-              </div>
-              <div className="text-xs text-mist-400">
-                {draft.photos.length} photos &middot; {formatBytes(draftBytes)} &middot; saved{" "}
-                {new Date(draft.updatedAt).toLocaleString()}
-              </div>
-            </div>
-            <div className="flex gap-2">
-              <a
-                href="/new"
-                className="rounded bg-accent px-3 py-1.5 text-xs font-medium text-ink-900"
+          <div className="space-y-2">
+            {intakes.map((intake) => (
+              <div
+                key={intake.propertyId}
+                className="flex items-center justify-between rounded border border-ink-600 bg-ink-800 px-4 py-3"
               >
-                Resume
-              </a>
-              <button
-                onClick={async () => {
-                  if (!confirm("Discard this in-progress tour and its photos?")) return;
-                  await clearDraft(true);
-                  await refresh();
-                }}
-                className="rounded border border-ink-500 px-3 py-1.5 text-xs text-warn"
-              >
-                Discard
-              </button>
-            </div>
+                <div>
+                  <div className="text-sm font-medium">{intake.label || "Unnamed tour"}</div>
+                  <div className="text-xs text-mist-400">
+                    {intake.photos.length} photos &middot;{" "}
+                    {formatBytes(intake.bytes)} &middot; saved{" "}
+                    {new Date(intake.updatedAt).toLocaleString()}
+                  </div>
+                </div>
+                <div className="flex gap-2">
+                  <a
+                    href={`/new?id=${intake.propertyId}`}
+                    className="rounded bg-accent px-3 py-1.5 text-xs font-medium text-ink-900"
+                  >
+                    Continue
+                  </a>
+                  {/* Only the working state. The photographs belong to the tour
+                      and go with it - deleting them from here is exactly the
+                      bug that emptied finished tours. */}
+                  <button
+                    onClick={async () => {
+                      if (!confirm("Forget where this import got to? The photos are kept.")) return;
+                      await clearIntake(intake.propertyId);
+                      await refresh();
+                    }}
+                    className="rounded border border-ink-500 px-3 py-1.5 text-xs text-mist-400"
+                  >
+                    Forget
+                  </button>
+                </div>
+              </div>
+            ))}
           </div>
         </>
       )}
@@ -199,7 +205,11 @@ export default function StoragePanel() {
               <div className="truncate text-sm font-medium">{row.label}</div>
               <div className="text-xs text-mist-400">
                 {row.rooms} rooms &middot; {row.nodes} viewpoints &middot;{" "}
-                {row.withDepth === row.nodes ? (
+                {/* A tour with no photographs is not "all 3D", which is what
+                    `withDepth === nodes` said when both were zero. */}
+                {row.nodes === 0 ? (
+                  "no photos yet"
+                ) : row.withDepth === row.nodes ? (
                   "all 3D"
                 ) : (
                   <span className="text-warn">

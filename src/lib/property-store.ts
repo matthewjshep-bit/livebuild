@@ -35,13 +35,61 @@ function withWalkGraph(property: Property): Property {
   return { ...property, nodes: buildWalkGraph(property.plan, property.nodes) };
 }
 
-export function listPropertyIds(): string[] {
+/**
+ * Every property actually in storage, found by looking rather than by asking.
+ *
+ * The index is a convenience - it preserves order, and reading one key beats
+ * enumerating hundreds - but it must never be the only record that a tour
+ * exists. Scanning is the ground truth, and cheap: localStorage holds tens of
+ * keys here, not thousands.
+ */
+function scanPropertyIds(): string[] {
   if (!canUseStorage()) return [];
+  const found: string[] = [];
   try {
-    return JSON.parse(window.localStorage.getItem(INDEX_KEY) ?? "[]") as string[];
+    for (let i = 0; i < window.localStorage.length; i++) {
+      const key = window.localStorage.key(i);
+      if (!key || !key.startsWith(KEY_PREFIX)) continue;
+      const id = key.slice(KEY_PREFIX.length);
+      // An id is a single path segment. Anything else is a key from some
+      // future scheme - `mattermatt:property:foo:meta` - and reading it as a
+      // property named `foo:meta` would put a phantom on the home page.
+      if (id && !id.includes(":") && !id.includes("/")) found.push(id);
+    }
   } catch {
     return [];
   }
+  return found;
+}
+
+/**
+ * The saved properties, in the order they were added.
+ *
+ * Backed by the index and **corrected against what is really there**. The index
+ * used to be trusted alone, and a single unparseable value made every tour
+ * vanish at once: `JSON.parse` threw, this returned an empty list, the home page
+ * showed nothing, and the next save wrote an index containing only the property
+ * being saved - cementing the loss. The documents were never gone; nothing was
+ * looking for them.
+ *
+ * So a document present in storage but missing from the index is listed anyway,
+ * and an id in the index with no document behind it is dropped.
+ */
+export function listPropertyIds(): string[] {
+  if (!canUseStorage()) return [];
+
+  let indexed: string[] = [];
+  try {
+    const parsed = JSON.parse(window.localStorage.getItem(INDEX_KEY) ?? "[]");
+    if (Array.isArray(parsed)) indexed = parsed.filter((id) => typeof id === "string");
+  } catch {
+    // A corrupt index is a lost ordering, not lost work.
+  }
+
+  const real = new Set(scanPropertyIds());
+  const ordered = indexed.filter((id) => real.has(id));
+  for (const id of real) if (!ordered.includes(id)) ordered.push(id);
+  return ordered;
 }
 
 export function saveProperty(property: Property): void {
@@ -53,7 +101,12 @@ export function saveProperty(property: Property): void {
       ...property,
       nodes: buildWalkGraph(property.plan, property.nodes),
     };
+    // The document first, the index second. A crash between the two leaves a
+    // property that is present but unlisted, which `listPropertyIds` now
+    // recovers - whereas the other order would leave an index entry pointing at
+    // nothing.
     window.localStorage.setItem(KEY_PREFIX + property.id, JSON.stringify(withGraph));
+
     const index = new Set(listPropertyIds());
     index.add(property.id);
     window.localStorage.setItem(INDEX_KEY, JSON.stringify([...index]));

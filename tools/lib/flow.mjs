@@ -6,14 +6,17 @@
  * fair signal that each of them knew more about the UI than it needed to.
  */
 
-/** Clear any draft left by an earlier run, which would mask what is being tested. */
+/**
+ * Open the wizard on a clean tour.
+ *
+ * This used to have to dismiss a resume prompt, because a finished build left a
+ * draft behind and `/new` would not go past it. There is no prompt now - `/new`
+ * with no id is always a new tour - so this is a navigation, kept as a helper
+ * because six suites call it and the guarantee it makes is still worth naming.
+ */
 export async function freshStart(page, base) {
   await page.goto(`${base}/new`, { waitUntil: "networkidle" });
   await page.waitForTimeout(800);
-  if (await page.getByRole("button", { name: "Start over" }).count()) {
-    await page.getByRole("button", { name: "Start over" }).click();
-    await page.waitForTimeout(500);
-  }
 }
 
 export async function addPhotos(page, files) {
@@ -61,23 +64,23 @@ export async function savedProperty(page) {
   });
 }
 
-/** Room labels the draft recorded per photo, keyed by file name. */
-export async function draftLabels(page) {
-  return page.evaluate(async () => {
+/** Room labels the import recorded per photo, keyed by file name. */
+export async function intakeLabels(page, propertyId) {
+  return page.evaluate(async (id) => {
     const db = await new Promise((resolve, reject) => {
       const request = indexedDB.open("mattermatt");
       request.onsuccess = () => resolve(request.result);
       request.onerror = () => reject(request.error);
     });
-    const draft = await new Promise((resolve) => {
+    const intake = await new Promise((resolve) => {
       const tx = db.transaction("docs", "readonly");
-      const request = tx.objectStore("docs").get("draft");
+      const request = tx.objectStore("docs").get("intake:" + id);
       request.onsuccess = () => resolve(request.result ?? null);
     });
     const out = {};
-    for (const photo of draft?.photos ?? []) out[photo.name] = photo.roomLabel;
+    for (const photo of intake?.photos ?? []) out[photo.name] = photo.roomLabel;
     return out;
-  });
+  }, propertyId);
 }
 
 /** Wait for the review screen without pressing anything - used after a rebuild. */

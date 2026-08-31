@@ -3,8 +3,19 @@
 import { useEffect, useState } from "react";
 
 import { listPropertyIds, loadProperty } from "@/lib/property-store";
+import { listIntakes } from "@/lib/storage/intake";
 
-type Entry = { id: string; label: string; rooms: number; nodes: number; bundled: boolean };
+type Entry = {
+  id: string;
+  label: string;
+  rooms: number;
+  nodes: number;
+  bundled: boolean;
+  /** Photographs gathered so far, for a tour that has not been built yet. */
+  photos: number;
+  /** Still being imported: it has an intake record and no rooms. */
+  importing: boolean;
+};
 
 const BUNDLED = ["demo-house", "two-storey"];
 
@@ -20,11 +31,23 @@ export default function Home() {
         rooms: p?.plan.rooms.length ?? 0,
         nodes: p?.nodes.length ?? 0,
         bundled: false,
+        // Filled in below from the import records. A tour with no rooms is
+        // either still importing or a document that failed to load, and those
+        // two look identical from here - which is why the record is asked.
+        photos: 0,
+        importing: false,
       };
     });
 
     const missing = BUNDLED.filter((id) => !saved.some((s) => s.id === id));
-    Promise.all(
+
+    // The import records and the bundled samples are gathered together and the
+    // list is set once. Applying them separately raced: the intake pass ran
+    // against an empty list and the bundled pass then overwrote it, so a tour
+    // that was still importing rendered as a finished one with no rooms.
+    void Promise.all([
+      listIntakes(),
+      Promise.all(
       missing.map(async (id) => {
         const res = await fetch(`/properties/${id}/property.json`);
         if (!res.ok) return null;
@@ -35,11 +58,23 @@ export default function Home() {
           rooms: p.plan?.rooms?.length ?? 0,
           nodes: p.nodes?.length ?? 0,
           bundled: true,
+          photos: 0,
+          importing: false,
         } as Entry;
       }),
-    ).then((found) => {
+      ),
+    ]).then(([pending, found]) => {
+      const byId = new Map(pending.map((intake) => [intake.propertyId, intake]));
+      const withProgress = saved.map((entry) => {
+        const intake = byId.get(entry.id);
+        // A tour with rooms has been built; a leftover record does not make it
+        // unfinished again.
+        return intake && entry.rooms === 0
+          ? { ...entry, importing: true, photos: intake.photos.length }
+          : entry;
+      });
       const bundled = found.filter((e): e is Entry => e !== null);
-      setEntries([...saved, ...bundled]);
+      setEntries([...withProgress, ...bundled]);
     });
   }, []);
 
@@ -76,10 +111,30 @@ export default function Home() {
             <div>
               <div className="text-sm font-medium">{entry.label}</div>
               <div className="text-xs text-mist-400">
-                {entry.rooms} rooms &middot; {entry.nodes} viewpoints
-                {entry.bundled && " · bundled sample"}
+                {entry.importing ? (
+                  <span className="text-accent">
+                    still importing &middot; {entry.photos} photo
+                    {entry.photos === 1 ? "" : "s"}
+                  </span>
+                ) : (
+                  <>
+                    {entry.rooms} rooms &middot; {entry.nodes} viewpoints
+                    {entry.bundled && " · bundled sample"}
+                  </>
+                )}
               </div>
             </div>
+            {/* An unfinished tour has no model, no scope and nothing to edit,
+                so offering all three would be three ways to reach an empty
+                room. One button, back to where the work is. */}
+            {entry.importing ? (
+              <a
+                href={`/new?id=${entry.id}`}
+                className="rounded bg-accent px-3 py-1.5 text-xs font-medium text-ink-900"
+              >
+                Continue building
+              </a>
+            ) : (
             <div className="flex gap-2">
               <a
                 href={`/tour/${entry.id}`}
@@ -100,6 +155,7 @@ export default function Home() {
                 Edit
               </a>
             </div>
+            )}
           </div>
         ))}
 

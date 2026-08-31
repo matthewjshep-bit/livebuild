@@ -104,7 +104,14 @@ export async function labelPhotos<T extends BuildPhoto>(
 
 /** Room names to offer, from the description if there was one. */
 export function roomHints(spec: HouseSpec | null): string[] {
-  return spec ? spec.rooms.map((r) => r.label) : FALLBACK_ROOMS;
+  if (!spec) return FALLBACK_ROOMS;
+  // "Outside" is always on offer, whatever the description said. A listing's
+  // room list never mentions the exterior, so a front elevation had to be
+  // labelled by the model overriding its own instruction to choose from the
+  // list - and the exterior photographs are the ones the roof and siding are
+  // graded from.
+  const own = spec.rooms.map((r) => r.label);
+  return own.includes("Outside") ? own : [...own, "Outside"];
 }
 
 /**

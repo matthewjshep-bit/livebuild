@@ -38,6 +38,8 @@ Add these under Settings → Environment Variables, for **Production** and
 | `SUPABASE_SERVICE_ROLE_KEY` | from Supabase — **never** rename this to `NEXT_PUBLIC_*` |
 | `MATTERMATT_ADMIN_KEY` | `openssl rand -base64 32` |
 | `ANTHROPIC_API_KEY` | optional, for the AI description pass |
+| `GOOGLE_MAPS_API_KEY` | optional, for reading the outside of the house from Street View and satellite |
+| `APIFY_TOKEN` | optional, for pulling photos and details from a Zillow listing |
 
 Deploy. You get a `*.vercel.app` URL — confirm it works before touching DNS.
 

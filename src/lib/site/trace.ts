@@ -156,3 +156,30 @@ export function syntheticRing(
     [centre.lat + dLat, centre.lon - dLon],
   ];
 }
+
+/**
+ * The exact inverse of `pixelsToRing`, for drawing an outline back onto the
+ * frame it came from.
+ *
+ * Needed because a traced building has to be shown to somebody before their
+ * floor plan is rearranged around it. Written as the literal inverse rather
+ * than derived again, so the two cannot drift into disagreeing - a ring that
+ * round-trips through these is the strongest cheap evidence that the sign and
+ * axis conventions are right, and both failures look plausible on a house that
+ * happens to be symmetric.
+ */
+export function ringToPixels(
+  ring: Array<[number, number]>,
+  centre: { lat: number; lon: number },
+  metresPerPixel: number,
+  framePx: number = TRACE_FRAME_PX,
+): Pixel[] {
+  const half = framePx / 2;
+  const lonScale = Math.cos((centre.lat * Math.PI) / 180) * M_PER_DEG_LAT;
+
+  return ring.map(([lat, lon]) => {
+    const east = (lon - centre.lon) * lonScale;
+    const north = (lat - centre.lat) * M_PER_DEG_LAT;
+    return [half + east / metresPerPixel, half - north / metresPerPixel] as Pixel;
+  });
+}

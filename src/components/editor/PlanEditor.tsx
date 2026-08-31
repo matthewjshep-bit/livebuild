@@ -5,6 +5,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { usePlanView } from "@/components/editor/usePlanView";
 import { AddPhotos } from "@/components/editor/AddPhotos";
 import { Inspector } from "@/components/editor/Inspector";
+import { ReshapeFromSatellite } from "@/components/editor/ReshapeFromSatellite";
 import {
   area,
   centroid,
@@ -535,6 +536,19 @@ export function PlanEditor({
           onSelect={setSelection}
         >
           <AddPhotos property={property} onUpdate={update} />
+          {/* Only shows itself for a tour that knows where it is, which is
+              every tour built from an address and none drawn by hand. */}
+          <ReshapeFromSatellite
+            property={property}
+            onApply={(next) => {
+              update(next);
+              // The plan has moved wholesale, so what was selected is either
+              // somewhere else or gone. Keeping the selection would leave the
+              // inspector describing a room that is no longer under it.
+              setSelection(null);
+              fit();
+            }}
+          />
         </Inspector>
       </div>
 

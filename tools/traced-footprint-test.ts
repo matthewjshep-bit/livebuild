@@ -12,6 +12,7 @@ import {
   TRACE_FRAME_PX,
   outlineIsPlausible,
   pixelsToRing,
+  ringToPixels,
   syntheticRing,
 } from "../src/lib/site/trace";
 import { metresPerPixel } from "../src/lib/site/geo";
@@ -170,6 +171,30 @@ const fbD = Math.max(...fbLocal.map((p) => p[1])) - Math.min(...fbLocal.map((p) 
 check("and shaped like a house rather than a square", fbW / fbD > 1.5, `${(fbW / fbD).toFixed(2)}:1`);
 check("the fallback is itself plausible", outlineIsPlausible(fallback).ok);
 check("a tiny target still yields a buildable house", outlineIsPlausible(syntheticRing(CENTRE, 50)).ok);
+
+// Drawing the outline back onto the frame is what lets somebody check the
+// trace before their floor plan is rearranged around it. A flipped sign draws a
+// mirrored house over the right photograph and looks entirely fine, so the
+// inverse is pinned against the forward conversion rather than trusted.
+{
+  const centre = { lat: 37.2431, lon: -122.0308 };
+  const mpp = 0.0596;
+  const pixels: Array<[number, number]> = [
+    [400, 380],
+    [900, 380],
+    [900, 760],
+    [400, 760],
+  ];
+  const ring = pixelsToRing(pixels, centre, mpp);
+  const back = ringToPixels(ring, centre, mpp);
+
+  const worst = Math.max(
+    ...back.flatMap((p, i) => [Math.abs(p[0] - pixels[i][0]), Math.abs(p[1] - pixels[i][1])]),
+  );
+  check("pixels round-trip through lat/lon and back", worst < 0.001, `off by ${worst}px`);
+  check("north is up: a lower row is further north", ring[0][0] > ring[2][0]);
+  check("east is right: a higher column is further east", ring[1][1] > ring[0][1]);
+}
 
 console.log(
   failures === 0

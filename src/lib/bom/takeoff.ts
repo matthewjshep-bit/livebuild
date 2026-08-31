@@ -91,7 +91,16 @@ export function takeoffForRoom(plan: Plan, room: Room): RoomTakeoff {
   // model can never disagree about where a door is.
   const runs = wallSegmentsForRoom(room, plan.openings);
   const baseboardM = runs.reduce((sum, seg) => sum + dist(seg.a, seg.b), 0);
-  const perimeterM = 2 * (width + depth);
+  // Walked off the outline, not off the bounding box.
+  //
+  // They agree on a rectangle. On an L-shaped room the bounding box is shorter
+  // than the real perimeter, which understated the wall area and every price
+  // that hangs off it - and did so silently, because a plausible number came
+  // back either way.
+  const perimeterM = room.polygon.reduce((sum, a, i) => {
+    const b = room.polygon[(i + 1) % room.polygon.length];
+    return sum + Math.hypot(b[0] - a[0], b[1] - a[1]);
+  }, 0);
 
   const grossWallSqm = perimeterM * room.ceilingHeight;
   const doorAreaSqm = doors.reduce((sum, d) => sum + d.width * DOOR_HEIGHT, 0);

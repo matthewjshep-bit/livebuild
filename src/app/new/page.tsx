@@ -9,10 +9,8 @@ import { PhotoDrop, type ImportedPhoto } from "@/components/wizard/PhotoDrop";
 import { PropertyStart } from "@/components/wizard/PropertyStart";
 import { PhotoReview } from "@/components/wizard/PhotoReview";
 import { PlanBuilder } from "@/components/wizard/PlanBuilder";
-import { DepthEstimator, type DepthProgress } from "@/lib/depth/client";
 import {
   type BuildStep,
-  estimateDepth,
   labelPhotos,
   placePhotos,
   posePhotos,
@@ -38,6 +36,11 @@ import { buildBom } from "@/lib/bom/build";
 import { type GradeProgress, gradeProperty } from "@/lib/bom/grade-client";
 import { canSync, rememberAdminKey, syncBlocker, syncProperty } from "@/lib/cloud/sync";
 import { loadProperty, saveProperty } from "@/lib/property-store";
+import { inferHouse } from "@/lib/spec/infer";
+import { type ReadProgress, readRooms } from "@/lib/spec/read-client";
+// Aliased: `HouseSpec` is already taken here by the room-list type that
+// `describe` produces, which is a different thing entirely.
+import { HouseSpec as RoomSpecDoc } from "@/lib/spec/schema";
 import type { HouseCondition } from "@/lib/bom/condition";
 import type { Exterior, Plan, Property } from "@/lib/schema";
 import { requestPersistence } from "@/lib/storage/db";
@@ -124,9 +127,10 @@ function NewTourInner() {
 
   const [step, setStep] = useState<BuildStep | null>(null);
   const [notes, setNotes] = useState<string[]>([]);
-  const [depth, setDepth] = useState<DepthProgress>({ stage: "idle", completed: 0, total: 0 });
   /** How far the condition scan has got, or null when it is not running. */
   const [scan, setScan] = useState<GradeProgress | null>(null);
+  /** How far the interior read has got, or null when it is not running. */
+  const [reading, setReading] = useState<ReadProgress | null>(null);
   const [scanned, setScanned] = useState(0);
   /** How the copy on the server is doing: uploading, done, or refused. */
   const [sync, setSync] = useState<
@@ -157,7 +161,6 @@ function NewTourInner() {
    */
   const [restoring, setRestoring] = useState(true);
   const [failed, setFailed] = useState<string | null>(null);
-  const estimatorRef = useRef<DepthEstimator | null>(null);
 
   /**
    * Rooms seen through an opening from another room, from the last labelling
@@ -172,7 +175,6 @@ function NewTourInner() {
    */
   const adjacencyRef = useRef<Array<[string, string]>>([]);
 
-  useEffect(() => () => estimatorRef.current?.dispose(), []);
   useEffect(() => {
     void requestPersistence();
   }, []);
@@ -433,19 +435,65 @@ function NewTourInner() {
   /**
    * Everything between "here are my photos" and "here is your house".
    *
-   * Ordering is not arbitrary. Rooms have to be identified before the house can
-   * be laid out; the layout has to exist before a camera can be placed in it;
-   * and poses have to be settled before depth, because the far anchor that
-   * turns relative depth into metres depends on which way the camera faces.
+   * Ordering is not arbitrary. Rooms have to be identified before the house
+   * can be laid out, and the layout has to exist before a photograph can be
+   * attached to a room in it.
    */
   /**
    * Grade every room from its photographs, after the house is on screen.
    *
    * Saving room by room rather than at the end: this takes minutes on a large
    * house, and a closed tab used to throw all of it away. Each room re-reads
-   * the stored document because the depth pass is writing to it at the same
-   * time, and a snapshot taken at the start would undo whatever landed since.
+   * the stored document rather than a snapshot taken minutes ago, so anything
+   * that landed in the meantime survives.
    */
+  /**
+   * Read what every photographed room is made of, then reason about the rest.
+   *
+   * Runs after the review screen is up, alongside the condition scan and in
+   * the slot the depth pass used to occupy. Both write to the same document
+   * and neither owns it, so each re-reads the stored copy before saving -
+   * otherwise whichever finished last would quietly undo the other.
+   *
+   * Room by room, for the reason grading is: this takes minutes on a large
+   * house, and the tour is already open in front of somebody while it runs.
+   */
+  const readInterior = useCallback(async (property: Property) => {
+    setReading({ room: "", done: 0, total: property.plan.rooms.length });
+    try {
+      const result = await readRooms(
+        property,
+        property.spec ?? RoomSpecDoc.parse({}),
+        (progress) => setReading(progress),
+        (roomId, roomSpec) => {
+          const stored = loadProperty(property.id);
+          if (!stored) return;
+          const spec = stored.spec ?? RoomSpecDoc.parse({});
+          const next: Property = {
+            ...stored,
+            spec: { ...spec, rooms: { ...spec.rooms, [roomId]: roomSpec } },
+          };
+          saveProperty(next);
+          setProperty(next);
+        },
+      );
+      // The inference re-runs at the end of the read, so the final write is the
+      // one that carries the conventions out to the rooms nobody photographed.
+      const stored = loadProperty(property.id);
+      if (stored) {
+        const next: Property = { ...stored, spec: result.spec };
+        saveProperty(next);
+        setProperty(next);
+      }
+      setReading(null);
+      if (result.notes.length > 0) {
+        setNotes((current) => [...current, ...result.notes.slice(0, 4)]);
+      }
+    } catch {
+      setReading(null);
+    }
+  }, []);
+
   const scanCondition = useCallback(async (property: Property) => {
     setScan({ room: "", done: 0, total: property.plan.rooms.length });
     try {
@@ -723,8 +771,27 @@ function NewTourInner() {
       );
     }
 
-    // --- 4. Put the photos in the rooms ---
+    // --- 4. Put the photos in the rooms, and work out what they are made of ---
     const placed = placePhotos(nextPlan, labelled);
+
+    /**
+     * What every room is made of, reasoned rather than defaulted.
+     *
+     * Nothing has read a photograph for finishes yet, so at this point the
+     * inference is working purely from the plan - which rooms these are, which
+     * of them open into one another, and what a house of this shape usually
+     * does. That is already worth a great deal: it is the difference between a
+     * hallway floored to match the rooms it serves and a hallway floored from a
+     * lookup table, and it means a house built from an address alone still
+     * comes out looking like one house.
+     *
+     * Stored rather than derived at render time, because the point is that it
+     * can be corrected. Every value carries where it came from, so a later
+     * reading of the photographs - or a person disagreeing with it - overwrites
+     * only what is still a guess.
+     */
+    const inference = inferHouse(nextPlan, RoomSpecDoc.parse({}));
+    gathered.push(...inference.conventions);
 
     let assembled: Property = {
       id: propertyId,
@@ -752,6 +819,7 @@ function NewTourInner() {
       // Survey data about the outside. Optional everywhere it is read, so a
       // house with none behaves exactly as it always has.
       exterior: outside,
+      spec: inference.spec,
     };
     if (placed.unplaced > 0) {
       gathered.push(
@@ -778,33 +846,27 @@ function NewTourInner() {
     // tour's now, under the same keys. Only the working state goes.
     await clearIntake(propertyId);
 
-    // --- 6. Depth and the condition scan, while they look around ---
+    // --- 6. The condition scan, while they look around ---
     //
-    // Both run after the review screen is up, for the same reason: the house
-    // should appear as fast as it always did, and neither of these changes what
-    // it looks like. The scan is what makes a new tour arrive with a price on
-    // it rather than $0 until somebody finds the button.
-    const estimator = new DepthEstimator();
-    estimatorRef.current = estimator;
-
+    // After the review screen is up: the house should appear as fast as it
+    // always did, and grading does not change what it looks like. The scan is
+    // what makes a new tour arrive with a price on it rather than $0 until
+    // somebody finds the button.
+    //
+    // This slot used to be shared with the depth pass, which ran concurrently
+    // and wrote to the same document. Nothing renders a depth map now, so the
+    // interior read has it: what a room is made of and what condition it is in
+    // are two questions about the same photographs, and both are worth waiting
+    // for a house that is already on screen.
     const scanning = scanCondition(assembled);
-    await estimateDepth(estimator, assembled, setDepth, (updated) => {
-      // Depth and the scan both write, so each re-reads rather than saving a
-      // snapshot it took minutes ago - otherwise whichever finished last would
-      // undo the other.
-      const stored = loadProperty(updated.id);
-      const merged = stored ? { ...stored, nodes: updated.nodes } : updated;
-      saveProperty(merged);
-      setProperty(merged);
-    });
+    const readingInterior = readInterior(assembled);
 
     // --- 7. Off this machine ---
     //
-    // Waits for the scan as well as the depth pass, because the point is to
-    // send up the finished tour rather than a half-graded one, and the two run
-    // concurrently. Re-read rather than reusing `assembled`, which by now is
-    // several passes out of date.
-    await scanning;
+    // Waits for the scan, because the point is to send up the finished tour
+    // rather than a half-graded one. Re-read rather than reusing `assembled`,
+    // which by now is several passes out of date.
+    await Promise.all([scanning, readingInterior]);
     await syncUp(propertyId);
     } catch (error) {
       // Most of the pipeline already fails soft - a classify batch, a pose
@@ -817,7 +879,19 @@ function NewTourInner() {
       setStep(null);
       setStage("photos");
     }
-  }, [photos, spec, facts, footprint, listingSite, exterior, propertyId, label, syncUp]);
+  }, [
+    photos,
+    spec,
+    facts,
+    footprint,
+    listingSite,
+    exterior,
+    propertyId,
+    label,
+    syncUp,
+    scanCondition,
+    readInterior,
+  ]);
 
   if (restoring) {
     return (
@@ -1084,26 +1158,20 @@ function NewTourInner() {
               </div>
             )}
 
-            {depth.stage !== "done" && depth.total > 0 && (
+            {reading && (
               <div className="mb-4 rounded-lg border border-ink-600 bg-ink-800 px-4 py-2.5">
                 <div className="flex items-center justify-between text-xs text-mist-400">
                   <span>
-                    {depth.stage === "loading-model" && depth.modelPercent !== undefined
-                      ? `Downloading the 3D model… ${depth.modelPercent}%`
-                      : `Adding depth to each room · ${depth.completed}/${depth.total}`}
+                    Reading what each room is made of
+                    {reading.room ? ` · ${reading.room}` : ""} · {reading.done}/
+                    {reading.total}
                   </span>
-                  <span>You can open the tour now; rooms turn 3D as it goes</span>
+                  <span>The tour is ready now; the detail fills in as it goes</span>
                 </div>
                 <div className="mt-1.5 h-1 overflow-hidden rounded-full bg-ink-600">
                   <div
                     className="h-full bg-accent transition-all"
-                    style={{
-                      width: `${
-                        depth.stage === "loading-model" && depth.modelPercent !== undefined
-                          ? depth.modelPercent
-                          : (depth.completed / Math.max(depth.total, 1)) * 100
-                      }%`,
-                    }}
+                    style={{ width: `${(reading.done / Math.max(reading.total, 1)) * 100}%` }}
                   />
                 </div>
               </div>
@@ -1121,15 +1189,8 @@ function NewTourInner() {
                 setPlan(next);
                 // Re-place rather than carrying nodes over: a redrawn plan has
                 // different room ids, and stale ones orphan the photos.
-                const existingDepth = new Map(property.nodes.map((n) => [n.id, n.depth]));
                 const { nodes } = placePhotos(next, photos);
-                const updated = {
-                  ...property,
-                  plan: next,
-                  // Depth already computed is keyed to the photo, not the room,
-                  // so it survives a re-layout and need not be recomputed.
-                  nodes: nodes.map((n) => ({ ...n, depth: existingDepth.get(n.id) ?? null })),
-                };
+                const updated = { ...property, plan: next, nodes };
                 setProperty(updated);
                 saveProperty(updated);
               }}

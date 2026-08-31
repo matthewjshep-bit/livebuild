@@ -96,11 +96,11 @@ export function Inspector({
       nodes: property.nodes.map((n) => (n.id === id ? { ...n, ...patch } : n)),
     });
 
-  const uploadFor = async (node: TourNode, kind: "photo" | "depth", file: File) => {
-    const key = `${property.id}/${node.id}/${kind}`;
+  const replacePhoto = async (node: TourNode, file: File) => {
+    const key = `${property.id}/${node.id}/photo`;
     await putMedia(key, file);
     // Bust the ref so a replaced file is not served from the URL cache.
-    patchNode(node.id, { [kind]: `${mediaRef(key)}?v=${Date.now()}` } as Partial<TourNode>);
+    patchNode(node.id, { photo: `${mediaRef(key)}?v=${Date.now()}` });
   };
 
   /**
@@ -302,88 +302,50 @@ export function Inspector({
 
       {node && (
         <div className="space-y-3">
-          <h2 className="text-sm font-medium">Viewpoint</h2>
+          <h2 className="text-sm font-medium">Photograph</h2>
           <MediaThumb src={node.photo} />
 
-          <Field label="Photo">
+          {/*
+            What is left of this panel after the photographs came off the model.
+
+            It used to carry a lens: a heading, a field of view, an eye height
+            and a parallax budget, because the picture was rendered from exactly
+            where it was taken and every one of those numbers changed what you
+            saw. Nothing is rendered from a photograph now - it is evidence for
+            what got built - so the only two things worth saying about it are
+            which room it shows and which file it is.
+          */}
+          <Field label="Room">
+            <select
+              className={inputClass}
+              value={node.roomId}
+              onChange={(e) => patchNode(node.id, { roomId: e.target.value })}
+            >
+              {property.plan.rooms.map((r) => (
+                <option key={r.id} value={r.id}>
+                  {r.label}
+                </option>
+              ))}
+            </select>
+          </Field>
+
+          <Field label="Replace the file">
             <input
               type="file"
               accept="image/*"
               className="w-full text-xs text-mist-400 file:mr-2 file:rounded file:border-0 file:bg-ink-600 file:px-2 file:py-1 file:text-xs file:text-mist-200"
               onChange={(e) => {
                 const file = e.target.files?.[0];
-                if (file) void uploadFor(node, "photo", file);
+                if (file) void replacePhoto(node, file);
               }}
             />
           </Field>
-
-          <Field label="Depth map (from the pipeline)">
-            <input
-              type="file"
-              accept="image/png"
-              className="w-full text-xs text-mist-400 file:mr-2 file:rounded file:border-0 file:bg-ink-600 file:px-2 file:py-1 file:text-xs file:text-mist-200"
-              onChange={(e) => {
-                const file = e.target.files?.[0];
-                if (file) void uploadFor(node, "depth", file);
-              }}
-            />
-          </Field>
-          <p className="text-[11px] leading-relaxed text-mist-400">
-            {node.depth
-              ? "Depth present - renders as a 2.5D shell with parallax."
-              : "No depth - renders as a flat photo. Run pipeline/spike.py to generate one."}
-          </p>
-
-          <div className="grid grid-cols-2 gap-2">
-            <Field label="Heading">
-              <input
-                className={inputClass}
-                type="number"
-                value={Math.round(node.heading)}
-                onChange={(e) => patchNode(node.id, { heading: Number(e.target.value) })}
-              />
-            </Field>
-            <Field label="Lens FOV">
-              <input
-                className={inputClass}
-                type="number"
-                value={node.fovDeg}
-                onChange={(e) => patchNode(node.id, { fovDeg: Number(e.target.value) })}
-              />
-            </Field>
-            <Field label="Eye height (ft)">
-              <input
-                className={inputClass}
-                type="number"
-                step="0.5"
-                value={+mToFt(node.eyeHeight).toFixed(1)}
-                onChange={(e) =>
-                  patchNode(node.id, { eyeHeight: Number(e.target.value) * M_PER_FT })
-                }
-              />
-            </Field>
-            <Field label="Parallax (m)">
-              <input
-                className={inputClass}
-                type="number"
-                step="0.05"
-                value={node.parallaxBudget}
-                onChange={(e) =>
-                  patchNode(node.id, { parallaxBudget: Number(e.target.value) })
-                }
-              />
-            </Field>
-          </div>
-
-          <div className="text-[11px] text-mist-400">
-            Connects to: {node.neighbors.length ? node.neighbors.join(", ") : "nothing yet"}
-          </div>
 
           <a
-            href={`/tour/${property.id}?node=${node.id}`}
+            href={`/tour/${property.id}?room=${node.roomId}`}
             className="block rounded border border-ink-500 px-3 py-1.5 text-center text-xs hover:bg-ink-600"
           >
-            Preview this viewpoint
+            Look at this room
           </a>
 
           <button
@@ -396,7 +358,7 @@ export function Inspector({
             }}
             className="w-full rounded border border-ink-500 px-3 py-1.5 text-xs text-warn hover:bg-ink-600"
           >
-            Delete viewpoint
+            Remove photograph
           </button>
         </div>
       )}

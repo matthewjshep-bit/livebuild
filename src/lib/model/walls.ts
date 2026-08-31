@@ -1,4 +1,5 @@
 import { boundsOf } from "@/lib/plan/autolayout";
+import { signedArea } from "@/lib/plan/geometry";
 import type { Opening, Plan, Room, Vec2 } from "@/lib/schema";
 
 /**
@@ -67,14 +68,79 @@ type Edge = {
   outward: -1 | 1;
 };
 
+/**
+ * The room's own edges, walked rather than assumed.
+ *
+ * This used to return the four sides of the bounding box, which was right for
+ * as long as every room was a rectangle. An L-shaped room built that way gets
+ * walls straight across its own notch and a floor spilling out past them, and
+ * nothing errors - it just quietly builds the wrong house.
+ *
+ * Still rectilinear: every edge has to be axis-aligned, because the pairing
+ * below groups collinear segments by axis and coordinate rather than solving
+ * general intersections. A diagonal edge is dropped rather than mangled, and
+ * `roomIsRectilinear` is what stops one being introduced upstream.
+ */
 function edgesOf(room: Room): Edge[] {
-  const b = boundsOf(room.polygon);
-  return [
-    { roomId: room.id, axis: 0, at: b.y0, from: b.x0, to: b.x1, outward: -1 },
-    { roomId: room.id, axis: 0, at: b.y1, from: b.x0, to: b.x1, outward: 1 },
-    { roomId: room.id, axis: 1, at: b.x0, from: b.y0, to: b.y1, outward: -1 },
-    { roomId: room.id, axis: 1, at: b.x1, from: b.y0, to: b.y1, outward: 1 },
-  ];
+  const poly = orientPositive(room.polygon);
+  const edges: Edge[] = [];
+
+  for (let i = 0; i < poly.length; i++) {
+    const a = poly[i];
+    const b = poly[(i + 1) % poly.length];
+    const dx = b[0] - a[0];
+    const dy = b[1] - a[1];
+
+    // The outward normal of a→b on a positively-wound polygon is (dy, -dx).
+    // On an axis-aligned edge exactly one component survives, which is what
+    // `axis` and `outward` between them encode.
+    if (Math.abs(dy) < 1e-9 && Math.abs(dx) > 1e-9) {
+      edges.push({
+        roomId: room.id,
+        axis: 0,
+        at: a[1],
+        from: Math.min(a[0], b[0]),
+        to: Math.max(a[0], b[0]),
+        outward: dx > 0 ? -1 : 1,
+      });
+    } else if (Math.abs(dx) < 1e-9 && Math.abs(dy) > 1e-9) {
+      edges.push({
+        roomId: room.id,
+        axis: 1,
+        at: a[0],
+        from: Math.min(a[1], b[1]),
+        to: Math.max(a[1], b[1]),
+        outward: dy > 0 ? 1 : -1,
+      });
+    }
+  }
+
+  return edges;
+}
+
+/**
+ * The same polygon, wound so its signed area is positive.
+ *
+ * Every producer in the codebase emits positive winding, and `edgesOf` reads
+ * the outward direction straight off it - so a polygon that arrived the other
+ * way round would build a house inside out, with every exterior wall offset
+ * into the room and every interior pairing looking the wrong way. Cheap to
+ * guarantee, and impossible to debug from the symptom.
+ */
+function orientPositive(polygon: Vec2[]): Vec2[] {
+  return signedArea(polygon) < 0 ? [...polygon].reverse() : polygon;
+}
+
+/** Whether every edge is axis-aligned, which is what the wall builder needs. */
+export function roomIsRectilinear(polygon: Vec2[]): boolean {
+  for (let i = 0; i < polygon.length; i++) {
+    const a = polygon[i];
+    const b = polygon[(i + 1) % polygon.length];
+    const dx = Math.abs(b[0] - a[0]);
+    const dy = Math.abs(b[1] - a[1]);
+    if (dx > 1e-9 && dy > 1e-9) return false;
+  }
+  return true;
 }
 
 type Span = { from: number; to: number };
@@ -173,7 +239,6 @@ export function wallsForLevel(plan: Plan, level: number): WallSolid[] {
   });
 
   const edges = rooms.flatMap(edgesOf);
-  const used = new Set<number>();
   const solids: WallSolid[] = [];
 
   const emit = (
@@ -213,6 +278,20 @@ export function wallsForLevel(plan: Plan, level: number): WallSolid[] {
     // into a 250mm wall standing where it does not belong.
     const solid = raw.filter((piece) => piece.to - piece.from > MIN_WALL_PIECE);
 
+    // Carried at both ends, unconditionally - which is right for every shape
+    // the app currently produces and will need revisiting for one it does not
+    // yet.
+    //
+    // A rectangle has only outside corners, and at an outside corner the carry
+    // fills a real void. An L-shaped room also has an *inside* corner, where
+    // the two walls already meet and the extension reaches 50mm into the room
+    // next door. Left as it is deliberately: nothing generates a non-rectangular
+    // room yet, and the obvious guard - extend, then check whether the extension
+    // landed inside a room - is unreliable exactly where it matters, because an
+    // interior wall's centreline lies precisely on the boundary the test would
+    // be asking about. Doing it properly means knowing whether the run's end is
+    // a reflex vertex, which is a property of the wall graph rather than of a
+    // single run, and belongs with the sweep that replaces the pairing loop.
     if (solid.length > 0) {
       solid[0] = { from: solid[0].from - reach, to: solid[0].to };
       const last = solid.length - 1;
@@ -234,65 +313,139 @@ export function wallsForLevel(plan: Plan, level: number): WallSolid[] {
   const normalOf = (axis: 0 | 1, outward: -1 | 1): Vec2 =>
     axis === 0 ? [0, outward] : [outward, 0];
 
-  for (let i = 0; i < edges.length; i++) {
-    if (used.has(i)) continue;
-    const edge = edges[i];
+  /**
+   * Resolve each line of the plan by sweeping it, rather than by pairing edges
+   * off greedily.
+   *
+   * The loop this replaces took each edge in turn and matched it against the
+   * first unused collinear edge facing the other way. That is correct when
+   * walls meet one-to-one and quietly wrong the moment one does not: a long
+   * wall facing two stacked rooms paired with the first of them, marked itself
+   * used, and left the second with no partner at all. The result was the shared
+   * wall emitted twice, as two *exterior* walls at 200mm offset either side of
+   * the line - a doubled partition in the middle of the house, z-fighting with
+   * itself, at the wrong thickness and carrying an outward normal that made the
+   * dollhouse cull it. Nothing errored, and the packer produces this shape
+   * whenever a two-room row backs onto a single larger room.
+   *
+   * Sweeping asks a different question. Every edge on a line contributes its
+   * ends as breakpoints; each elementary interval between consecutive
+   * breakpoints is then classified by how many rooms cover it and which way
+   * they face. One room means outside, two facing each other means a partition,
+   * and the answer cannot depend on the order the edges happened to arrive in.
+   */
+  const byAxis: Record<0 | 1, Edge[]> = { 0: [], 1: [] };
+  for (const edge of edges) byAxis[edge.axis].push(edge);
 
-    // A partner is a collinear edge from another room facing the other way -
-    // the two sides of one shared wall.
-    let partner = -1;
-    for (let j = i + 1; j < edges.length; j++) {
-      if (used.has(j)) continue;
-      const other = edges[j];
-      if (other.axis !== edge.axis) continue;
-      if (other.roomId === edge.roomId) continue;
-      if (Math.abs(other.at - edge.at) > PAIR_TOLERANCE) continue;
-      if (Math.min(edge.to, other.to) - Math.max(edge.from, other.from) < 0.2) continue;
-      partner = j;
-      break;
+  for (const axis of [0, 1] as const) {
+    // Cluster collinear edges, allowing for the float drift `distribute` leaves
+    // behind. Sorting first means a cluster is a run of neighbours rather than
+    // a quantised bucket, so two edges a hair either side of a boundary still
+    // meet.
+    const sorted = [...byAxis[axis]].sort((a, b) => a.at - b.at);
+    let cluster: Edge[] = [];
+
+    const flush = () => {
+      if (cluster.length === 0) return;
+      resolveLine(axis, cluster);
+      cluster = [];
+    };
+
+    for (const edge of sorted) {
+      if (cluster.length > 0 && edge.at - cluster[cluster.length - 1].at > PAIR_TOLERANCE) flush();
+      cluster.push(edge);
     }
-
-    if (partner >= 0) {
-      const other = edges[partner];
-      used.add(i);
-      used.add(partner);
-      const at = (edge.at + other.at) / 2;
-
-      // The shared run is emitted once; anything either room has beyond the
-      // overlap is still its own exterior wall.
-      const overlap: Span = {
-        from: Math.max(edge.from, other.from),
-        to: Math.min(edge.to, other.to),
-      };
-      emit(edge.axis, at, overlap, INTERIOR_THICKNESS, false, null);
-
-      for (const side of [edge, other]) {
-        if (side.from < overlap.from - 1e-3) {
-          emit(side.axis, at + side.outward * (EXTERIOR_THICKNESS / 2),
-            { from: side.from, to: overlap.from }, EXTERIOR_THICKNESS, true,
-            normalOf(side.axis, side.outward));
-        }
-        if (side.to > overlap.to + 1e-3) {
-          emit(side.axis, at + side.outward * (EXTERIOR_THICKNESS / 2),
-            { from: overlap.to, to: side.to }, EXTERIOR_THICKNESS, true,
-            normalOf(side.axis, side.outward));
-        }
-      }
-      continue;
-    }
-
-    used.add(i);
-    emit(
-      edge.axis,
-      edge.at + edge.outward * (EXTERIOR_THICKNESS / 2),
-      { from: edge.from, to: edge.to },
-      EXTERIOR_THICKNESS,
-      true,
-      normalOf(edge.axis, edge.outward),
-    );
+    flush();
   }
 
   return solids;
+
+  /** One collinear line's worth of edges, swept end to end. */
+  function resolveLine(axis: 0 | 1, line: Edge[]) {
+    const cuts = [...new Set(line.flatMap((e) => [e.from, e.to]))].sort((a, b) => a - b);
+
+    type Interval = {
+      from: number;
+      to: number;
+      at: number;
+      thickness: number;
+      exterior: boolean;
+      outward: Vec2 | null;
+    };
+    const intervals: Interval[] = [];
+
+    for (let i = 0; i < cuts.length - 1; i++) {
+      const from = cuts[i];
+      const to = cuts[i + 1];
+      if (to - from < 1e-9) continue;
+      const mid = (from + to) / 2;
+
+      const covering = line.filter((e) => e.from <= mid && e.to >= mid);
+      if (covering.length === 0) continue;
+
+      const facingA = covering.filter((e) => e.outward === 1);
+      const facingB = covering.filter((e) => e.outward === -1);
+      const rooms = new Set(covering.map((e) => e.roomId));
+
+      // A partition: rooms on both sides of this stretch, facing each other.
+      //
+      // The length test keeps the old pairing rule's intent. Two rooms that
+      // graze each other for a few centimetres are not sharing a wall, and
+      // treating them as if they were splits a long exterior run into three
+      // pieces, each of which then gets its own corner carry - which is how a
+      // 50mm artefact becomes a 250mm wall standing where it does not belong.
+      if (facingA.length > 0 && facingB.length > 0 && rooms.size > 1 && to - from >= 0.2) {
+        const at = covering.reduce((sum, e) => sum + e.at, 0) / covering.length;
+        intervals.push({ from, to, at, thickness: INTERIOR_THICKNESS, exterior: false, outward: null });
+        continue;
+      }
+
+      // Otherwise every covering edge is a face of the building. Usually one;
+      // two only when rooms coincide back to back without facing, which is a
+      // genuine pair of exterior walls rather than a partition.
+      for (const edge of covering) {
+        intervals.push({
+          from,
+          to,
+          at: edge.at + edge.outward * (EXTERIOR_THICKNESS / 2),
+          thickness: EXTERIOR_THICKNESS,
+          exterior: true,
+          outward: normalOf(axis, edge.outward),
+        });
+      }
+    }
+
+    // Merge back into runs before emitting.
+    //
+    // Not cosmetic: `emit` carries each run past its own ends to fill the
+    // corner it turns, so emitting per elementary interval would carry every
+    // internal breakpoint as though it were a corner and stud the wall with
+    // overlapping stubs.
+    const sameRun = (a: Interval, b: Interval) =>
+      Math.abs(a.at - b.at) < 1e-6 &&
+      a.thickness === b.thickness &&
+      a.exterior === b.exterior &&
+      ((a.outward === null && b.outward === null) ||
+        (a.outward !== null &&
+          b.outward !== null &&
+          a.outward[0] === b.outward[0] &&
+          a.outward[1] === b.outward[1]));
+
+    const runs: Interval[] = [];
+    for (const interval of intervals.sort((x, y) => x.at - y.at || x.from - y.from)) {
+      const last = runs[runs.length - 1];
+      if (last && sameRun(last, interval) && Math.abs(last.to - interval.from) < 1e-6) {
+        last.to = interval.to;
+      } else {
+        runs.push({ ...interval });
+      }
+    }
+
+    for (const run of runs) {
+      emit(axis, run.at, { from: run.from, to: run.to }, run.thickness, run.exterior, run.outward);
+    }
+  }
+
 }
 
 /** Exterior wall runs, for deciding where windows go. */

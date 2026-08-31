@@ -190,8 +190,8 @@ export function PublishPanel({ property }: { property: Property }) {
           )}
 
           <p className="mt-2 text-[11px] leading-relaxed text-mist-400">
-            Photos are shrunk to 1600px before upload. Depth maps are sent
-            untouched — they carry measurements, not pixels.
+            Photos are shrunk to 1600px before upload. They travel as the evidence the
+            model was built from, and are never drawn in it.
           </p>
 
           <button

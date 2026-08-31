@@ -1,5 +1,7 @@
 import { z } from "zod";
 
+import { HouseSpec } from "@/lib/spec/schema";
+
 /**
  * The property document is the contract between every phase of the pipeline:
  * the editor writes it, the tour viewer reads it, and the Python depth/splat
@@ -228,6 +230,18 @@ export const Property = z.object({
   site: Site.nullish(),
   /** What the outside looks like, from the map and from imagery. */
   exterior: Exterior.nullish(),
+  /**
+   * What each room is made of - finishes, ceilings, trim, how rooms open onto
+   * one another.
+   *
+   * Keyed by room id and kept here rather than on `Room` for the same reason
+   * `condition` is: a re-layout regenerates every room wholesale, and anything
+   * hanging off one would be destroyed by a rebuild without a word. Nullish, so
+   * every document written before it existed still parses and still renders -
+   * absent means the model falls back to deriving everything, which is what it
+   * did for the whole of its life until now.
+   */
+  spec: HouseSpec.nullish(),
   /**
    * Where this tour lives in the cloud, once it has been sent there.
    *

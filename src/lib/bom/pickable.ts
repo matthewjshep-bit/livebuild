@@ -18,6 +18,12 @@ import type { Element } from "@/lib/bom/condition";
  * room rather than pretending there is a line item behind it.
  */
 const PIECE_ELEMENT: Record<string, Element> = {
+  // Fitted joinery. A cabinet is what a buyer is purchasing, so clicking one
+  // ought to name the line that prices it - which until there was cabinetry to
+  // click, nothing did: the kitchen's counter was the only thing in the room
+  // mapped to an element, so clicking the cupboards selected the worktop.
+  cabinet: "cabinets",
+  wardrobe: "cabinets",
   bath: "bathing",
   basin: "vanity",
   wc: "toilet",

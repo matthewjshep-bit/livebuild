@@ -2,8 +2,7 @@
 
 import { classifyPhotos } from "@/lib/listing/client";
 import { refinePoses } from "@/lib/listing/pose";
-import { DepthEstimator, type DepthProgress } from "@/lib/depth/client";
-import { getMedia, mediaRef, putMedia, refToKey } from "@/lib/media-store";
+import { getMedia, refToKey } from "@/lib/media-store";
 import { placeNodesInRoom } from "@/lib/plan/autolayout";
 import type { HouseSpec } from "@/lib/plan/describe";
 import type { Plan, Property, TourNode } from "@/lib/schema";
@@ -178,48 +177,4 @@ export async function posePhotos(
     // The corner heuristic is still usable, and is what every node already has.
     return { nodes, refined: 0 };
   }
-}
-
-/**
- * Depth maps, one photograph at a time, saving as each lands.
- *
- * Saving incrementally rather than at the end is what lets someone open the
- * tour while this is still running - and what stops a closed tab throwing away
- * twenty minutes of GPU time.
- */
-export async function estimateDepth(
-  estimator: DepthEstimator,
-  property: Property,
-  onProgress: (progress: DepthProgress) => void,
-  onUpdate: (property: Property) => void,
-): Promise<Property> {
-  const jobs = (
-    await Promise.all(
-      property.nodes
-        .filter((node) => !node.depth)
-        .map(async (node) => {
-          const room = property.plan.rooms.find((r) => r.id === node.roomId);
-          const blob = room ? await getMedia(refToKey(node.photo)) : null;
-          return room && blob ? { node, room, blob } : null;
-        }),
-    )
-  ).filter(Boolean) as Array<{
-    node: TourNode;
-    room: Plan["rooms"][number];
-    blob: Blob;
-  }>;
-
-  let working = property;
-  await estimator.run(jobs, onProgress, async (nodeId, blob) => {
-    const mediaKey = `${property.id}/${nodeId}/depth`;
-    await putMedia(mediaKey, blob);
-    working = {
-      ...working,
-      nodes: working.nodes.map((n) =>
-        n.id === nodeId ? { ...n, depth: mediaRef(mediaKey) } : n,
-      ),
-    };
-    onUpdate(working);
-  });
-  return working;
 }

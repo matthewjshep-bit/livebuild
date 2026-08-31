@@ -28,7 +28,6 @@ type Row = {
   label: string;
   rooms: number;
   nodes: number;
-  withDepth: number;
   bytes: number;
 };
 
@@ -69,7 +68,6 @@ export default function StoragePanel() {
           label: property?.label || id,
           rooms: property?.plan.rooms.length ?? 0,
           nodes: property?.nodes.length ?? 0,
-          withDepth: property?.nodes.filter((n) => n.depth).length ?? 0,
           bytes: bytesUnder(`${id}/`),
         };
       }),
@@ -116,7 +114,7 @@ export default function StoragePanel() {
 
       <div className="mt-6 rounded-lg border border-ink-600 bg-ink-800 p-4">
         <div className="flex items-baseline justify-between text-sm">
-          <span>{formatBytes(measured)} of photos and depth maps</span>
+          <span>{formatBytes(measured)} of photos</span>
           {usage && (
             <span className="text-xs text-mist-400">
               of about {formatBytes(usage.quota)} available
@@ -204,18 +202,10 @@ export default function StoragePanel() {
             <div className="min-w-0">
               <div className="truncate text-sm font-medium">{row.label}</div>
               <div className="text-xs text-mist-400">
-                {row.rooms} rooms &middot; {row.nodes} viewpoints &middot;{" "}
-                {/* A tour with no photographs is not "all 3D", which is what
-                    `withDepth === nodes` said when both were zero. */}
-                {row.nodes === 0 ? (
-                  "no photos yet"
-                ) : row.withDepth === row.nodes ? (
-                  "all 3D"
-                ) : (
-                  <span className="text-warn">
-                    {row.nodes - row.withDepth} still flat
-                  </span>
-                )}
+                {row.rooms} rooms &middot;{" "}
+                {row.nodes === 0
+                  ? "built without photos"
+                  : `built from ${row.nodes} ${row.nodes === 1 ? "photo" : "photos"}`}
                 {row.bytes > 0 && ` · ${formatBytes(row.bytes)}`}
               </div>
             </div>

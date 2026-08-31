@@ -1,47 +1,51 @@
 # MatterMatt
 
-Matterport-style property tours built from **listing photos and a hand-drawn
-floor plan** - no depth-sensing camera, no per-scan fee.
+Hyper-realistic 3D replicas of houses, built from **photographs, satellite
+imagery and the map** - no depth-sensing camera, no per-scan fee.
 
 ## The idea
 
-Standard photogrammetry fails on MLS photos. It needs dense, continuously
-overlapping coverage; a listing set is 20-30 wide-angle shots with near-zero
-overlap, aggressive HDR, and blown-out windows. Interiors are the worst case
-even with good capture, because blank walls give feature matching nothing to
-track.
+The photographs are evidence, not scenery. Nothing you took a picture of is
+shown to you as a picture: the pictures are read, and what they describe gets
+built.
 
-**The floor plan is the unlock.** It supplies exactly what sparse reconstruction
-cannot: metric scale, gravity alignment, and global consistency. So this does not
-ask photogrammetry to work out the building. It is given the building, and asked
-only to work out each photo.
+That is the whole design, and it is a reversal. This used to pose each
+photograph inside an extruded floor plan and render it as a 2.5D shell, so the
+plan was a backdrop and the photography was the product. It worked, and it
+carried the limitation photography always carries - a shell holds together only
+near the spot it was shot from, so the camera could never really move, and
+anything the lens did not see was simply absent.
+
+A built replica has no such limit. You can walk it, stand anywhere, look at the
+back of the sofa, take it apart, and price it - because every surface is
+geometry with a material on it rather than a projection of a moment.
 
 ```
-Hand-drawn plan  --extrude-->  3D shell = the DOLLHOUSE
-       |
-       +-- photos placed as posed camera NODES inside it
-                    |
-                    +-- flat photo               (always works)
-                    +-- + AI depth -> 2.5D shell  (parallax, MLS photos)
-                    +-- + 3DGS splat             (free-fly, video only)
+    photos ──┐
+  satellite ──┤
+ street view ──┼──► read ──► what the house IS ──► built ──► one model
+    the map ──┤              rooms, finishes,              you can walk,
+   the plan ──┘              openings, fittings            price and share
 ```
 
-One data model, three renderers that swap in by input quality. The tour never
-breaks - it degrades.
+Many inputs, one renderer. Every input that fails is an input the model simply
+does without: no address means no sun, no photograph of a room means that room
+is inferred from the plan and the rooms around it. Nothing blocks the build.
 
 ### What this gets you
 
-| Feature | From MLS photos |
+| Feature | From listing photos |
 |---|---|
-| Click-to-walk tour | Full. Owes nothing to photogrammetry. |
-| Dollhouse + floor plan | Full. Extruded from what you drew. |
-| Free-fly photoreal 3D | **Constrained, not free** - see below. |
+| Walk it in first person | Full. Real collision, real stairs, real doorways. |
+| Dollhouse + floor plan | Full. Extruded from the footprint. |
+| Photoreal free movement | Full - there is no shell to tear, because there is no shell. |
+| A priced scope of work | Full. Quantities come off the model, condition off the photos. |
 
-A single photo plus AI depth gives a *2.5D shell*: real parallax when the camera
-moves a little, but it tears at depth edges when it moves a lot, because nothing
-was ever recorded behind the sofa. Matterport has the same limitation and hides
-it by constraining motion. So does this. Genuine free-fly needs a walkthrough
-video, which is the Phase 3 path.
+The trade is honest and worth stating: a replica is only as right as what was
+read out of the inputs. A photograph shows you a real kitchen and can be wrong
+about nothing; a replica of that kitchen can be confidently wrong about the
+cabinet doors. So the photographs are kept, beside the model rather than in it,
+and every room can be checked against the pictures it was built from.
 
 ## Running it
 
@@ -146,6 +150,8 @@ artefact whether the house is furnished, empty or unbuilt.
 | `windows.ts` | Windows derived on exterior walls |
 | `furniture.ts` | Procedural furniture by room kind |
 | `materials.ts` | The palette |
+| `textures.ts` | Colour and height, drawn to a canvas at runtime |
+| `maps.ts` | Normal, occlusion and roughness derived from that height |
 
 Three things are worth knowing about how it is built.
 
@@ -169,8 +175,10 @@ megabytes of download, and a house that cannot be furnished offline. One rule is
 absolute — **nothing may block a doorway** — because a sofa across the only door
 is wrong in the model *and* in the walk graph that routes people through it.
 
-Photographs are still there. Where a room has them, stepping inside swaps in the
-2.5D shell renderer described below.
+Photographs are still there, beside the model rather than in it: a panel lists
+the pictures a room was built from, and any of them opens full-screen. That is
+the check on the whole approach - a replica can be confidently wrong in a way a
+photograph cannot, so the photograph stays within reach.
 
 ## Making a tour
 
@@ -272,32 +280,50 @@ Photos are fetched through `/api/listing/photo`, an allowlisted proxy. Zillow
 serves images happily but sends no CORS headers, so the browser cannot otherwise
 read the bytes to store them.
 
-## Placing photos where they were taken
+## Attaching photos to rooms
 
-Photos are dropped into their room by a heuristic — a corner, facing the middle
-— which is a fair description of how listing photos are shot and wrong often
-enough to matter. A galley kitchen shot down the counter run, a bathroom taken
-from the doorway, or a bedroom framed from the foot of the bed all end up facing
-the wrong way, and the tour turns to look at a wall.
+A photograph belongs to a room, and that is now the whole of the relationship.
+It used to be a camera: a position, a heading, a lens angle and a parallax
+budget, all of which existed because the picture was rendered from exactly where
+it was taken. None of that is read any more.
 
-So before depth is computed, each photo is examined against everything already
-known about its room: its dimensions, and **which walls have doorways**. A
-doorway in shot fixes the orientation outright; failing that, the geometry of
-converging walls says which corner is furthest.
+The fields are still on the schema and still written, so every document saved or
+published before this change parses unchanged and every published link keeps
+working - but nothing looks through them. The pose pass survives for one reason
+only: which way a camera was facing is useful for *understanding* a room, and
+that is what the photographs are for now.
 
-A refined pose is only applied when the model is confident. That restraint is the
-point — a confident wrong pose overrides a heuristic that was probably right,
-whereas an admitted uncertain one costs nothing.
+## Materials and light
 
-Order matters here: poses are refined **before** depth, because the far anchor
-that turns relative depth into metres depends on which way the camera faces. Get
-the heading wrong and a wrong scale is baked into every shell.
+The house is drawn in code and nothing is downloaded. That was already true of
+the surface colours and it is now true of the whole physically-based set:
 
-Measured against the synthetic demo house, the only fixture with exact ground
-truth: one of six photos was confident, and it landed within **1° of heading and
-1% of position**. The other five were correctly flagged uncertain and kept the
-heuristic. Bare synthetic rooms are close to the worst case for this — real
-photos have doorways, windows and furniture to read.
+**Height is drawn, never inferred.** Every finish generator draws twice from the
+same seed - once in colour, once in greys saying where the surface stands high
+and low - and the normal, occlusion and roughness maps come off the second pass.
+Deriving relief from the colour instead is the classic mistake: a dark board
+becomes a groove, a pale vein becomes a ridge, and the result is an embossed
+picture of a surface rather than a surface. Grout is recessed because it is
+recessed; oak grain is flat because it is flat.
+
+**The sky is something to reflect.** An environment map, painted as a gradient
+with the sun in the right place and convolved at 128px. Nothing metal reads as
+metal without one - a mirror with nothing to mirror is a grey square - and glass
+reads as a pale panel. It also does properly what five shadow-casting
+directional lights used to approximate, which is why there is now one shadow map
+in the scene instead of six.
+
+**A window is a light.** Image-based lighting ignores occlusion, so it lights
+the inside of a sealed box exactly as brightly as the outside and every wall
+comes back the same tone. A window genuinely is a rectangle of sky facing into a
+room, so it is modelled as one - and that is what gives an interior light that
+falls off with distance from the openings.
+
+**Everything made has a filleted edge.** Three millimetres, which is what a
+router leaves. A sharp arris gives the eye one hard discontinuity; a filleted one
+gives it a band that catches a highlight, and that band is most of the
+difference between a box and an object. Not on walls or floors, where it would
+never be seen and the vertices are not free.
 
 ## Labelling photos automatically
 
@@ -378,7 +404,7 @@ machine.
 | What | Where | Why |
 |---|---|---|
 | Property documents | localStorage | Kilobytes, and the editor's autosave is synchronous |
-| Photos and depth maps | IndexedDB (`media`) | Tens of megabytes; would blow localStorage's quota instantly |
+| Photos | IndexedDB (`media`) | Tens of megabytes; would blow localStorage's quota instantly |
 | Wizard drafts | IndexedDB (`docs`) | Same store, different lifetime |
 
 Two things follow from that, and both were bugs before they were features:
@@ -408,9 +434,11 @@ consequences worth knowing:
 - **Stacked rooms are not connected.** A floor is not a doorway. Storeys join
   only through stairs, and stairs are derived the same way doorways are: two
   `Stairs` rooms whose footprints overlap on adjacent levels.
-- **A cross-storey ring is drawn at the stairs, not at the node.** The viewpoint
-  itself is metres above your head, and a ring floating in the ceiling is not
-  something anyone reads as "go this way".
+- **The way up is marked at the foot of the flight, not at the top of it.** The
+  landing is metres above your head, and a marker floating in the ceiling is not
+  something anyone reads as "go this way". It stands clear of the treads too,
+  because a marker is drawn without depth testing so it stays *visible* through
+  the staircase, while a click is a ray that stops at the first tread.
 
 The dollhouse gets floor tabs, and the minimap can browse a storey you are not
 standing on - otherwise the rooms you cannot see are also the ones you cannot
@@ -425,14 +453,15 @@ src/
     schema.ts           # the property document - the contract between phases
     plan/autolayout.ts  # build a plan from room names; derive doorways
     plan/geometry.ts    # extrusion, wall/doorway subtraction, plan<->world
-    plan/walkgraph.ts   # which viewpoints connect, derived from doorways
-    depth/              # in-browser depth estimation (worker + client)
-    render/depth-shell.ts  # the 2.5D shader
+    plan/walkgraph.ts   # which rooms connect, derived from doorways
+    model/textures.ts   # colour and height, drawn to a canvas at runtime
+    model/maps.ts       # normal / occlusion / roughness, derived from height
+    render/quality.ts   # what this machine can afford to render
     media-store.ts      # photos in IndexedDB, referenced as idb:<key>
   components/
     wizard/             # drop photos, tag rooms, arrange
     editor/             # advanced: draw the plan by hand
-    tour/               # dollhouse, shells, camera rig, minimap
+    tour/               # dollhouse, walk, lighting, post, camera rig, minimap
 pipeline/               # Python. Optional now - see below.
 tools/                  # headless-browser verification
 ```
@@ -452,48 +481,62 @@ npx tsx tools/sketch-test.ts     # a hand-drawn plan becomes a connected, correc
 npx tsx tools/describe-test.ts   # descriptions parse, lay out connected, and scale to sqft
 npx tsx tools/layout-test.ts     # every generated plan is fully walkable
 npx tsx tools/floors-test.ts     # storeys, stairs, and pass-through rooms
-node tools/parallax-test.mjs     # the shell is 3D, not a billboard
-node tools/walk-test.mjs         # you can step between viewpoints
+npx tsx tools/reshape-test.ts    # a finished tour reshapes without orphaning anything
+npx tsx tools/imagery-test.ts    # the geo maths behind the satellite trace
+node tools/replica-test.mjs      # no photograph is ever drawn in the model
+node tools/walk-test.mjs         # a room marker puts you inside, on foot
 node tools/floors-walk-test.mjs  # you can actually get upstairs, two ways
 node tools/builder-test.mjs      # add a room, rotate it, add a storey
 node tools/author-test.mjs       # the advanced editor still works
-node tools/wizard-test.mjs       # photos in, walkable tour out (slow: downloads the model)
-node tools/describe-flow-test.mjs # describe -> tag options -> multi-storey layout (calls the API)
-node tools/model-test.mjs         # the model renders on both plans; photos still work
-node tools/bom-page-test.mjs      # grade from photos, render the BOM, export CSV (calls the API)
-node tools/sketch-flow-test.mjs   # upload a drawing, get a layout (calls the API)
-node tools/pose-test.mjs         # camera poses scored against exact ground truth
-node tools/autotag-test.mjs       # the vision pass labels every photo from the house's own rooms
-node tools/persistence-test.mjs   # work survives a reload; depth can be resumed
-node tools/publish-test.mjs       # publish, then load the link with empty storage (needs Supabase)
-node tools/shoot.mjs "/tour/demo-house?node=n1" shots/inside.png
+node tools/model-test.mjs        # the model renders on both sample plans
+node tools/wizard-test.mjs       # photos in, walkable tour out
+node tools/persistence-test.mjs  # work survives a reload with its photos attached
+node tools/bom-page-test.mjs     # grade from photos, render the BOM, export CSV (calls the API)
+node tools/publish-test.mjs      # publish, then load the link with empty storage (needs Supabase)
+node tools/shoot.mjs "/tour/demo-house?room=kitchen" shots/inside.png
 ```
 
 Two of these carry most of the weight.
 
-`parallax-test` compares how much a near silhouette moves against how much the
-flat wall behind it moves under camera lean. A billboard shifts as one rigid
-image; a depth shell does not. Currently **3.4x**.
+`replica-test` is the one that guards the direction of the whole project. It
+walks the scene graph in four views - dollhouse, on foot, two-storey, and the
+scripted tour - and fails if any material carries a texture whose image was
+fetched rather than generated. A photograph creeping back onto the model would
+not break anything or throw anything; it would just quietly undo the point. The
+procedural canvas textures have no `src`, so they do not trip it.
 
 `layout-test` checks the auto-layout's one hard promise - that every room it
 generates is reachable from every other. It is a plain reachability check across
 47 house shapes, and it caught two failures a single browser run had missed.
 
-`floors-walk-test` clicks its way upstairs. Worth having because the cross-storey
-case fails in a way stills cannot show: a ring can be present and clickable while
-being invisible, or drawn somewhere nobody would ever click.
+Anything reading `window.__scene` waits for its `mode` field rather than for a
+fixed number of seconds. The readout is published once a second, so a test that
+sleeps and hopes is a test that passes on a fast machine and fails on a slow
+one - which is how both walk tests were flaky before they waited on state.
 
 ## Status
 
-- **Phase 0** - spike ready to run, needs your photos. See `pipeline/README.md`.
-- **Phase 1** - done. Plan editor, dollhouse, walk graph.
-- **Phase 2** - shell renderer done and verified. Wire real depth maps in once
-  Phase 0 says the photos survive.
-- **Phase 3** - not started. `splats` exists in the schema so it drops into the
-  same world frame when it arrives.
+- **Photographs off the model** - done. The shell renderer, the depth pass and
+  the node-teleport camera are gone; `@huggingface/transformers` with them.
+- **Materials and light** - done. Procedurally derived normal, occlusion and
+  roughness maps; a procedural environment map for image-based lighting; one
+  sun instead of six shadow maps; windows as real area lights; bevelled edges
+  on everything that is an object; SMAA, occlusion and a restrained bloom
+  behind a three-tier quality setting.
+- **The interior spec** - not started. A per-room record read out of the
+  photographs - finishes, openings, fittings, furniture, lighting - stored
+  against the property and keyed by room, so it survives a re-layout the way
+  `condition` already does. This is what turns "a house" into "this house".
+- **The parts library** - not started. Cabinetry with doors and handles, lathe
+  sanitaryware, real window assemblies with reveals and mullions, replacing the
+  one-to-three-slab builders in `src/lib/model/furniture.ts`.
+- **The outside** - not started. Google Solar for real roof planes, Elevation
+  for terrain, a harder Street View read for the facade.
 
 ## The next thing to do
 
-Run the Phase 0 spike on one real property. Everything else here is
-well-understood engineering; whether monocular depth survives real MLS photos is
-the only genuinely uncertain part, and it is cheap to answer.
+Read the rooms out of the photographs. Everything above is a house built from a
+footprint and a room list; the photographs are still only being used to work out
+which room is which. The interior spec is what makes it a replica of a
+particular house rather than a plausible one, and it is the reason the
+photographs are being kept.

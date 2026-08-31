@@ -6,14 +6,12 @@ import { PhotoDrop, type ImportedPhoto } from "@/components/wizard/PhotoDrop";
 import { PhotoReview } from "@/components/wizard/PhotoReview";
 import {
   type BuildStep,
-  estimateDepth,
   labelPhotos,
   placePhotos,
   posePhotos,
   roomHints,
 } from "@/lib/build/pipeline";
 import { carryCondition } from "@/lib/build/carryover";
-import { DepthEstimator, type DepthProgress } from "@/lib/depth/client";
 import { deleteMedia, mediaRef, putMedia, refToKey } from "@/lib/media-store";
 import { layoutFromSpec } from "@/lib/plan/autolayout";
 import type { Plan, Property } from "@/lib/schema";
@@ -22,9 +20,9 @@ import type { Plan, Property } from "@/lib/schema";
  * Photographs, after the house already exists.
  *
  * Every part of this ran once already, in the wizard, and could never be run
- * again: the classify pass, the placement, the pose refinement and the depth
- * estimator were all reachable only from `/new`. So a tour that came out with
- * no viewpoints - an address whose listing had no gallery, a scrape that failed
+ * again: the classify pass, the placement and the pose refinement were all
+ * reachable only from `/new`. So a tour that came out with
+ * no photographs - an address whose listing had no gallery, a scrape that failed
  * on the day - was finished. The only way to add a photograph afterwards was to
  * place a viewpoint by hand, upload a file to it, and aim it yourself, one at a
  * time.
@@ -45,10 +43,8 @@ export function AddPhotos({
   const [open, setOpen] = useState(false);
   const [photos, setPhotos] = useState<ImportedPhoto[]>([]);
   const [step, setStep] = useState<BuildStep | null>(null);
-  const [depth, setDepth] = useState<DepthProgress>({ stage: "idle", completed: 0, total: 0 });
   const [notes, setNotes] = useState<string[]>([]);
   const [confirmRebuild, setConfirmRebuild] = useState(false);
-  const estimatorRef = useRef<DepthEstimator | null>(null);
   const busy = step !== null;
 
   const addFiles = useCallback(
@@ -95,7 +91,7 @@ export function AddPhotos({
     [property.plan.rooms],
   );
 
-  /** Everything both paths do: label, place, aim, and then depth in the background. */
+  /** Everything both paths do: label the photographs, and attach them to rooms. */
   const ingest = useCallback(
     async (plan: Plan, base: Property, keepExisting: boolean) => {
       const gathered: string[] = [];
@@ -138,15 +134,11 @@ export function AddPhotos({
         );
       }
       gathered.unshift(
-        `${placed.nodes.length} viewpoint${placed.nodes.length === 1 ? "" : "s"} added.`,
+        `${placed.nodes.length} photo${placed.nodes.length === 1 ? "" : "s"} attached.`,
       );
       onUpdate(assembled);
       setNotes(gathered);
       setStep(null);
-
-      const estimator = new DepthEstimator();
-      estimatorRef.current = estimator;
-      await estimateDepth(estimator, assembled, setDepth, onUpdate);
       setPhotos([]);
     },
     [photos, onUpdate, hintsFor],
@@ -203,20 +195,14 @@ export function AddPhotos({
       ref: node.photo,
       roomLabel: property.plan.rooms.find((r) => r.id === node.roomId)?.label ?? null,
     }));
-    const depthOf = new Map(property.nodes.map((n) => [n.id, n.depth]));
     const all = [...oldPhotos, ...read.photos.map((p) => ({ id: p.id, ref: p.ref, roomLabel: p.roomLabel }))];
     const placed = placePhotos(nextPlan, all);
 
-    const assembled: Property = {
-      ...carried,
-      // Depth is keyed to the photograph, not the room, so it survives a
-      // re-layout and need not be computed again.
-      nodes: placed.nodes.map((n) => ({ ...n, depth: depthOf.get(n.id) ?? null })),
-    };
+    const assembled: Property = { ...carried, nodes: placed.nodes };
     onUpdate(assembled);
 
     const said: string[] = [
-      `${nextPlan.rooms.length} rooms, ${nextPlan.openings.length} doorways, ${assembled.nodes.length} viewpoints.`,
+      `${nextPlan.rooms.length} rooms, ${nextPlan.openings.length} doorways, ${assembled.nodes.length} photos.`,
     ];
     if (moved.carried > 0) {
       said.push(`Kept the condition you had graded on ${moved.carried} room${moved.carried === 1 ? "" : "s"}.`);
@@ -226,10 +212,6 @@ export function AddPhotos({
     }
     setNotes(said);
     setStep(null);
-
-    const estimator = new DepthEstimator();
-    estimatorRef.current = estimator;
-    await estimateDepth(estimator, assembled, setDepth, onUpdate);
     setPhotos([]);
   }, [photos, property, onUpdate, hintsFor]);
 
@@ -331,13 +313,6 @@ export function AddPhotos({
             />
           </div>
         </div>
-      )}
-
-      {depth.stage !== "idle" && depth.stage !== "done" && depth.total > 0 && (
-        <p className="mt-2 text-[11px] text-mist-400">
-          Adding depth · {depth.completed}/{depth.total} — the tour works now; rooms turn 3D as
-          it goes.
-        </p>
       )}
 
       {notes.length > 0 && (

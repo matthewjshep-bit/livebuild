@@ -29,11 +29,9 @@ const PHOTO_QUALITY = 0.82;
  * Shrink a photo for delivery.
  *
  * A listing set is around 90MB raw, against a 1GB free tier - roughly eleven
- * houses. At 1600px the shell has far more detail than its depth map can use,
- * so this costs nothing visible and buys about ten times the capacity.
- *
- * Depth maps are never touched: they encode millimetres across RGB channels,
- * so resampling or JPEG would corrupt the geometry rather than soften it.
+ * houses. These are shown in a gallery beside the model at a few hundred pixels
+ * and opened full-screen occasionally, so 1600px is far more than is ever read
+ * off them, and it buys about ten times the capacity.
  */
 async function downscalePhoto(blob: Blob): Promise<Blob> {
   const bitmap = await createImageBitmap(blob);
@@ -66,9 +64,17 @@ async function downscalePhoto(blob: Blob): Promise<Blob> {
   return shrunk && shrunk.size < blob.size ? shrunk : blob;
 }
 
-type Upload = { relative: string; blob: Blob; nodeId: string; kind: "photo" | "depth" };
+type Upload = { relative: string; blob: Blob; nodeId: string; kind: "photo" };
 
-/** Gather every local blob this tour needs, downscaling photos on the way. */
+/**
+ * Gather every local blob this tour needs, downscaling photos on the way.
+ *
+ * Depth maps used to go up alongside them, untouched, because they encoded
+ * millimetres and a lossy re-encode would have been a measurement error rather
+ * than an artefact. Nothing renders one now, so nothing is sent - which takes
+ * roughly a third off what a published house costs to store, since the photos
+ * are JPEG and the depth maps were lossless PNG.
+ */
 async function collect(property: Property): Promise<Upload[]> {
   const uploads: Upload[] = [];
 
@@ -81,17 +87,6 @@ async function collect(property: Property): Promise<Upload[]> {
         nodeId: node.id,
         kind: "photo",
       });
-    }
-    if (node.depth) {
-      const depth = await getMedia(refToKey(node.depth));
-      if (depth) {
-        uploads.push({
-          relative: `depth/${node.id}.png`,
-          blob: depth,
-          nodeId: node.id,
-          kind: "depth",
-        });
-      }
     }
   }
 
@@ -166,7 +161,7 @@ export async function publishProperty(
     nodes: property.nodes.map((node) => ({
       ...node,
       photo: publicUrl(`${slug}/photos/${node.id}.jpg`),
-      depth: node.depth ? publicUrl(`${slug}/depth/${node.id}.png`) : null,
+      depth: null,
     })),
   };
 

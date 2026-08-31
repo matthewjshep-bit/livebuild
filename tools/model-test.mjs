@@ -47,7 +47,7 @@ for (const [name, route] of [
 }
 
 // The photographic layer must still be reachable.
-await page.goto(`${base}/tour/demo-house?node=n1`, { waitUntil: "networkidle" });
+await page.goto(`${base}/tour/demo-house?room=kitchen`, { waitUntil: "networkidle" });
 await page.waitForTimeout(4500);
 await page.screenshot({ path: "shots/model-inside-photo.png" });
 const photoLayer = await page.evaluate(() => !!document.querySelector("canvas"));

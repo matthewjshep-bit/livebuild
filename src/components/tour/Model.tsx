@@ -4,11 +4,14 @@ import { Html } from "@react-three/drei";
 import { useFrame } from "@react-three/fiber";
 import { useMemo, useRef } from "react";
 import * as THREE from "three";
-import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
+import { boxGeometry, merged, solid } from "@/lib/model/solids";
+import { runGeometry } from "@/lib/model/profiles";
+import { joineryFor } from "@/lib/model/joinery";
+import { ceilingParts } from "@/lib/model/ceiling";
 
 import { type Element } from "@/lib/bom/condition";
 import { elementForPiece, type Pick } from "@/lib/bom/pickable";
-import { furnishRoom } from "@/lib/model/furniture";
+import { piecesFor } from "@/lib/model/staging";
 import { BASEBOARD_DEPTH, BASEBOARD_HEIGHT, PALETTE } from "@/lib/model/materials";
 import { DEFAULT_SCHEME, type Scheme, floorToneFor, recolour } from "@/lib/model/schemes";
 import { explodeLift, explodeOffset, roomShell } from "@/lib/model/room-shell";
@@ -23,13 +26,22 @@ import {
   applyWorldUvs,
   canTexture,
   floorFinish,
-  floorTexture,
-  wallTexture,
+  floorSurface,
+  type Surface,
+  wallSurface,
 } from "@/lib/model/textures";
 import { type WallSolid, wallsForLevel } from "@/lib/model/walls";
 import { wallPiecesAround, windowsForLevel } from "@/lib/model/windows";
 import { boundsOf } from "@/lib/plan/autolayout";
-import { area, centroid, levelBase, levelsOf } from "@/lib/plan/geometry";
+import {
+  area,
+  centroid,
+  levelBase,
+  levelsOf,
+  wallSegmentsForRoom,
+} from "@/lib/plan/geometry";
+import { decompose } from "@/lib/plan/footprint";
+import type { HouseSpec } from "@/lib/spec/schema";
 import type { Plan, Room } from "@/lib/schema";
 import { formatArea } from "@/lib/units";
 
@@ -51,24 +63,6 @@ import { formatArea } from "@/lib/units";
 
 const SLAB = 0.02;
 
-function boxGeometry(
-  center: [number, number, number],
-  size: [number, number, number],
-  rotationY = 0,
-): THREE.BufferGeometry {
-  const geometry = new THREE.BoxGeometry(size[0], size[1], size[2]);
-  if (rotationY) geometry.rotateY(rotationY);
-  geometry.translate(center[0], center[1], center[2]);
-  return geometry;
-}
-
-/** Merge a batch of boxes into one geometry, or null when there are none. */
-function merged(parts: THREE.BufferGeometry[]): THREE.BufferGeometry | null {
-  if (parts.length === 0) return null;
-  const result = mergeGeometries(parts, false);
-  for (const part of parts) part.dispose();
-  return result;
-}
 
 function wallGeometry(wall: WallSolid, baseY: number): THREE.BufferGeometry {
   const angle = (wall.angleDeg * Math.PI) / 180;
@@ -105,13 +99,14 @@ const UNFOCUSED_OPACITY = 0.16;
 function ExteriorShell({
   walls,
   baseY,
-  opacity,
+  opacity = 1,
   walking,
   colour,
 }: {
   walls: WallSolid[];
   baseY: number;
-  opacity: number;
+  /** Below 1 only while the house is being ghosted for focus. */
+  opacity?: number;
   walking: boolean;
   colour: string;
 }) {
@@ -188,6 +183,7 @@ function ExteriorShell({
 
 function LevelModel({
   plan,
+  spec,
   level,
   opacity,
   furnished,
@@ -203,6 +199,8 @@ function LevelModel({
   onMeasurePoint,
 }: {
   plan: Plan;
+  /** What each room is made of, when anything has read or inferred it. */
+  spec: HouseSpec | null | undefined;
   level: number;
   opacity: number;
   furnished: boolean;
@@ -228,6 +226,17 @@ function LevelModel({
    */
   const dimmed = focusRoomId ? opacity * UNFOCUSED_OPACITY : opacity;
   const opacityFor = (roomId: string) => (roomId === focusRoomId ? opacity : dimmed);
+
+  /**
+   * Whether anything on this storey is see-through at all.
+   *
+   * `transparent` used to be set on every surface unconditionally, so the model
+   * could sit behind a photograph fading up over it. Nothing fades up over it
+   * now, and the flag is not free: a transparent material is sorted rather than
+   * depth-tested, writes no depth by default, and takes the whole house out of
+   * every depth-based effect. Solid unless something is actually being ghosted.
+   */
+  const ghosted = opacity < 0.999 || focusRoomId !== null;
 
   // Geometry is rebuilt only when the house comes apart or goes back together,
   // never as the slider moves - the movement itself is a transform, and
@@ -276,17 +285,37 @@ function LevelModel({
      */
     const surfaces = new Map<
       string,
-      { roomId: string; element: Element; colour: string; parts: THREE.BufferGeometry[] }
+      {
+        roomId: string;
+        element: Element;
+        colour: string;
+        staging: boolean;
+        parts: THREE.BufferGeometry[];
+      }
     >();
 
+    /**
+     * `staging` separates the building from the things standing in it.
+     *
+     * A bed and a sofa have no line item behind them, so they are filed under
+     * the room's floor - which is right for pricing and picking, and was
+     * quietly wrong for texturing: the floor finish is chosen by element, so a
+     * sofa in a bedroom came out surfaced in carpet, tinted to the sofa's own
+     * colour. Flat colour hid it. Once the finishes carried real relief it
+     * stopped being hideable, because the sofa acquired a carpet's pile.
+     *
+     * So the element still says where the cost goes, and this says whether the
+     * thing is architecture.
+     */
     const addSurface = (
       roomId: string,
       element: Element,
       colour: string,
       geometry: THREE.BufferGeometry,
+      staging = false,
     ) => {
-      const key = `${roomId}|${element}|${colour}`;
-      const entry = surfaces.get(key) ?? { roomId, element, colour, parts: [] };
+      const key = `${roomId}|${element}|${colour}|${staging ? "s" : "a"}`;
+      const entry = surfaces.get(key) ?? { roomId, element, colour, staging, parts: [] };
       entry.parts.push(geometry);
       surfaces.set(key, entry);
     };
@@ -296,38 +325,62 @@ function LevelModel({
       const w = b.x1 - b.x0;
       const d = b.y1 - b.y0;
 
-      // The floor, with the stairwell cut out of it where a staircase arrives.
-      // `subtractRects` returns the room untouched when there is no hole, so
-      // every other room in the house is byte-identical to before.
-      const roomRect = { x0: b.x0, y0: b.y0, x1: b.x1, y1: b.y1 };
-      const floorPieces = subtractRects(roomRect, floorHolesFor(plan, room));
+      // The floor, decomposed from the room's own outline and then cut where
+      // a staircase arrives.
+      //
+      // `decompose` turns a rectilinear polygon into maximal rectangles, so a
+      // plain rectangular room yields exactly one and comes out identical to
+      // before, while an L-shaped room yields two and stops spilling its floor
+      // across the notch. `subtractRects` then returns each piece untouched
+      // when there is no hole in it.
+      // What this room is made of, when anything has worked it out.
+      //
+      // The scheme stays underneath as the fallback, and that is deliberate
+      // rather than transitional: a scheme is a direction somebody chose for a
+      // house nobody has described, and it should still be there for one. The
+      // spec is finer-grained than a scheme by design, so it is consulted
+      // first and per field - a room whose floor was read but whose walls were
+      // not takes its floor from the photograph and its walls from the
+      // direction.
+      const roomSpec = spec?.rooms[room.id];
+      const floorTone = roomSpec?.floor?.colour ?? floorToneFor(room.label, scheme);
+      const wallTone = roomSpec?.walls?.colour ?? scheme.wall;
+      const ceilingTone = roomSpec?.ceiling?.colour ?? scheme.ceiling;
+      const trimTone = roomSpec?.trim?.colour ?? scheme.trim;
+
+      const holes = floorHolesFor(plan, room);
+      const floorPieces = decompose(room.polygon).flatMap((rect) =>
+        subtractRects(rect, holes),
+      );
       for (const piece of floorPieces) {
         const pw = piece.x1 - piece.x0;
         const pd = piece.y1 - piece.y0;
         addSurface(
           room.id,
           "floor",
-          floorToneFor(room.label, scheme),
+          floorTone,
           boxGeometry([piece.x0 + pw / 2, baseY - SLAB / 2, piece.y0 + pd / 2], [pw, SLAB, pd]),
         );
       }
 
-      // A ceiling, but only when someone is under it - and opened where the
-      // staircase leaves, or you climb the treads into the underside of it.
-      if (walking) {
-        for (const piece of subtractRects(roomRect, ceilingHolesFor(plan, room))) {
-          const pw = piece.x1 - piece.x0;
-          const pd = piece.y1 - piece.y0;
-          addSurface(
-            room.id,
-            "ceiling",
-            scheme.ceiling,
-            boxGeometry(
-              [piece.x0 + pw / 2, baseY + room.ceilingHeight + SLAB / 2, piece.y0 + pd / 2],
-              [pw, SLAB, pd],
-            ),
-          );
-        }
+      /**
+       * The ceiling, and whatever hangs from it.
+       *
+       * The surface itself is drawn only when somebody is under it - a
+       * dollhouse with lids on is a set of closed boxes. Beams are not: they
+       * are structure rather than surface, they are most of what makes a
+       * ceiling worth remarking on, and the dollhouse is where a house is
+       * judged. So the two are split, and beams are drawn either way.
+       */
+      const ceilingCuts = ceilingHolesFor(plan, room);
+      for (const part of ceilingParts(room, roomSpec?.ceiling, ceilingCuts, room.ceilingHeight)) {
+        if (part.kind !== "beam" && !walking) continue;
+        addSurface(
+          room.id,
+          "ceiling",
+          part.kind === "beam" ? roomSpec?.ceiling?.beams?.colour ?? scheme.trim : ceilingTone,
+          boxGeometry([part.center[0], baseY + part.center[1], part.center[2]], part.size),
+        );
       }
 
       // Pulled apart, a room carries its own four walls. Assembled it shares
@@ -338,7 +391,7 @@ function LevelModel({
           addSurface(
             room.id,
             "walls",
-            scheme.wall,
+            wallTone,
             boxGeometry(
               [box.center[0], baseY + box.center[1], box.center[2]],
               box.size,
@@ -355,32 +408,117 @@ function LevelModel({
             room.id,
             "floor",
             recolour(box.colour, scheme),
-            boxGeometry(
+            solid(
               [b.x0 + box.center[0], baseY + box.center[1], b.y0 + box.center[2]],
               box.size,
             ),
+            true,
           );
         }
       }
 
       // A baseboard around the room. Small, and it is most of what stops a
       // wall meeting a floor looking like two flat planes intersecting.
-      const h = BASEBOARD_HEIGHT;
-      const t = BASEBOARD_DEPTH;
-      const y = baseY + h / 2;
-      // Nothing to run skirting along when the floor is a stairwell.
-      const skirting = floorPieces.length === 0 ? [] : [
-        boxGeometry([b.x0 + w / 2, y, b.y0 + t / 2], [w, h, t]),
-        boxGeometry([b.x0 + w / 2, y, b.y1 - t / 2], [w, h, t]),
-        boxGeometry([b.x0 + t / 2, y, b.y0 + d / 2], [t, h, d]),
-        boxGeometry([b.x1 - t / 2, y, b.y0 + d / 2], [t, h, d]),
-      ];
-      for (const part of skirting) {
-        addSurface(room.id, "trim", scheme.trim, part);
+      //
+      // Run off `wallSegmentsForRoom`, which walks the real outline and takes
+      // the doorways out of it. The four bounding-box runs this replaces were
+      // wrong twice over: they cut straight across an L-shaped room's notch,
+      // and they carried on through every doorway - while `takeoff.baseboardLf`
+      // has always been door-subtracted, off this very function. The model and
+      // the price now measure the same skirting.
+      if (floorPieces.length > 0) {
+        const h = roomSpec?.trim?.baseboardM ?? BASEBOARD_HEIGHT;
+        const profile = roomSpec?.trim?.profile ?? "square";
+        const midX = (b.x0 + b.x1) / 2;
+        const midY = (b.y0 + b.y1) / 2;
+
+        for (const segment of wallSegmentsForRoom(room, plan.openings)) {
+          const [ax, ay] = segment.a;
+          const [bx, by] = segment.b;
+          const runX = Math.abs(bx - ax);
+          const runY = Math.abs(by - ay);
+          if (runX < 1e-4 && runY < 1e-4) continue;
+
+          // Which way is into the room, across this run. The segment lies on
+          // the boundary, so the answer is the perpendicular that points at the
+          // middle - and it has to be right, or the skirting is built inside
+          // the plaster where nobody will ever see it.
+          const alongX = runX >= runY;
+          const inward: [number, number] = alongX
+            ? [0, midY > (ay + by) / 2 ? 1 : -1]
+            : [midX > (ax + bx) / 2 ? 1 : -1, 0];
+
+          const run = runGeometry(profile, segment, {
+            height: h,
+            depth: BASEBOARD_DEPTH,
+            baseY,
+            inward,
+            // Closes the corner. A real skirting is mitred; at fifteen
+            // millimetres, running each length past its end by its own depth is
+            // indistinguishable and needs no mitre solver.
+            extend: BASEBOARD_DEPTH,
+          });
+          if (run) addSurface(room.id, "trim", trimTone, run);
+        }
+
+        /**
+         * Crown, where the room says it has any.
+         *
+         * The same run, upside down at the top of the wall. Turning the profile
+         * over is what makes one generator serve both: a crown moulding is a
+         * skirting that grew from the ceiling instead of the floor, and the
+         * only real difference is which way the shadow falls.
+         */
+        const crownM = roomSpec?.trim?.crown ? (roomSpec.trim.crownM ?? 0.1) : 0;
+        if (crownM > 0) {
+          for (const segment of wallSegmentsForRoom(room, plan.openings)) {
+            const [ax, ay] = segment.a;
+            const [bx, by] = segment.b;
+            const runX = Math.abs(bx - ax);
+            const runY = Math.abs(by - ay);
+            if (runX < 1e-4 && runY < 1e-4) continue;
+            const alongX = runX >= runY;
+            const inward: [number, number] = alongX
+              ? [0, midY > (ay + by) / 2 ? 1 : -1]
+              : [midX > (ax + bx) / 2 ? 1 : -1, 0];
+            const run = runGeometry(profile, segment, {
+              height: crownM,
+              depth: crownM * 0.8,
+              baseY: baseY + room.ceilingHeight - crownM,
+              inward,
+              extend: crownM * 0.8,
+            });
+            if (run) addSurface(room.id, "trim", trimTone, run);
+          }
+        }
       }
 
-      if (furnished) {
-        for (const piece of furnishRoom(plan, room)) {
+      /**
+       * Fitted joinery: cabinetry, islands, vanities, built-in wardrobes.
+       *
+       * Ungated by `furnished`, and that is the distinction the whole toggle
+       * rests on. A run of kitchen units is not staging - it is what is being
+       * bought, it is what the scope of work prices, and it is still there when
+       * the seller's furniture has gone. Turning furniture off should empty a
+       * house, not strip it.
+       */
+      for (const piece of joineryFor(room, roomSpec)) {
+        const element = elementForPiece(piece.kind);
+        for (const boxPart of piece.boxes) {
+          addSurface(
+            room.id,
+            element ?? "cabinets",
+            boxPart.colour,
+            solid(
+              [b.x0 + boxPart.center[0], baseY + boxPart.center[1], b.y0 + boxPart.center[2]],
+              boxPart.size,
+            ),
+          );
+        }
+      }
+
+      {
+        for (const piece of piecesFor(plan, room, furnished, roomSpec)) {
           // Staging - a bed, a sofa - has no line item behind it, so it picks
           // its room rather than inventing an element it does not represent.
           const element = elementForPiece(piece.kind);
@@ -389,10 +527,11 @@ function LevelModel({
               room.id,
               element ?? "floor",
               recolour(box.colour, scheme),
-              boxGeometry(
+              solid(
                 [b.x0 + box.center[0], baseY + box.center[1], b.y0 + box.center[2]],
                 box.size,
               ),
+              true,
             );
           }
         }
@@ -434,11 +573,19 @@ function LevelModel({
           return {
             ...entry,
             geometry,
-            texture: canTexture()
+            surface: canTexture() && !entry.staging
               ? entry.element === "floor"
-                ? floorTexture(floorFinish(room?.label ?? ""), entry.colour)
+                ? floorSurface(
+                    // The material the spec named, or the one a room of this
+                    // kind usually has. `floorFinish` reads the label, which is
+                    // the guess the house made before anyone looked at it.
+                    (spec?.rooms[entry.roomId]?.floor?.material as
+                      | ReturnType<typeof floorFinish>
+                      | undefined) ?? floorFinish(room?.label ?? ""),
+                    entry.colour,
+                  )
                 : entry.element === "walls" || entry.element === "ceiling"
-                  ? wallTexture(entry.colour)
+                  ? wallSurface(entry.colour)
                   : null
               : null,
           };
@@ -447,13 +594,14 @@ function LevelModel({
           roomId: string;
           element: Element;
           colour: string;
+          staging: boolean;
           geometry: THREE.BufferGeometry;
-          texture: THREE.Texture | null;
+          surface: Surface | null;
         }>,
       frames: merged(frameParts),
       glass: merged(glassParts),
     };
-  }, [plan, level, baseY, furnished, walking, scheme, exploded]);
+  }, [plan, spec, level, baseY, furnished, walking, scheme, exploded]);
 
   // Every surface of one room moves together, so a room comes apart from the
   // house as one part rather than as a floor and some furniture that happen to
@@ -469,13 +617,42 @@ function LevelModel({
   return (
     <group>
       {built.surfaces.map((surface) => {
-        const selected =
-          pick?.roomId === surface.roomId &&
-          (pick.element === null || pick.element === surface.element);
+        /**
+         * A picked *fitting* glows. A picked room does not.
+         *
+         * `pick` carries two quite different things. Clicking a worktop picks
+         * that worktop, and lifting it is exactly right - it is how you see
+         * which of a dozen surfaces the scope rail is now talking about.
+         * Walking into a room also sets a pick, of the whole room with no
+         * element, so the rail can follow you: and that used to light every
+         * surface in the room you were standing in.
+         *
+         * The effect was subtle on a wall and glaring on a ceiling. A ceiling
+         * is the dimmest surface in any room - nothing shines up at it - so an
+         * added constant is most of what you see there, and every interior came
+         * out with a distinctly blue ceiling. It survived turning off the
+         * environment, every light in the scene, the tone mapping and the
+         * normal map, because it was never lighting at all; it was `emissive`,
+         * which is added after all of them.
+         *
+         * There is nothing to distinguish anyway. Being in a room is not a
+         * selection, and the focus ghosting already says which room is being
+         * looked at far more clearly than a tint could.
+         */
+        const selected = pick?.roomId === surface.roomId && pick.element === surface.element;
 
         return (
           <mesh
-            key={`${surface.roomId}-${surface.element}-${surface.colour}`}
+            userData={{ element: surface.element }}
+            // Must carry `staging`, because the merge key does.
+            //
+            // Two entries differing only in whether they are architecture or
+            // staging are separate meshes with separate materials, and without
+            // it they collide as React children. It is not hypothetical: in
+            // "Warm minimal" `floors.carpet` and `furniture.soft` are both
+            // #c3b6a3, and a bed's pillow is filed under its room's floor - so
+            // a carpeted bedroom produced two children with the same key.
+            key={`${surface.roomId}-${surface.element}-${surface.colour}-${surface.staging ? "s" : "a"}`}
             position={offsetFor(surface.roomId)}
             geometry={surface.geometry}
             castShadow
@@ -525,11 +702,48 @@ function LevelModel({
             <meshStandardMaterial
               // The texture already carries the colour, so tinting it again
               // would darken every surface by its own shade.
-              color={surface.texture ? "#ffffff" : surface.colour}
-              map={surface.texture ?? undefined}
-              roughness={surface.element === "floor" ? 0.78 : 0.9}
-              metalness={0}
-              transparent
+              color={surface.surface ? "#ffffff" : surface.colour}
+              map={surface.surface?.map}
+              normalMap={surface.surface?.normalMap}
+              // One texture, three channels, three maps. three.js reads red for
+              // occlusion, green for roughness and blue for metalness, so the
+              // same image serves all three and only uploads once.
+              aoMap={surface.surface?.ormMap}
+              roughnessMap={surface.surface?.ormMap}
+              metalnessMap={surface.surface?.ormMap}
+              aoMapIntensity={0.9}
+              // The map supplies the variation; these are the ceiling it varies
+              // under. Without a map they are the whole answer, which is the
+              // server-rendered and no-canvas case.
+              roughness={
+                surface.surface
+                  ? 1
+                  : surface.staging
+                    // Upholstery and painted timber, which is most of what is
+                    // standing in a room: soft, and nearly matte.
+                    ? 0.72
+                    : surface.element === "floor"
+                      ? 0.78
+                      : 0.9
+              }
+              metalness={surface.surface ? 1 : 0}
+              // A painted wall is not a mirror. Left at 1 the environment
+              // washes every pale surface out to white.
+              envMapIntensity={
+                surface.staging
+                  ? 0.45
+                  : surface.element === "floor"
+                    ? 0.6
+                    : // A ceiling is the one surface no light source reaches.
+                      // The sun is above it, the lamps hang below it, and a
+                      // window throws light at the floor. Everything it is lit
+                      // by is bounce, so the environment is not a subtlety
+                      // there - it is nearly the whole answer.
+                      surface.element === "ceiling"
+                      ? 0.85
+                      : 0.35
+              }
+              transparent={ghosted}
               opacity={opacityFor(surface.roomId)}
               // Lifting what is selected rather than tinting it: a colour shift
               // would fight the palette, and on a pale model a slight glow reads
@@ -549,7 +763,8 @@ function LevelModel({
             color={scheme.wall}
             roughness={0.95}
             metalness={0}
-            transparent
+            envMapIntensity={0.35}
+            transparent={ghosted}
             opacity={dimmed}
           />
         </mesh>
@@ -570,7 +785,14 @@ function LevelModel({
 
       {!exploded && built.frames && (
         <mesh geometry={built.frames}>
-          <meshStandardMaterial color={PALETTE.frame} roughness={0.6} transparent opacity={dimmed} />
+          <meshStandardMaterial
+            color={PALETTE.frame}
+            roughness={0.45}
+            metalness={0}
+            envMapIntensity={0.7}
+            transparent={ghosted}
+            opacity={dimmed}
+          />
         </mesh>
       )}
       {!exploded && built.glass && (
@@ -584,8 +806,12 @@ function LevelModel({
           */}
           <meshStandardMaterial
             color={PALETTE.glass}
-            roughness={0.08}
-            metalness={0.15}
+            roughness={0.04}
+            metalness={0}
+            // Glass is the one surface that should take the environment whole:
+            // what makes a pane read as glass rather than as a pale panel is
+            // that it reflects the sky, and now there is a sky to reflect.
+            envMapIntensity={1.6}
             transparent
             opacity={dimmed * 0.92}
           />
@@ -597,11 +823,12 @@ function LevelModel({
 
 export function Model({
   plan,
-  opacity,
+  spec,
+  opacity = 1,
   showLabels,
   displayUnits,
   onlyLevel,
-  furnished = true,
+  furnished = false,
   pick = null,
   onPick,
   onFocusRoom,
@@ -614,7 +841,16 @@ export function Model({
   focusRoomId = null,
 }: {
   plan: Plan;
-  opacity: number;
+  /** What each room is made of. Absent means fall back to the scheme. */
+  spec?: HouseSpec | null;
+  /**
+   * Below 1 only while the house is being ghosted for focus.
+   *
+   * It used to be driven from outside as well, to sit the model back behind a
+   * photograph fading up over it. Nothing fades up over it any more, so the
+   * default is solid and the ghosting is the only caller left.
+   */
+  opacity?: number;
   showLabels: boolean;
   displayUnits: "ft" | "m";
   onlyLevel?: number | null;
@@ -686,6 +922,7 @@ export function Model({
         <LevelModel
           key={level}
           plan={plan}
+          spec={spec}
           level={level}
           opacity={opacity}
           furnished={furnished}
@@ -719,6 +956,15 @@ export function Model({
               center
               distanceFactor={9}
               zIndexRange={[10, 0]}
+              // On the wrapper, not just on the content.
+              //
+              // A label is a caption, never a target - but `Html` positions its
+              // own div over the canvas, and that div takes pointer events even
+              // when everything inside it is `pointer-events-none`. Since the
+              // label sits at the room's centroid, it covered exactly the spot
+              // where the room's own floor marker is drawn: the marker rendered,
+              // reported itself hittable, and silently never received a click.
+              style={{ pointerEvents: "none" }}
             >
               <div
                 className="pointer-events-none select-none text-center transition-opacity"

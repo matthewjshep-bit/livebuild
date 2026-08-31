@@ -8,9 +8,9 @@ import { parseProperty } from "@/lib/schema";
 /**
  * A published tour: the shareable half of the product.
  *
- * No account, no local storage, no model download - the depth maps were
- * computed once by whoever built it and uploaded alongside the photos. A buyer
- * opens a link and walks the house.
+ * No account, no local storage, no model download - the house is rebuilt from
+ * its own document in the browser that opened the link. A buyer opens a link
+ * and walks the house.
  *
  * Rendered on the server so the link previews properly when it is pasted into
  * a message, which is how these actually get shared.

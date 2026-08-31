@@ -7,12 +7,11 @@ import { useEffect, useRef } from "react";
 import * as THREE from "three";
 
 import { frameRoom } from "@/lib/model/focus";
-import { levelsOf, nodeBaseY, planBounds, planToWorld } from "@/lib/plan/geometry";
-import type { Plan, TourNode } from "@/lib/schema";
+import { levelsOf, planBounds } from "@/lib/plan/geometry";
+import type { Plan } from "@/lib/schema";
 
 export type ViewState =
   | { mode: "dollhouse" }
-  | { mode: "node"; nodeId: string }
   /** First person, on foot. The walker owns the camera in this mode. */
   | { mode: "walk" }
   /** The architectural plan, which is a drawing rather than a camera. */
@@ -23,23 +22,6 @@ const TRANSITION_MS = 850;
 const UP = new THREE.Vector3(0, 1, 0);
 
 const DOLLHOUSE_FOV = 55;
-
-/**
- * Vertical FOV at which the photo covers the viewport rather than fitting
- * inside it.
- *
- * A shell only holds colour across the angle the lens actually captured, so if
- * the camera is any wider you see past its edge to the empty scene behind. The
- * fix is to crop instead: match whichever axis is binding and let the other
- * overflow, exactly like CSS `object-fit: cover`.
- */
-function coveringFovDeg(photoHFovDeg: number, photoAspect: number, viewAspect: number): number {
-  const tanHalfH = Math.tan((photoHFovDeg * Math.PI) / 180 / 2);
-  const limiting = viewAspect >= photoAspect ? viewAspect : photoAspect;
-  // The 0.985 keeps the very edge of the shell just off-screen, where its
-  // ragged boundary would otherwise be visible against the background.
-  return (2 * Math.atan((tanHalfH / limiting) * 0.985) * 180) / Math.PI;
-}
 
 function easeInOutCubic(t: number): number {
   return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
@@ -76,74 +58,42 @@ function orbitPosition(center: THREE.Vector3, orbit: Orbit): THREE.Vector3 {
   );
 }
 
-function nodeQuaternion(node: TourNode, yaw: number, pitch: number): THREE.Quaternion {
-  const euler = new THREE.Euler(
-    pitch,
-    // The camera looks down -Z while headings are measured off +Z, so the
-    // node's bearing needs half a turn added to become a camera rotation.
-    (node.heading * Math.PI) / 180 + Math.PI + yaw,
-    0,
-    "YXZ",
-  );
-  return new THREE.Quaternion().setFromEuler(euler);
-}
-
 /**
- * Drives the camera for both modes and the animation between them.
+ * Drives the orbiting camera, and the eased flight between the things it frames.
  *
- * Two things make this read as movement through a building rather than a
- * slideshow. First, a move between nodes translates the camera the real metric
- * distance between them, so the shells parallax past each other exactly as the
- * geometry says they should. Second, look direction is preserved across a move:
- * you keep facing the way you were facing, which is what makes stepping forward
- * feel like walking rather than cutting to another shot.
+ * There used to be a second mode here, which set the camera down at a
+ * photograph's own viewpoint and matched its field of view so the picture
+ * covered the screen. Nothing stands at a photograph any more - the house is
+ * built, and you walk through the building rather than between the pictures of
+ * it - so what is left is the dollhouse and the flight between rooms.
  */
-export type TransitionState = {
-  fromNodeId: string | null;
-  toNodeId: string | null;
-  /** 0 at the start of a move, 1 once settled. */
-  t: number;
-};
-
 export function CameraRig({
   plan,
-  nodes,
   view,
-  transition,
-  aspects,
   paused = false,
   explode = 0,
   focusRoomId = null,
 }: {
   plan: Plan;
-  nodes: TourNode[];
   view: ViewState;
   /**
    * One room being looked at on its own, or null for the whole house.
    *
    * Deliberately not part of `ViewState`. Focus is orthogonal to which mode you
-   * are in - you can be focused on a room and then step into a photograph in it
-   * - and folding it into the union would mean revisiting every `mode ===` test
-   * in this file and the viewer above it.
+   * are in - you can be focused on a room and then walk into it - and folding it
+   * into the union would mean revisiting every `mode ===` test in this file and
+   * the viewer above it.
    */
   focusRoomId?: string | null;
   /** True while something else is driving the camera. */
   paused?: boolean;
   /** How far the house is pulled apart, so the camera can keep it in frame. */
   explode?: number;
-  /** Written every frame. A ref, not state, so a move costs no re-renders. */
-  transition: React.MutableRefObject<TransitionState>;
-  /** Node id to true photo aspect, filled in as textures decode. */
-  aspects: React.MutableRefObject<Map<string, number>>;
 }) {
   const camera = useThree((s) => s.camera);
   const gl = useThree((s) => s.gl);
-  const size = useThree((s) => s.size);
 
-  const yaw = useRef(0);
-  const pitch = useRef(0);
   const orbit = useRef<Orbit>(defaultOrbit(plan));
-  const parallax = useRef(new THREE.Vector2());
   const dragging = useRef(false);
   const lastPointer = useRef({ x: 0, y: 0 });
 
@@ -151,14 +101,10 @@ export function CameraRig({
   const from = useRef({
     position: new THREE.Vector3(),
     quaternion: new THREE.Quaternion(),
-    nodeId: null as string | null,
   });
   const startedAt = useRef(0);
   const previousView = useRef<ViewState | null>(null);
   const previousFocus = useRef<string | null | undefined>(undefined);
-
-  const byId = useRef(new Map<string, TourNode>());
-  byId.current = new Map(nodes.map((n) => [n.id, n]));
 
   useEffect(() => {
     const previous = previousView.current;
@@ -169,11 +115,7 @@ export function CameraRig({
     // it, and slerping there would put lag into every orbit drag.
     const focusChanged =
       previousFocus.current !== undefined && previousFocus.current !== focusRoomId;
-    const changed =
-      !previous ||
-      previous.mode !== view.mode ||
-      (previous.mode === "node" && view.mode === "node" && previous.nodeId !== view.nodeId) ||
-      focusChanged;
+    const changed = !previous || previous.mode !== view.mode || focusChanged;
 
     if (focusChanged) {
       // Distance and height come from the room; which side you are standing on
@@ -189,15 +131,7 @@ export function CameraRig({
     if (changed) {
       from.current.position.copy(camera.position);
       from.current.quaternion.copy(camera.quaternion);
-      from.current.nodeId = previous?.mode === "node" ? previous.nodeId : null;
       startedAt.current = performance.now();
-
-      // Entering a node from the dollhouse starts you square with the photo;
-      // moving between nodes keeps whatever direction you were already facing.
-      if (view.mode === "node" && previous?.mode !== "node") {
-        yaw.current = 0;
-        pitch.current = 0;
-      }
     }
     previousView.current = view;
   }, [view, camera, focusRoomId, plan]);
@@ -207,49 +141,22 @@ export function CameraRig({
 
     const onPointerDown = (e: PointerEvent) => {
       // Orbit and pointer-lock look would both be steering at once otherwise.
-      if (view.mode === "walk") return;
+      if (view.mode !== "dollhouse") return;
       dragging.current = true;
       lastPointer.current = { x: e.clientX, y: e.clientY };
       element.setPointerCapture(e.pointerId);
     };
 
     const onPointerMove = (e: PointerEvent) => {
-      if (view.mode === "walk") return;
-      const rect = element.getBoundingClientRect();
-
-      if (view.mode === "dollhouse") {
-        if (!dragging.current) return;
-        const dx = e.clientX - lastPointer.current.x;
-        const dy = e.clientY - lastPointer.current.y;
-        lastPointer.current = { x: e.clientX, y: e.clientY };
-        orbit.current.azimuth -= dx * 0.006;
-        orbit.current.elevation = THREE.MathUtils.clamp(
-          orbit.current.elevation + dy * 0.005,
-          0.12,
-          1.45,
-        );
-        return;
-      }
-
-      if (dragging.current) {
-        const dx = e.clientX - lastPointer.current.x;
-        const dy = e.clientY - lastPointer.current.y;
-        lastPointer.current = { x: e.clientX, y: e.clientY };
-        yaw.current -= dx * 0.0032;
-        pitch.current = THREE.MathUtils.clamp(
-          pitch.current - dy * 0.0032,
-          -Math.PI / 2.4,
-          Math.PI / 2.4,
-        );
-        return;
-      }
-
-      // Not dragging: a gentle lean toward the pointer. This is where the 2.5D
-      // shell earns its keep - without any camera translation the photo would
-      // be indistinguishable from a flat panorama.
-      parallax.current.set(
-        ((e.clientX - rect.left) / rect.width - 0.5) * 2,
-        ((e.clientY - rect.top) / rect.height - 0.5) * 2,
+      if (view.mode !== "dollhouse" || !dragging.current) return;
+      const dx = e.clientX - lastPointer.current.x;
+      const dy = e.clientY - lastPointer.current.y;
+      lastPointer.current = { x: e.clientX, y: e.clientY };
+      orbit.current.azimuth -= dx * 0.006;
+      orbit.current.elevation = THREE.MathUtils.clamp(
+        orbit.current.elevation + dy * 0.005,
+        0.12,
+        1.45,
       );
     };
 
@@ -285,8 +192,6 @@ export function CameraRig({
   const scratch = useRef({
     position: new THREE.Vector3(),
     quaternion: new THREE.Quaternion(),
-    right: new THREE.Vector3(),
-    up: new THREE.Vector3(),
     lookAt: new THREE.Matrix4(),
   }).current;
 
@@ -309,78 +214,40 @@ export function CameraRig({
     // Walking hands the camera to WalkControls entirely, and a scripted tour
     // takes it the same way. Two things writing camera.position on the same
     // frame is a fight the user sees as jitter.
-    if (view.mode === "walk" || view.mode === "plan" || paused) return;
+    if (view.mode !== "dollhouse" || paused) return;
 
     const elapsed = performance.now() - startedAt.current;
-    const raw = reducedMotion
-      ? 1
-      : THREE.MathUtils.clamp(elapsed / TRANSITION_MS, 0, 1);
+    const raw = reducedMotion ? 1 : THREE.MathUtils.clamp(elapsed / TRANSITION_MS, 0, 1);
     const t = easeInOutCubic(raw);
 
-    if (view.mode === "dollhouse") {
-      const room = focusRoomId ? plan.rooms.find((r) => r.id === focusRoomId) : null;
-      const center = room
-        ? new THREE.Vector3(...frameRoom(plan, room).center)
-        : planCenter(plan);
-      // Pulling the house apart makes it bigger, so the camera has to give
-      // ground or the pieces simply leave the frame - which is what happened
-      // the first time, and looks like the rooms have been deleted.
-      const framed = {
-        ...orbit.current,
-        distance: orbit.current.distance * (1 + explode * 1.1),
-      };
-      scratch.position.copy(orbitPosition(center, framed));
-      scratch.lookAt.lookAt(scratch.position, center, UP);
-      scratch.quaternion.setFromRotationMatrix(scratch.lookAt);
-      applyFov(DOLLHOUSE_FOV);
-      transition.current = { fromNodeId: from.current.nodeId, toNodeId: null, t: raw };
+    const room = focusRoomId ? plan.rooms.find((r) => r.id === focusRoomId) : null;
+    const center = room ? new THREE.Vector3(...frameRoom(plan, room).center) : planCenter(plan);
+    // Pulling the house apart makes it bigger, so the camera has to give
+    // ground or the pieces simply leave the frame - which is what happened
+    // the first time, and looks like the rooms have been deleted.
+    const framed = {
+      ...orbit.current,
+      distance: orbit.current.distance * (1 + explode * 1.1),
+    };
+    scratch.position.copy(orbitPosition(center, framed));
+    scratch.lookAt.lookAt(scratch.position, center, UP);
+    scratch.quaternion.setFromRotationMatrix(scratch.lookAt);
+    applyFov(DOLLHOUSE_FOV);
 
-      // A readout for the browser suite, alongside WalkControls' `__walk` and
-      // the shell driver's `__shell`. Where the camera ended up cannot be seen
-      // from outside the canvas, and a screenshot cannot tell "flew to the
-      // kitchen" from "happened to be pointing that way".
-      (window as unknown as { __camera?: unknown }).__camera = {
-        focusRoomId: focusRoomId ?? null,
-        position: [camera.position.x, camera.position.y, camera.position.z],
-        target: [center.x, center.y, center.z],
-      };
-    } else {
-      const node = byId.current.get(view.nodeId);
-      if (!node) return;
-
-      applyFov(
-        coveringFovDeg(
-          node.fovDeg,
-          aspects.current.get(node.id) ?? 1.5,
-          size.width / Math.max(size.height, 1),
-        ),
-      );
-
-      const [x, y, z] = planToWorld(node.position, nodeBaseY(plan, node) + node.eyeHeight);
-      scratch.position.set(x, y, z);
-      scratch.quaternion.copy(nodeQuaternion(node, yaw.current, pitch.current));
-
-      // Lean, applied in the camera's own frame and clamped to the budget the
-      // depth pass derived for this photo. Exceeding it is what makes a shell
-      // visibly tear, so the limit is data, not taste.
-      const budget = node.parallaxBudget;
-      if (budget > 0 && raw >= 1) {
-        scratch.right.set(1, 0, 0).applyQuaternion(scratch.quaternion);
-        scratch.up.set(0, 1, 0).applyQuaternion(scratch.quaternion);
-        scratch.position
-          .addScaledVector(scratch.right, parallax.current.x * budget)
-          .addScaledVector(scratch.up, -parallax.current.y * budget * 0.6);
-      }
-
-      transition.current = { fromNodeId: from.current.nodeId, toNodeId: view.nodeId, t: raw };
-    }
+    // A readout for the browser suite, alongside WalkControls' `__walk`. Where
+    // the camera ended up cannot be seen from outside the canvas, and a
+    // screenshot cannot tell "flew to the kitchen" from "happened to be
+    // pointing that way".
+    (window as unknown as { __camera?: unknown }).__camera = {
+      focusRoomId: focusRoomId ?? null,
+      position: [camera.position.x, camera.position.y, camera.position.z],
+      target: [center.x, center.y, center.z],
+    };
 
     if (raw < 1) {
       camera.position.lerpVectors(from.current.position, scratch.position, t);
       camera.quaternion.slerpQuaternions(from.current.quaternion, scratch.quaternion, t);
     } else {
-      // Easing the lean rather than snapping keeps the pointer from feeling
-      // like it is dragging the whole room around.
       camera.position.lerp(scratch.position, 0.18);
       camera.quaternion.copy(scratch.quaternion);
     }

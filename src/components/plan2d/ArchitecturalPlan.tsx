@@ -4,7 +4,8 @@ import { useMemo, useRef, useState } from "react";
 
 import { usePlanView } from "@/components/editor/usePlanView";
 import type { Pick } from "@/lib/bom/pickable";
-import { furnishRoom } from "@/lib/model/furniture";
+import { piecesFor } from "@/lib/model/staging";
+import type { HouseSpec } from "@/lib/spec/schema";
 import { runsAtLevel, stairSymbol } from "@/lib/model/stairs";
 import { wallsForLevel } from "@/lib/model/walls";
 import { windowsForLevel } from "@/lib/model/windows";
@@ -61,6 +62,8 @@ export function ArchitecturalPlan({
   displayUnits,
   pick,
   onPick,
+  furnished = false,
+  spec = null,
 }: {
   plan: Plan;
   site: Site | null | undefined;
@@ -70,6 +73,10 @@ export function ArchitecturalPlan({
   displayUnits: "ft" | "m";
   pick: Pick | null;
   onPick?: (pick: Pick) => void;
+  /** Staging. Off leaves the fixtures - a plan with no WC is not a plan. */
+  furnished?: boolean;
+  /** So the drawing suppresses the same duplicates the model does. */
+  spec?: HouseSpec | null;
 }) {
   const { svgRef, view, toPlan, zoomAt, panBy, fit } = usePlanView(plan);
   const dragging = useRef(false);
@@ -213,7 +220,7 @@ export function ArchitecturalPlan({
         {/* Furniture in outline, so it reads as an arrangement not an object. */}
         {rooms.map((room) => {
           const b = boundsOf(room.polygon);
-          return furnishRoom(plan, room).flatMap((piece, pi) =>
+          return piecesFor(plan, room, furnished, spec?.rooms[room.id]).flatMap((piece, pi) =>
             piece.boxes.map((box, bi) => (
               <rect
                 key={`f${room.id}-${pi}-${bi}`}

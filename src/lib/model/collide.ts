@@ -1,5 +1,5 @@
 import { boundsOf } from "@/lib/plan/autolayout";
-import { levelBase } from "@/lib/plan/geometry";
+import { levelBase, pointInPolygon } from "@/lib/plan/geometry";
 import { roomKind } from "@/lib/plan/room-kind";
 import type { Plan, Vec2 } from "@/lib/schema";
 import { heightAt, levelForHeight, runsAtLevel } from "@/lib/model/stairs";
@@ -83,11 +83,13 @@ export function moveWithSliding(
 
 /** The room containing a point on a storey, if any. */
 export function roomAt(plan: Plan, level: number, x: number, y: number) {
-  return plan.rooms.find((room) => {
-    if (room.level !== level) return false;
-    const b = boundsOf(room.polygon);
-    return x >= b.x0 && x <= b.x1 && y >= b.y0 && y <= b.y1;
-  });
+  // Point-in-polygon rather than a bounds test. On a rectangle the two agree
+  // exactly; on an L-shaped room the bounds test says you are in the room while
+  // you are standing in its neighbour's half of the notch, which is the sort of
+  // wrong that shows up as the scope rail naming the room next door.
+  return plan.rooms.find(
+    (room) => room.level === level && pointInPolygon([x, y], room.polygon),
+  );
 }
 
 /**

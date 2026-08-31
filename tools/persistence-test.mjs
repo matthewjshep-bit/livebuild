@@ -62,9 +62,15 @@ const restored = await page.evaluate(() => ({
   gated: /You have a tour in progress/.test(document.body.innerText),
 }));
 
-// --- B: leave while depth is still running ---
+// --- B: leave the moment the tour is on screen ---
+//
+// This used to leave while the depth pass was still running, and check that
+// the tour offered to finish it. There is no depth pass any more - photographs
+// are read to build the house rather than rendered inside it - so what is left
+// to prove is the part that always mattered: the house is on disk by the time
+// the review screen appears, and opening it fresh finds a whole tour with its
+// photographs still attached.
 const arrived = await build(page);
-// Depth continues on the review screen; leaving now strands it.
 await page.waitForTimeout(2000);
 
 const saved = await savedProperty(page);
@@ -75,12 +81,19 @@ const rescue = await page.evaluate(() => {
   const index = JSON.parse(localStorage.getItem("mattermatt:index") ?? "[]");
   const doc = JSON.parse(localStorage.getItem("mattermatt:property:" + index.pop()) ?? "null");
   return {
-    offersToFinish: /still flat|Adding 3D depth/.test(document.body.innerText),
-    nodes: doc?.nodes.length ?? 0,
-    withDepth: doc?.nodes.filter((n) => n.depth).length ?? 0,
+    rooms: doc?.plan.rooms.length ?? 0,
+    photos: doc?.nodes.length ?? 0,
+    // Every photograph has to still point at a room that exists. A re-layout
+    // mints new room ids, and an orphaned photograph is invisible rather than
+    // broken - so it is the loss this check is here to catch.
+    orphaned:
+      doc?.nodes.filter(
+        (n) => !doc.plan.rooms.some((r) => r.id === n.roomId),
+      ).length ?? 0,
+    rendered: Boolean(document.querySelector("canvas")),
   };
 });
-await page.screenshot({ path: "shots/61-finish-offer.png" });
+await page.screenshot({ path: "shots/61-reopened.png" });
 
 const draftKept =
   onHomePage && restored.thumbnails > 0 && restored.canBuild && !restored.gated;
@@ -92,14 +105,10 @@ console.log(
       A_restored: restored,
       B_rescue: rescue,
       errors: errors.slice(0, 3),
-      // Depth finishing on its own is not a failure - there is simply nothing
-      // to rescue. The claim is only that *unfinished* work is offered a way on.
       verdict:
-        draftKept && arrived && (rescue.offersToFinish || rescue.withDepth === rescue.nodes)
-          ? rescue.offersToFinish
-            ? "PERSISTENCE OK - an unfinished tour is already saved and listed; an interrupted one offers to finish"
-            : `PERSISTENCE OK - an unfinished tour is already saved and listed; depth had already completed (${rescue.withDepth}/${rescue.nodes})`
-          : `FAILED - draftKept=${!!draftKept} arrived=${arrived} offers=${rescue.offersToFinish} depth=${rescue.withDepth}/${rescue.nodes}`,
+        draftKept && arrived && rescue.rooms > 0 && rescue.rendered && rescue.orphaned === 0
+          ? `PERSISTENCE OK - an unfinished tour is saved and listed; reopened cold it rebuilt ${rescue.rooms} rooms with ${rescue.photos} photos attached`
+          : `FAILED - draftKept=${!!draftKept} arrived=${arrived} rooms=${rescue.rooms} rendered=${rescue.rendered} orphaned=${rescue.orphaned}`,
     },
     null,
     2,
@@ -107,4 +116,6 @@ console.log(
 );
 
 await browser.close();
-process.exit(draftKept && arrived && (rescue.offersToFinish || rescue.withDepth === rescue.nodes) ? 0 : 1);
+process.exit(
+  draftKept && arrived && rescue.rooms > 0 && rescue.rendered && rescue.orphaned === 0 ? 0 : 1,
+);

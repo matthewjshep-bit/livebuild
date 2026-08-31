@@ -2,9 +2,9 @@
 
 import { Canvas, useFrame, useThree } from "@react-three/fiber";
 import * as THREE from "three";
-import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import { CameraRig, type TransitionState, type ViewState } from "@/components/tour/CameraRig";
+import { CameraRig, type ViewState } from "@/components/tour/CameraRig";
 import { Lighting } from "@/components/tour/Lighting";
 import { Measure, type MeasurePoints } from "@/components/tour/Measure";
 import { ScriptedTour, recordCanvas, supportedFormat } from "@/components/tour/ScriptedTour";
@@ -22,147 +22,129 @@ import { roomAt } from "@/lib/model/collide";
 import { ArchitecturalPlan } from "@/components/plan2d/ArchitecturalPlan";
 import { ScopeRail } from "@/components/bom/ScopeRail";
 import { Model } from "@/components/tour/Model";
+import { applySpec } from "@/lib/spec/apply";
+import { inferHouse } from "@/lib/spec/infer";
+import { HouseSpec } from "@/lib/spec/schema";
+import { Post } from "@/components/tour/Post";
+import { MAX_DPR, QUALITY_LABEL, type Quality, detectQuality } from "@/lib/render/quality";
 import { buildBom } from "@/lib/bom/build";
 import type { Element, Grade } from "@/lib/bom/condition";
 import type { Pick } from "@/lib/bom/pickable";
 import { loadProperty, saveProperty } from "@/lib/property-store";
-import { NodeMarkers } from "@/components/tour/NodeMarkers";
-import { FinishProcessing } from "@/components/tour/FinishProcessing";
+import { RoomMarkers } from "@/components/tour/RoomMarkers";
 import { Minimap } from "@/components/tour/Minimap";
 import { PublishPanel } from "@/components/tour/PublishPanel";
-import { FlatShell, PhotoShell } from "@/components/tour/PhotoShell";
+import { Evidence } from "@/components/tour/Evidence";
+import { RoomSpecPanel } from "@/components/tour/RoomSpecPanel";
 import { walkStartFor } from "@/lib/model/focus";
-import { levelName, levelsOf, nodeBaseY } from "@/lib/plan/geometry";
-import {
-  SHELL_MOUNT_M,
-  TOUR_REACH_M,
-  WALK_REACH_M,
-  shellProximity,
-} from "@/lib/render/proximity";
-import { hydrateMedia } from "@/lib/property-store";
-import type { Plan, Property, TourNode } from "@/lib/schema";
+import { levelName, levelsOf } from "@/lib/plan/geometry";
+import type { Plan, Property } from "@/lib/schema";
 
 /**
- * How opaque a shell should be for a given transition.
+ * What is actually on screen, for the browser suite.
  *
- * The outgoing shell holds until the camera is well into the move and only then
- * gives way. Cross-fading from the very first frame would dissolve the two
- * photos into each other and read as a slide transition; holding, then handing
- * over late, reads as having walked somewhere.
+ * The scene is built entirely on the client, so nothing outside the canvas can
+ * see it - which is why `window.__walk` and `window.__camera` already exist.
+ * This one exists for a specific promise: no photograph is ever drawn in the
+ * model. That is the whole direction of the project and it is exactly the kind
+ * of thing that comes back by accident, so it is asserted mechanically rather
+ * than by looking at a screenshot.
+ *
+ * `photoTextures` counts materials carrying a texture whose image came from a
+ * blob or an http URL - a photograph. The procedural canvas textures are
+ * generated in-page and have no `src`, so they do not count.
  */
-function shellOpacity(nodeId: string, { fromNodeId, toNodeId, t }: TransitionState): number {
-  if (toNodeId === null) return 0; // dollhouse: photos are out of the way
-  if (nodeId === toNodeId) return t < 0.35 ? 0 : (t - 0.35) / 0.65;
-  if (nodeId === fromNodeId) return t < 0.35 ? 1 : Math.max(0, 1 - (t - 0.35) / 0.5);
-  return 0;
-}
-
-/**
- * Inside a room the dollhouse stays almost solid, acting as the backdrop behind
- * the shell's holes.
- *
- * Those holes are real occlusions - the sofa hid that floor from the lens and
- * nothing was ever recorded there. Showing the extruded room through them reads
- * as "something is behind that", which is true. Showing black reads as a bug.
- */
-const BACKDROP_OPACITY = 0.9;
-
-function dollhouseOpacity({ toNodeId, t }: TransitionState): number {
-  const inside = toNodeId !== null;
-  const target = inside ? BACKDROP_OPACITY : 1;
-  const other = inside ? 1 : BACKDROP_OPACITY;
-  return other + (target - other) * t;
-}
-
-/**
- * Which photograph the camera is close enough to be shown, and how strongly.
- *
- * One at a time, and the nearest. The shell material writes depth, so two
- * half-faded shells overlapping would z-fight rather than blend - and standing
- * between two viewpoints ought to resolve to the one you are actually nearer,
- * not to a double exposure.
- *
- * Two callers, one rule. On foot it hunts for whatever viewpoint you have
- * wandered near; on a scripted tour the beat has already named one and the only
- * question is how far the camera still has to fly. Both then fade by distance,
- * which is what makes a photograph bloom in as the tour arrives instead of
- * cutting.
- *
- * The live value goes into a ref the shell reads per frame, and only the
- * quantised one reaches React - the same trick `DollhouseOpacityDriver` uses,
- * for the same reason: this runs at 60Hz and must not cost a render.
- */
-function NearbyShellDriver({
-  plan,
-  nodes,
-  levelOf,
-  walkState,
-  mode,
-  tourNodeId,
-  opacity,
-  onNodeChange,
-  onOpacityChange,
-}: {
-  plan: Property["plan"];
-  nodes: TourNode[];
-  levelOf: Map<string, number>;
-  walkState: React.MutableRefObject<WalkState>;
-  mode: "walk" | "tour" | "off";
-  tourNodeId: string | null;
-  opacity: React.MutableRefObject<number>;
-  onNodeChange: (nodeId: string | null) => void;
-  onOpacityChange: (value: number) => void;
-}) {
+function SceneReadout({ mode, furnished }: { mode: ViewState["mode"]; furnished: boolean }) {
+  const scene = useThree((s) => s.scene);
+  const gl = useThree((s) => s.gl);
   const camera = useThree((s) => s.camera);
-  const lastNode = useRef<string | null>(null);
-  const lastOpacity = useRef(-1);
+  const wrote = useRef(0);
+  const projected = useRef(new THREE.Vector3());
 
   useFrame(() => {
-    let nearest: TourNode | null = null;
+    // Once a second is plenty: this walks the whole graph.
+    const now = performance.now();
+    if (now - wrote.current < 1000) return;
+    wrote.current = now;
 
-    if (mode === "tour") {
-      nearest = tourNodeId ? nodes.find((n) => n.id === tourNodeId) ?? null : null;
-    } else if (mode === "walk") {
-      const walk = walkState.current;
-      let best = SHELL_MOUNT_M;
-      for (const node of nodes) {
-        if ((levelOf.get(node.id) ?? 0) !== walk.level) continue;
-        const distance = Math.hypot(node.position[0] - walk.x, node.position[1] - walk.y);
-        if (distance < best) {
-          best = distance;
-          nearest = node;
-        }
+    let meshes = 0;
+    let markers = 0;
+    let photoTextures = 0;
+    let triangles = 0;
+    const markerAt: Array<[number, number]> = [];
+    const bySurface: Record<string, number> = {};
+    let emissive = 0;
+    scene.traverse((object) => {
+      const mesh = object as THREE.Mesh;
+      if (!mesh.isMesh) return;
+      meshes++;
+      const geometry = mesh.geometry;
+      if (geometry?.type === "RingGeometry") markers++;
+      // Counted off the geometry rather than read from `gl.info.render`.
+      // The effect composer runs several full-screen passes after the scene
+      // and the renderer's counters are reset between them, so by the time a
+      // frame callback can read them they describe the last blit and say
+      // "1 call, 1 triangle" however large the house is.
+      // What each element contributes, which is the only way to tell "the
+      // ceiling is missing" from "the ceiling is there and dark".
+      const element = (mesh.userData as { element?: string }).element;
+      if (element) bySurface[element] = (bySurface[element] ?? 0) + 1;
+      // Surfaces lit from within, which should only ever be a fitting somebody
+      // has clicked. It is worth counting because the failure is invisible in
+      // the place it matters: `emissive` is added after all lighting, so on a
+      // bright wall it is a faint tint and on a ceiling - the dimmest surface
+      // in any room - it is most of what you see. A whole room being picked
+      // once made every ceiling in the house blue, and it survived turning off
+      // every light in the scene while I looked for the cause.
+      const material = mesh.material as THREE.MeshStandardMaterial;
+      if (material?.emissiveIntensity > 0 && material.emissive?.getHex?.() !== 0) emissive++;
+
+      if (geometry?.type === "RingGeometry") {
+        // Where the marker is on screen, as a fraction of the canvas.
+        //
+        // The browser suite has to click these, and sweeping a grid of guesses
+        // for a target half a metre across is how a test ends up flaky in a
+        // way that says nothing about the code. Projecting the real position
+        // makes the click exact, so a failure means the marker genuinely did
+        // not respond.
+        mesh.getWorldPosition(projected.current);
+        projected.current.project(camera);
+        markerAt.push([
+          (projected.current.x + 1) / 2,
+          (1 - projected.current.y) / 2,
+        ]);
       }
-    }
 
-    const nodeId = nearest?.id ?? null;
-    if (nodeId !== lastNode.current) {
-      lastNode.current = nodeId;
-      onNodeChange(nodeId);
-    }
+      const index = geometry?.getIndex();
+      const position = geometry?.getAttribute("position");
+      if (index) triangles += index.count / 3;
+      else if (position) triangles += position.count / 3;
 
-    opacity.current = nearest
-      ? shellProximity(
-          nearest,
-          nodeBaseY(plan, nearest),
-          camera.position,
-          mode === "tour" ? TOUR_REACH_M : WALK_REACH_M,
-        )
-      : 0;
+      const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+      for (const material of materials) {
+        const map = (material as THREE.MeshStandardMaterial)?.map;
+        const source = map?.image as { src?: string } | undefined;
+        if (typeof source?.src === "string" && source.src.length > 0) photoTextures++;
+      }
+    });
 
-    // A readout for the browser suite, alongside WalkControls' own `__walk`.
-    // Whether a photograph is actually on screen cannot be seen from outside
-    // the canvas any other way.
-    (window as unknown as { __shell?: unknown }).__shell = {
-      nodeId,
-      opacity: opacity.current,
+    (window as unknown as { __scene?: unknown }).__scene = {
+      // Which view these numbers describe. The readout is published once a
+      // second, so anything reading it can otherwise be handed a count from
+      // the view it just left - and a test that waits a fixed time for the
+      // camera to change modes is a test that passes on a fast machine.
+      mode,
+      furnished,
+      meshes,
+      markers,
+      markerAt,
+      bySurface,
+      emissive,
+      photoTextures,
+      triangles: Math.round(triangles),
+      geometries: gl.info.memory.geometries,
+      textures: gl.info.memory.textures,
     };
-
-    const quantised = Math.round(opacity.current * 30) / 30;
-    if (quantised !== lastOpacity.current) {
-      lastOpacity.current = quantised;
-      onOpacityChange(quantised);
-    }
   });
 
   return null;
@@ -171,11 +153,9 @@ function NearbyShellDriver({
 function Scene({
   property,
   view,
-  transition,
   onlyLevel,
   pick,
   onPick,
-  onSelectNode,
   dayOfYear,
   hour,
   explode,
@@ -185,7 +165,6 @@ function Scene({
   scheme,
   tourBeats,
   touring,
-  tourNodeId,
   onTourBeat,
   onTourFinish,
   focusRoomId,
@@ -193,14 +172,14 @@ function Scene({
   onEnterRoom,
   onWalkRoom,
   walkStart,
+  quality,
+  furnished,
 }: {
   property: Property;
   view: ViewState;
-  transition: React.MutableRefObject<TransitionState>;
   onlyLevel: number | null;
   pick: Pick | null;
   onPick?: (pick: Pick) => void;
-  onSelectNode: (id: string) => void;
   dayOfYear: number;
   hour: number;
   explode: number;
@@ -210,8 +189,6 @@ function Scene({
   scheme: Scheme;
   tourBeats: ReturnType<typeof buildTour>;
   touring: boolean;
-  /** The viewpoint the running beat stands in, when it names one. */
-  tourNodeId: string | null;
   onTourBeat: (beat: Beat | null) => void;
   onTourFinish: () => void;
   /** The room being looked at on its own, or null for the whole house. */
@@ -220,65 +197,13 @@ function Scene({
   onEnterRoom: (roomId: string) => void;
   onWalkRoom: (roomId: string | null) => void;
   walkStart: { position: [number, number]; level: number; yaw: number } | null;
+  quality: Quality;
+  furnished: boolean;
 }) {
-  const [dollOpacity, setDollOpacity] = useState(1);
   // Which storey the walker is standing on, which changes under them on the
   // stairs rather than being chosen from the toolbar.
   const [walkLevel, setWalkLevel] = useState(0);
   const walkState = useRef<WalkState>({ x: 0, y: 0, level: 0, yaw: 0 });
-
-  // The photograph the camera is standing in, if any - hunted for on foot,
-  // named by the beat on a scripted tour. The id drives what gets mounted; the
-  // ref carries the live fade, which the shell reads per frame.
-  const [nearbyNodeId, setNearbyNodeId] = useState<string | null>(null);
-  const [shellFade, setShellFade] = useState(0);
-  const shellOpacityRef = useRef(0);
-
-  // A node's storey is a property of its room, not of the photo.
-  const levelOf = useMemo(() => {
-    const rooms = new Map(property.plan.rooms.map((r) => [r.id, r.level]));
-    return new Map(property.nodes.map((n) => [n.id, rooms.get(n.roomId) ?? 0]));
-  }, [property.plan.rooms, property.nodes]);
-  const aspects = useRef(new Map<string, number>());
-  const reportAspect = useCallback((nodeId: string, aspect: number) => {
-    aspects.current.set(nodeId, aspect);
-  }, []);
-
-  // Keep the active node, wherever we came from, and everything one step away
-  // resident. Loading a shell takes long enough to be visible, so a neighbour
-  // must already be warm by the time its ring is clicked.
-  const resident = useMemo(() => {
-    const byId = new Map(property.nodes.map((n) => [n.id, n]));
-    const wanted = new Set<string>();
-    if (view.mode === "node") {
-      wanted.add(view.nodeId);
-      for (const id of byId.get(view.nodeId)?.neighbors ?? []) wanted.add(id);
-    }
-    // The photograph the camera has reached, on foot or on a scripted tour, so
-    // both resolve into real photography wherever there is any to resolve into.
-    if (nearbyNodeId) wanted.add(nearbyNodeId);
-    const from = transition.current.fromNodeId;
-    if (from) wanted.add(from);
-    return [...wanted].map((id) => byId.get(id)).filter(Boolean) as TourNode[];
-  }, [property.nodes, view, transition, nearbyNodeId]);
-
-  /**
-   * How solid a shell is, asked once a frame.
-   *
-   * Walking and stepping ask different questions. Stepping cross-fades between
-   * two named nodes; walking - and flying a scripted tour - asks how near the
-   * camera is standing to one. Both are answered out of refs rather than props,
-   * so the 60Hz read costs no render.
-   */
-  const opacityFor = useCallback(
-    (node: TourNode) =>
-      view.mode === "walk" || touring
-        ? node.id === nearbyNodeId
-          ? shellOpacityRef.current
-          : 0
-        : shellOpacity(node.id, transition.current),
-    [view.mode, touring, nearbyNodeId, transition],
-  );
 
   return (
     <>
@@ -286,47 +211,37 @@ function Scene({
         site={property.site}
         dayOfYear={dayOfYear}
         hour={hour}
-        interior={view.mode === "walk" || view.mode === "node"}
+        interior={view.mode === "walk"}
         plan={property.plan}
         // Lit indoors, and after dark whatever the view. Nobody wants a
         // dollhouse glowing from inside at midday.
         lamps={view.mode === "walk" || hour < 7.5 || hour > 18.5}
         explode={explode}
+        // The storey underfoot, which is the only one whose windows can reach
+        // you. It changes on the stairs without being asked.
+        levels={view.mode === "walk" ? [walkLevel] : null}
+        quality={quality}
       />
 
       <CameraRig
         plan={property.plan}
-        nodes={property.nodes}
         view={view}
-        transition={transition}
-        aspects={aspects}
         paused={touring}
         explode={explode}
         focusRoomId={focusRoomId}
       />
 
-      <DollhouseOpacityDriver transition={transition} onChange={setDollOpacity} />
-
       <Model
         plan={property.plan}
-        // Inside the house the walls are the thing you are looking at, so the
-        // dollhouse's see-through shell would be exactly wrong - until a
-        // photograph fades up over them, at which point the model becomes the
-        // backdrop behind that shell's occlusion holes exactly as it does in a
-        // node, and has to go transparent to be sorted against it rather than
-        // z-fight the wall it was shot from.
-        opacity={
-          view.mode === "walk"
-            ? 1 - (1 - BACKDROP_OPACITY) * shellFade
-            : Math.min(dollOpacity, 1 - (1 - BACKDROP_OPACITY) * shellFade)
-        }
+        spec={property.spec}
+        furnished={furnished}
         showLabels={view.mode === "dollhouse"}
         displayUnits={property.displayUnits}
         onlyLevel={view.mode === "walk" ? walkLevel : onlyLevel}
-        // The dollhouse only. Standing inside the house - on foot, or in a
-        // photograph, or being flown through one by the scripted tour - there is
-        // nothing to compare the room against, and ghosting the walls around
-        // you does not read as focus. It reads as the building dissolving.
+        // The dollhouse only. Standing inside the house - on foot, or being
+        // flown through it by the scripted tour - there is nothing to compare
+        // the room against, and ghosting the walls around you does not read as
+        // focus. It reads as the building dissolving.
         focusRoomId={view.mode === "dollhouse" && !touring ? focusRoomId : null}
         pick={pick}
         onPick={onPick}
@@ -363,48 +278,21 @@ function Scene({
         onRoomChange={onWalkRoom}
       />
 
-      <NearbyShellDriver
-        plan={property.plan}
-        nodes={property.nodes}
-        levelOf={levelOf}
-        walkState={walkState}
-        mode={touring ? "tour" : view.mode === "walk" ? "walk" : "off"}
-        tourNodeId={tourNodeId}
-        opacity={shellOpacityRef}
-        onNodeChange={setNearbyNodeId}
-        onOpacityChange={setShellFade}
-      />
+      <SceneReadout mode={view.mode} furnished={furnished} />
 
-      {resident.map((node) => (
-        <Suspense key={node.id} fallback={null}>
-          {node.depth ? (
-            <PhotoShell
-              node={node}
-              getOpacity={() => opacityFor(node)}
-              onAspect={reportAspect}
-              baseY={nodeBaseY(property.plan, node)}
-            />
-          ) : (
-            <FlatShell
-              node={node}
-              getOpacity={() => opacityFor(node)}
-              baseY={nodeBaseY(property.plan, node)}
-            />
-          )}
-        </Suspense>
-      ))}
+      <Post quality={quality} />
 
-      <NodeMarkers
+      <RoomMarkers
         plan={property.plan}
-        nodes={property.nodes}
-        activeNodeId={view.mode === "node" ? view.nodeId : null}
-        // Rings are for stepping between photographs; on foot you simply walk,
-        // and a drawing has no camera to step into.
-        mode={view.mode === "node" ? "node" : "dollhouse"}
-        // Stepping into a photograph from a house in pieces means nothing.
-        hidden={view.mode === "walk" || explode > 0}
+        // Walking is how you get inside now, so the affordance is a place to
+        // stand rather than a photograph to step into. Underfoot on the stairs
+        // it is a way up; in the dollhouse it is a way in.
+        mode={view.mode === "walk" ? "walk" : "dollhouse"}
+        // Walking into a house in pieces means nothing.
+        hidden={explode > 0}
         onlyLevel={onlyLevel}
-        onSelect={onSelectNode}
+        walkLevel={walkLevel}
+        onEnterRoom={onEnterRoom}
       />
     </>
   );
@@ -414,15 +302,15 @@ function Scene({
  * Which room the walker is standing in.
  *
  * "Walking into a room shows that room's scope" was the scope pane's founding
- * promise, and on foot it was never true - the effect that does it is gated on
- * having stepped into a *photograph*, and the test that covers it navigates to
- * `?node=` while its comment says "walking into a room". So the first-person
- * mode, the one where you are most obviously in a particular room, was the one
- * mode that never told the rail anything.
+ * promise, and on foot it was never true: the effect that did it was gated on
+ * having stepped into a *photograph*, so the first-person mode - the one where
+ * you are most obviously in a particular room - was the one mode that never
+ * told the rail anything. Walking is the only way inside now, which makes this
+ * the only thing that reports it.
  *
- * Reported only when the room actually changes, the same way the photo shells
- * are driven a few lines up: this runs at 60Hz and crossing a threshold is a
- * rare event, so it must not cost a render on the frames where nothing happens.
+ * Reported only when the room actually changes: this runs at 60Hz and crossing
+ * a threshold is a rare event, so it must not cost a render on the frames where
+ * nothing happens.
  */
 function WalkRoomDriver({
   plan,
@@ -451,29 +339,6 @@ function WalkRoomDriver({
   return null;
 }
 
-/**
- * The dollhouse fades on a React state update rather than per frame, because
- * its opacity feeds many materials. Quantising to ~30 steps keeps that to a
- * couple of dozen re-renders per transition instead of one per frame.
- */
-function DollhouseOpacityDriver({
-  transition,
-  onChange,
-}: {
-  transition: React.MutableRefObject<TransitionState>;
-  onChange: (value: number) => void;
-}) {
-  const last = useRef(-1);
-  useFrame(() => {
-    const next = Math.round(dollhouseOpacity(transition.current) * 30) / 30;
-    if (next !== last.current) {
-      last.current = next;
-      onChange(next);
-    }
-  });
-  return null;
-}
-
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
 function monthOf(doy: number): number {
@@ -488,22 +353,46 @@ function formatHour(hour: number): string {
 }
 
 export function TourViewer({
-  property,
+  property: raw,
   onPropertyChange,
 }: {
   property: Property;
   onPropertyChange?: (property: Property) => void;
 }) {
-  // `?node=` deep-links a viewpoint, so a specific spot in a house can be sent
-  // to someone directly rather than "open the tour and walk to the kitchen".
-  const [view, setView] = useState<ViewState>(() => {
-    if (typeof window === "undefined") return { mode: "dollhouse" };
-    const wanted = new URLSearchParams(window.location.search).get("node");
-    return wanted && property.nodes.some((n) => n.id === wanted)
-      ? { mode: "node", nodeId: wanted }
-      : { mode: "dollhouse" };
-  });
-  const transition = useRef<TransitionState>({ fromNodeId: null, toNodeId: null, t: 1 });
+  /**
+   * The house the spec describes, not the one the packer laid out.
+   *
+   * `applySpec` writes the two things that are geometry rather than finish -
+   * how tall each room is, and how wide the openings between them are - into
+   * the plan itself. Doing it here, once, means the walls, the walk graph, the
+   * takeoff, the minimap and the 2D drawing all see the same building without
+   * any of them having to learn what a spec is.
+   */
+  const property = useMemo(() => {
+    /**
+     * Every house gets a coherent set of finishes, whether or not anyone has
+     * built one for it.
+     *
+     * A tour built before the spec existed - and every bundled sample - has
+     * nothing stored, and the alternative is that its rooms fall back to a
+     * per-room default table. That is exactly the incoherence the inference
+     * exists to remove: a landing floored in generic oak between two rooms
+     * floored in a specific walnut reads as a mistake rather than as a landing
+     * nobody photographed.
+     *
+     * Inference is pure and deterministic, so deriving it here costs nothing
+     * and needs no migration. A stored spec always wins - this only fills in
+     * for a house that has none, and a house that is built today has one
+     * written at build time so it can be corrected by hand.
+     */
+    const spec = raw.spec ?? inferHouse(raw.plan, HouseSpec.parse({})).spec;
+    return { ...raw, spec, plan: applySpec(raw.plan, spec) };
+  }, [raw]);
+  // `?room=` deep-links a room, so a specific place in a house can be sent to
+  // someone directly rather than "open the tour and walk to the kitchen". It
+  // replaces `?node=`, which named a photograph - a thing the tour no longer
+  // has - and it drops you on your feet inside the room rather than at a lens.
+  const [view, setView] = useState<ViewState>({ mode: "dollhouse" });
 
   // Storeys stack in the same plan coordinates, so an unfiltered dollhouse of a
   // two-floor house shows an upstairs bedroom sitting inside the kitchen. The
@@ -576,27 +465,20 @@ export function TourViewer({
   // The scripted tour, and recording it.
   const [touring, setTouring] = useState(false);
   const [tourCaption, setTourCaption] = useState("");
-  // The viewpoint the running beat stands in, when it names one.
-  const [tourNodeId, setTourNodeId] = useState<string | null>(null);
   const [recording, setRecording] = useState(false);
   const stopRecording = useRef<null | (() => void)>(null);
-  // Given the nodes, a room that was photographed is shown from inside its own
-  // photograph rather than from above - which is what puts photography in the
-  // recorded film at all.
   const tourBeats = useMemo(
-    () => buildTour(property.plan, property.label || "This house", property.nodes),
-    [property.plan, property.label, property.nodes],
+    () => buildTour(property.plan, property.label || "This house"),
+    [property.plan, property.label],
   );
 
   const onTourBeat = useCallback((beat: Beat | null) => {
     setTourCaption(beat?.caption ?? "");
-    setTourNodeId(beat?.nodeId ?? null);
   }, []);
 
   const finishTour = useCallback(() => {
     setTouring(false);
     setTourCaption("");
-    setTourNodeId(null);
     stopRecording.current?.();
     stopRecording.current = null;
     setRecording(false);
@@ -632,6 +514,17 @@ export function TourViewer({
   // no sense, so entering walk mode puts it back together.
   const [explode, setExplode] = useState(0);
 
+  /**
+   * Whether somebody else's furniture is in the house.
+   *
+   * Off by default, and that is the honest default rather than the tidy one.
+   * The bed and the sofa in a listing photograph belong to the seller and will
+   * not be there on completion; what is being modelled is the building. The
+   * fixtures stay either way - a bath, a WC, a run of counter - because those
+   * are part of what is being bought and part of what the scope prices.
+   */
+  const [furnished, setFurnished] = useState(false);
+
   // Which storey the drawing shows. Separate from the dollhouse's floor filter:
   // a plan is always of one floor, whereas the model can show them stacked.
   const [planLevel, setPlanLevel] = useState(0);
@@ -650,6 +543,17 @@ export function TourViewer({
    */
   const [mounted, setMounted] = useState(false);
   useEffect(() => setMounted(true), []);
+
+  /**
+   * How hard to render, decided once the browser is actually here.
+   *
+   * Not during the first render: `navigator.hardwareConcurrency` and
+   * `matchMedia` do not exist on the server, so deciding early would give the
+   * server and the client different answers and throw the whole tree away -
+   * the same hydration trap the `mounted` flag above already exists for.
+   */
+  const [quality, setQuality] = useState<Quality>("medium");
+  useEffect(() => setQuality(detectQuality()), []);
 
   /**
    * Escape lets go of the room.
@@ -721,27 +625,28 @@ export function TourViewer({
     [property, onPropertyChange],
   );
 
-  const activeNode =
-    view.mode === "node" ? property.nodes.find((n) => n.id === view.nodeId) ?? null : null;
-  const activeRoom = activeNode
-    ? property.plan.rooms.find((r) => r.id === activeNode.roomId) ?? null
+  /**
+   * Persist a spec correction without writing the photographs away.
+   *
+   * The same trap the grading callback documents: the property this component
+   * holds is hydrated, so its `idb:` photo references have been swapped for
+   * object URLs. Saving that back would persist `blob:` URLs over the only
+   * pointers to the pictures, and they die on the next reload. So the edit goes
+   * onto the *stored* document, which still has its references, and only the
+   * in-memory copy keeps the live ones.
+   */
+  const saveEdit = useCallback(
+    (edited: Property) => {
+      const stored = loadProperty(edited.id) ?? edited;
+      saveProperty({ ...stored, spec: edited.spec });
+      onPropertyChange?.(edited);
+    },
+    [onPropertyChange],
+  );
+
+  const activeRoom = focusRoomId
+    ? property.plan.rooms.find((r) => r.id === focusRoomId) ?? null
     : null;
-
-  // Walking into a room shows its scope, because that is the question being
-  // asked at the time. Clicking a fixture then narrows to it.
-  useEffect(() => {
-    if (!onPropertyChange) return;
-    if (view.mode !== "node") return;
-    const node = property.nodes.find((n) => n.id === view.nodeId);
-    if (node) setPick({ roomId: node.roomId, element: null });
-  }, [view, property.nodes, onPropertyChange]);
-
-  const selectNode = useCallback((id: string) => {
-    setView({ mode: "node", nodeId: id });
-    const url = new URL(window.location.href);
-    url.searchParams.set("node", id);
-    window.history.replaceState(null, "", url);
-  }, []);
 
   /**
    * Double click: stand in that room.
@@ -758,6 +663,9 @@ export function TourViewer({
       setWalkStart(walkStartFor(property.plan, room));
       setExplode(0);
       setView({ mode: "walk" });
+      const url = new URL(window.location.href);
+      url.searchParams.set("room", roomId);
+      window.history.replaceState(null, "", url);
     },
     [property.plan],
   );
@@ -771,14 +679,30 @@ export function TourViewer({
   const showDollhouse = useCallback(() => {
     setView({ mode: "dollhouse" });
     const url = new URL(window.location.href);
-    url.searchParams.delete("node");
+    url.searchParams.delete("room");
     window.history.replaceState(null, "", url);
   }, []);
 
+  /**
+   * `?room=` drops you inside that room, on your feet.
+   *
+   * After mount rather than in the initial state, because it walks: `enterRoom`
+   * needs the plan to have been measured for a standing spot, and running it
+   * during the first render would set state on a component that has not
+   * finished rendering yet.
+   */
+  const deepLinked = useRef(false);
+  useEffect(() => {
+    if (deepLinked.current) return;
+    deepLinked.current = true;
+    const wanted = new URLSearchParams(window.location.search).get("room");
+    if (wanted && property.plan.rooms.some((r) => r.id === wanted)) enterRoom(wanted);
+  }, [property.plan.rooms, enterRoom]);
+
   return (
     <div className="app-shell">
-      <header className="flex items-center justify-between border-b border-ink-600 bg-ink-800 px-4 py-2.5">
-        <div className="flex min-w-0 items-baseline gap-3">
+      <header className="flex flex-wrap items-center justify-between gap-y-2 border-b border-ink-600 bg-ink-800 px-4 py-2.5">
+        <div className="flex min-w-0 shrink items-baseline gap-3">
           {/* Operator-only, on the same gate as Scope and Edit below. A
               published tour is somebody else's listing opened from a link;
               there is no property list of theirs to go back to. */}
@@ -793,12 +717,15 @@ export function TourViewer({
           <span className="truncate text-sm font-semibold tracking-tight">
             {property.label || property.id}
           </span>
-          <span className="text-xs text-mist-400">
-            {property.plan.rooms.length} rooms &middot; {property.nodes.length} viewpoints
+          <span className="hidden shrink-0 whitespace-nowrap text-xs text-mist-400 lg:inline">
+            {property.plan.rooms.length} rooms &middot; built from {property.nodes.length}{" "}
+            {property.nodes.length === 1 ? "photo" : "photos"}
           </span>
         </div>
 
-        <div className="flex items-center gap-2">
+        {/* Wraps rather than overflowing. There are enough controls here now
+            that a narrow window used to push the last of them off the edge. */}
+        <div className="flex flex-wrap items-center justify-end gap-2">
           {levels.length > 1 && view.mode === "dollhouse" && (
             <div className="mr-1 flex items-center gap-1">
               <button
@@ -898,6 +825,22 @@ export function TourViewer({
           >
             Measure
           </button>
+          <button
+            onClick={() => setFurnished((on) => !on)}
+            data-furnished-toggle
+            title={
+              furnished
+                ? "Showing the seller's furniture. The building is what you are buying."
+                : "Empty, but still plumbed: the bath, the WC and the counters stay."
+            }
+            className={`rounded border px-3 py-1 text-xs transition ${
+              furnished
+                ? "border-accent bg-accent text-ink-900"
+                : "border-ink-500 text-mist-200 hover:bg-ink-600"
+            }`}
+          >
+            Furniture
+          </button>
           {view.mode === "dollhouse" && (
             <label className="mr-1 flex items-center gap-1.5 text-[11px] text-mist-400">
               Explode
@@ -913,6 +856,19 @@ export function TourViewer({
               />
             </label>
           )}
+          <select
+            value={quality}
+            onChange={(e) => setQuality(e.target.value as Quality)}
+            aria-label="Render quality"
+            title="How much rendering this machine does. Drop it if the view stutters."
+            className="rounded border border-ink-500 bg-ink-700 px-2 py-1 text-xs text-mist-200 outline-none focus:border-accent-dim"
+          >
+            {(Object.keys(QUALITY_LABEL) as Quality[]).map((q) => (
+              <option key={q} value={q}>
+                {QUALITY_LABEL[q]}
+              </option>
+            ))}
+          </select>
           <button
             onClick={() => {
               setExplode(0);
@@ -984,6 +940,8 @@ export function TourViewer({
             displayUnits={property.displayUnits}
             pick={pick}
             onPick={onPropertyChange ? setPick : undefined}
+            furnished={furnished}
+            spec={property.spec}
           />
         ) : (
         <Canvas
@@ -993,23 +951,23 @@ export function TourViewer({
             if (view.mode !== "walk") setFocusRoomId(null);
           }}
           camera={{ fov: 60, near: 0.05, far: 200 }}
-          dpr={[1, 2]}
+          dpr={[1, MAX_DPR[quality]]}
           shadows="soft"
-          // No tone mapping. The default filmic curve exists to tame bright
-          // highlights in photographic renders, and here it just drags white
-          // walls down to grey - the whole palette is already inside range.
-          gl={{ antialias: true }}
+          // `antialias` is off because the composer replaces the framebuffer
+          // it would apply to; SMAA in the effect stack is what replaces it.
+          // Leaving it true costs a multisampled buffer that is allocated and
+          // then never resolved to the screen.
+          gl={{ antialias: false }}
           onCreated={({ gl }) => {
-            // Filmic tone mapping, which was switched off earlier in the build.
+            // Tone mapping deliberately left off *here*.
             //
-            // It was turned off because it dragged the flat white walls to
-            // grey, and with nothing but flat colour on screen that was the
-            // right call. Once the surfaces carry grain the trade reverses:
-            // the filmic curve is what stops a sunlit floor clipping to a
-            // white slab and gives the shading somewhere to go. The exposure
-            // lift puts the whites back where they were.
-            gl.toneMapping = THREE.ACESFilmicToneMapping;
-            gl.toneMappingExposure = 1.0;
+            // The filmic curve is still applied - it is what stops a sunlit
+            // floor clipping to a white slab - but it now runs at the end of
+            // the effect stack in `Post`, which is where it belongs: after
+            // bloom rather than before it. Setting it in both places applies
+            // it twice, and the result is a flat, washed image that looks like
+            // a rendering problem and is actually an arithmetic one.
+            gl.toneMapping = THREE.NoToneMapping;
           }}
           className="touch-none"
         >
@@ -1017,11 +975,9 @@ export function TourViewer({
           <Scene
             property={property}
             view={view}
-            transition={transition}
             onlyLevel={view.mode === "dollhouse" ? onlyLevel : null}
             pick={pick}
             onPick={onPropertyChange ? setPick : undefined}
-            onSelectNode={selectNode}
             dayOfYear={dayOfYearValue}
             hour={hour}
             explode={explode}
@@ -1031,7 +987,6 @@ export function TourViewer({
             scheme={scheme}
             tourBeats={tourBeats}
             touring={touring}
-            tourNodeId={tourNodeId}
             onTourBeat={onTourBeat}
             onTourFinish={finishTour}
             focusRoomId={focusRoomId}
@@ -1039,25 +994,48 @@ export function TourViewer({
             onEnterRoom={enterRoom}
             onWalkRoom={walkedInto}
             walkStart={walkStart}
+            quality={quality}
+            furnished={furnished}
           />
         </Canvas>
         )}
 
 
-        {onPropertyChange && (
-          <FinishProcessing
+        {/*
+          The photographs, beside the model rather than on it.
+
+          They are the evidence the replica was built from, and the question
+          they answer - "is that really what the kitchen looks like?" - is one
+          you ask while looking at the room, not instead of looking at it.
+        */}
+        {/*
+          Above the walk-mode click-catcher.
+
+          That overlay is `inset-0` because it exists to take pointer lock from
+          a click anywhere on the view, and it comes later in the document - so
+          it sat on top of both panels and swallowed every click at them. The
+          effect was that on foot, which is precisely where you want to check a
+          room against its photographs, neither panel could be opened at all.
+        */}
+        <div className="absolute right-3 top-3 z-20 w-64">
+          <Evidence property={property} roomId={focusRoomId} />
+          {/* Directly under the photographs, because "is that really what the
+              kitchen looks like?" is a question you ask with the picture in
+              front of you. */}
+          <RoomSpecPanel
             property={property}
-            onUpdated={(updated) => void hydrateMedia(updated).then(onPropertyChange)}
+            roomId={focusRoomId}
+            onPropertyChange={onPropertyChange ? saveEdit : undefined}
           />
-        )}
+        </div>
 
         {/* A small plan floating over a large one is just a smaller plan. */}
         {view.mode !== "plan" && (
           <Minimap
             property={property}
-            activeNodeId={view.mode === "node" ? view.nodeId : null}
+            activeRoomId={focusRoomId}
             onlyLevel={onlyLevel}
-            onSelectNode={selectNode}
+            onSelectRoom={enterRoom}
           />
         )}
 
@@ -1153,19 +1131,19 @@ export function TourViewer({
         {view.mode !== "plan" && (
         <div className="pointer-events-none absolute bottom-3 left-1/2 -translate-x-1/2 rounded bg-ink-800/85 px-3 py-1.5 text-[11px] text-mist-400 backdrop-blur">
           {view.mode === "dollhouse"
-            ? "Drag to orbit · scroll to zoom · click a ring to step inside"
+            ? "Drag to orbit · scroll to zoom · double-click a room to walk in"
             : view.mode === "walk"
               ? "Walking · W A S D to move · Esc to release the pointer"
-            : measuring
-              ? "Click two points to measure between them"
-              : "Drag to look · move the pointer to lean · click a ring to walk there"}
+              : measuring
+                ? "Click two points to measure between them"
+                : "Drag to look"}
         </div>
         )}
 
-        {property.nodes.length === 0 && (
+        {property.plan.rooms.length === 0 && (
           <div className="pointer-events-none absolute inset-0 grid place-items-center">
             <p className="rounded bg-ink-800/90 px-4 py-3 text-sm text-mist-400">
-              No viewpoints yet. Open the editor to place photos on the plan.
+              Nothing built yet. Open the editor to draw a plan.
             </p>
           </div>
         )}

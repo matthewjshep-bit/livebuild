@@ -1,7 +1,7 @@
 import { boundsOf } from "@/lib/plan/autolayout";
-import { headingToPlanDir, levelBase } from "@/lib/plan/geometry";
+import { levelBase } from "@/lib/plan/geometry";
 import { roomKind } from "@/lib/plan/room-kind";
-import type { Plan, TourNode } from "@/lib/schema";
+import type { Plan } from "@/lib/schema";
 import { formatArea } from "@/lib/units";
 
 /**
@@ -25,30 +25,24 @@ export type Beat = {
   from: [number, number, number];
   at: [number, number, number];
   caption: string;
-  /**
-   * The viewpoint this beat stands in, when the room has one.
-   *
-   * A beat that names a node is a beat the camera parks exactly where a
-   * photograph was taken, which is the only place that photograph can be shown
-   * without tearing. It is what puts photography in the recorded film at all -
-   * without it the tour is an orbit of an extruded model, however good that
-   * model is.
-   */
-  nodeId?: string;
 };
 
 /** Two seconds is about the floor for "the viewer understood what changed". */
 const ROOM_MS = 2600;
 const ORBIT_MS = 3400;
 
-/** How far ahead of a viewpoint the camera looks. Far enough that the arc has a
- *  radius to interpolate, near enough to stay inside the room. */
-const LOOK_AHEAD_M = 3;
+/** Standing height for the interior beats. A little above a walker's eye, so
+ *  the shot reads as composed rather than as somebody's head. */
+const EYE_M = 1.62;
+
+/** How far off the end wall the camera stands. Any closer and the near wall
+ *  fills the frame; any further and a small room is left behind you. */
+const STAND_OFF_M = 0.85;
 
 /** Rooms nobody opens a tour with. */
 const SKIP = new Set(["closet", "outside", "stairs", "hallway"]);
 
-export function buildTour(plan: Plan, label: string, nodes: TourNode[] = []): Beat[] {
+export function buildTour(plan: Plan, label: string): Beat[] {
   const level = Math.min(...plan.rooms.map((r) => r.level));
   const ground = plan.rooms.filter((r) => r.level === level);
   if (ground.length === 0) return [];
@@ -88,58 +82,35 @@ export function buildTour(plan: Plan, label: string, nodes: TourNode[] = []): Be
   for (const { room, b, area } of rooms) {
     const rx = (b.x0 + b.x1) / 2;
     const ry = (b.y0 + b.y1) / 2;
-    const reach = Math.max(b.x1 - b.x0, b.y1 - b.y0);
+
     const caption = `${room.label} · ${formatArea(area, "ft")}`;
 
-    // Stand in the photograph when the room has one.
+    // Stand in the room and look down its length.
     //
-    // A room that was photographed has something better to show than its own
-    // extrusion, and the only place that photograph holds together is the spot
-    // it was taken from - so the beat goes there and looks the way the lens
-    // looked. A room with no photograph keeps the overhead look-in, which is
-    // why a house built from an address alone still plays as a tour.
-    const node = viewpointFor(nodes, room.id);
-    if (node) {
-      const eye = base + node.eyeHeight;
-      const [dx, dy] = headingToPlanDir(node.heading);
-      beats.push({
-        ms: ROOM_MS,
-        from: [node.position[0], eye, node.position[1]],
-        at: [
-          node.position[0] + dx * LOOK_AHEAD_M,
-          eye,
-          node.position[1] + dy * LOOK_AHEAD_M,
-        ],
-        caption,
-        nodeId: node.id,
-      });
-      continue;
-    }
+    // This used to be an overhead look-in, and standing inside a room was
+    // reserved for rooms that had been photographed - because an extrusion in
+    // flat colour had nothing to show at eye level and a photograph did. The
+    // model is what is being shown now, so every room gets the shot that was
+    // previously the reward for having a picture: at head height, backed up
+    // against the short end, looking the way somebody walking in would look.
+    const wide = b.x1 - b.x0 >= b.y1 - b.y0;
+    const eye = base + EYE_M;
+    const from: [number, number, number] = wide
+      ? [b.x0 + STAND_OFF_M, eye, ry]
+      : [rx, eye, b.y0 + STAND_OFF_M];
 
     beats.push({
       ms: ROOM_MS,
-      // Above and to one side, looking down into the room. Close enough that
-      // the room fills the frame, high enough to see over its own walls -
-      // there is no roof in this view, so this reads as looking in.
-      from: [rx + reach * 0.85, base + reach * 0.95, ry + reach * 0.85],
-      at: [rx, base + 0.9, ry],
+      from,
+      // Slightly below eye level: a camera aimed dead level at the far wall
+      // shows mostly wall, and tipping it down brings the floor and whatever
+      // is standing on it into the frame.
+      at: [rx, eye - 0.22, ry],
       caption,
     });
   }
 
   return beats;
-}
-
-/**
- * The viewpoint worth standing in, out of a room's photographs.
- *
- * One with a depth map wins: it renders as a 2.5D shell the camera can hold
- * still inside, whereas a flat billboard is a picture hung in the air and looks
- * like one the moment anything moves.
- */
-function viewpointFor(nodes: TourNode[], roomId: string): TourNode | null {
-  const inRoom = nodes.filter((n) => n.roomId === roomId && n.photo);
-  return inRoom.find((n) => n.depth) ?? inRoom[0] ?? null;
 }
 
 /** Total running time, so the UI can say how long a recording will be. */

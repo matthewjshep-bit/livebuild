@@ -3,28 +3,29 @@
 import { useEffect, useMemo, useState } from "react";
 
 import { boundsOf } from "@/lib/plan/autolayout";
-import { headingToPlanDir, levelName, levelsOf } from "@/lib/plan/geometry";
+import { levelName, levelsOf } from "@/lib/plan/geometry";
 import type { Property } from "@/lib/schema";
 
 /**
  * A floor plan in the corner, showing where you are.
  *
- * Inside a room you can only see the rings in front of you, so getting to a
- * room behind you means turning around to look for a door - fine once you know
- * the house, disorienting the first time. The minimap makes every room one
- * click away and, more importantly, tells you where you currently are.
+ * On foot you can only see as far as the next doorway, so getting to a room
+ * behind you means turning around to look for one - fine once you know the
+ * house, disorienting the first time. The minimap makes every room one click
+ * away and, more importantly, tells you where you currently are.
  */
 export function Minimap({
   property,
-  activeNodeId,
+  activeRoomId = null,
   onlyLevel,
-  onSelectNode,
+  onSelectRoom,
 }: {
   property: Property;
-  activeNodeId: string | null;
+  /** The room being looked at or stood in, which the map highlights. */
+  activeRoomId?: string | null;
   /** Storey the dollhouse is filtered to, when not inside a room. */
   onlyLevel?: number | null;
-  onSelectNode: (id: string) => void;
+  onSelectRoom: (roomId: string) => void;
 }) {
   const [open, setOpen] = useState(true);
   /**
@@ -52,12 +53,13 @@ export function Minimap({
   }, [property.plan.rooms]);
 
 
-  const active = property.nodes.find((n) => n.id === activeNodeId) ?? null;
-  const activeRoomId = active?.roomId ?? null;
+  const activeRoom = activeRoomId
+    ? property.plan.rooms.find((r) => r.id === activeRoomId) ?? null
+    : null;
 
   // Once you actually go somewhere, the map should follow you again rather than
   // stay parked on the floor you were browsing.
-  useEffect(() => setBrowsing(null), [activeNodeId]);
+  useEffect(() => setBrowsing(null), [activeRoomId]);
 
   // Show one storey at a time. Stacked floors overlap in plan-space, so drawing
   // them together would put an upstairs bedroom on top of the kitchen.
@@ -69,8 +71,6 @@ export function Minimap({
     0;
   const shownLevel = browsing ?? standingOn;
   const roomsHere = property.plan.rooms.filter((r) => r.level === shownLevel);
-  const roomIdsHere = new Set(roomsHere.map((r) => r.id));
-  const nodesHere = property.nodes.filter((n) => roomIdsHere.has(n.roomId));
 
   if (!open) {
     return (
@@ -84,17 +84,20 @@ export function Minimap({
   }
 
 
-  // Below the hooks, for the reason spelled out in NodeMarkers.
+  // Below the hooks, for the reason spelled out in RoomMarkers.
   if (!view) return null;
 
   return (
-    <div className="absolute right-3 bottom-3 w-56 overflow-hidden rounded-lg border border-ink-600 bg-ink-800/90 backdrop-blur">
+    <div
+      data-minimap
+      className="absolute right-3 bottom-3 w-56 overflow-hidden rounded-lg border border-ink-600 bg-ink-800/90 backdrop-blur"
+    >
       <div className="flex items-center justify-between px-2.5 pt-2 pb-1">
         <span className="text-[11px] uppercase tracking-wide text-mist-400">
           {browsing !== null && browsing !== standingOn
             ? levelName(shownLevel)
-            : active
-              ? property.plan.rooms.find((r) => r.id === active.roomId)?.label
+            : activeRoom
+              ? activeRoom.label
               : levels.length > 1
                 ? levelName(shownLevel)
                 : "Floor plan"}
@@ -126,47 +129,15 @@ export function Minimap({
               fill={isHere ? "#2a6f9e88" : "#262d37cc"}
               stroke={isHere ? "#4bb3fd" : "#4a5566"}
               strokeWidth={view.width / 300}
-            />
-          );
-        })}
-
-        {nodesHere.map((node) => {
-          const isActive = node.id === activeNodeId;
-          return (
-            <circle
-              key={node.id}
-              cx={node.position[0]}
-              cy={node.position[1]}
-              r={view.width / (isActive ? 45 : 70)}
-              fill={isActive ? "#4bb3fd" : "#c9d1da"}
-              stroke="#0b0d10"
-              strokeWidth={view.width / 400}
+              data-room={room.id}
               style={{ cursor: "pointer" }}
-              onClick={() => onSelectNode(node.id)}
+              onClick={() => onSelectRoom(room.id)}
             >
-              <title>
-                {property.plan.rooms.find((r) => r.id === node.roomId)?.label ?? node.id}
-              </title>
-            </circle>
+              <title>{room.label}</title>
+            </rect>
           );
         })}
 
-        {/* Which way you are facing - a dot alone does not tell you. */}
-        {active &&
-          (() => {
-            const dir = headingToPlanDir(active.heading);
-            const reach = view.width / 14;
-            return (
-              <line
-                x1={active.position[0]}
-                y1={active.position[1]}
-                x2={active.position[0] + dir[0] * reach}
-                y2={active.position[1] + dir[1] * reach}
-                stroke="#4bb3fd"
-                strokeWidth={view.width / 220}
-              />
-            );
-          })()}
       </svg>
 
       {levels.length > 1 ? (
@@ -174,6 +145,7 @@ export function Minimap({
           {levels.map((l) => (
             <button
               key={l}
+              data-minimap-level={l}
               onClick={() => setBrowsing(l)}
               className={`flex-1 rounded px-1 py-1 text-[10px] transition ${
                 l === shownLevel
@@ -188,7 +160,7 @@ export function Minimap({
         </div>
       ) : (
         <div className="px-2.5 pt-1 pb-2 text-[10px] leading-tight text-mist-400">
-          Tap any dot to jump there
+          Tap a room to walk in
         </div>
       )}
     </div>

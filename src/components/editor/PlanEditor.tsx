@@ -78,7 +78,6 @@ export function PlanEditor({
     | { kind: "pan"; x: number; y: number }
     | { kind: "moveRoom"; id: string; last: Vec2 }
     | { kind: "moveNode"; id: string; last: Vec2 }
-    | { kind: "aimNode"; id: string }
     | null
   >(null);
 
@@ -205,9 +204,6 @@ export function PlanEditor({
       if (!room) return;
       const taken = new Set(property.nodes.map((n) => n.id));
       const id = nextId("n", taken);
-      // Aim at the room's centre by default - a camera in a corner pointing at
-      // the wall behind it is never what anyone wants.
-      const c = centroid(room.polygon);
       update({
         ...property,
         nodes: [
@@ -216,8 +212,11 @@ export function PlanEditor({
             id,
             roomId: room.id,
             position: point,
+            // The lens fields are vestigial: the schema still carries them so
+            // every saved and published document parses, and nothing reads
+            // them. A photograph is a record of a room now, not a camera.
             eyeHeight: 1.5,
-            heading: planDirToHeading([c[0] - point[0], c[1] - point[1]]),
+            heading: 0,
             pitch: 0,
             fovDeg: 78,
             photo: "",
@@ -311,23 +310,6 @@ export function PlanEditor({
       return;
     }
 
-    if (active.kind === "aimNode") {
-      const node = property.nodes.find((n) => n.id === active.id);
-      if (!node) return;
-      update({
-        ...property,
-        nodes: property.nodes.map((n) =>
-          n.id === active.id
-            ? {
-                ...n,
-                heading: Math.round(
-                  planDirToHeading([point[0] - node.position[0], point[1] - node.position[1]]),
-                ),
-              }
-            : n,
-        ),
-      });
-    }
   };
 
   const onPointerUp = () => {
@@ -480,32 +462,10 @@ export function PlanEditor({
           ))}
 
           {property.nodes.map((node) => {
-            const dir = headingToPlanDir(node.heading);
-            const reach = view.width / 22;
             const isSelected = selectedNode?.id === node.id;
             const isOrphan = orphans.some((o) => o.id === node.id);
             return (
               <g key={node.id}>
-                <line
-                  x1={node.position[0]}
-                  y1={node.position[1]}
-                  x2={node.position[0] + dir[0] * reach}
-                  y2={node.position[1] + dir[1] * reach}
-                  stroke={isSelected ? "#4bb3fd" : "#8a95a3"}
-                  strokeWidth={view.width / 600}
-                />
-                <circle
-                  cx={node.position[0] + dir[0] * reach}
-                  cy={node.position[1] + dir[1] * reach}
-                  r={view.width / 130}
-                  fill={isSelected ? "#4bb3fd" : "#3a434f"}
-                  style={{ cursor: "grab" }}
-                  onPointerDown={(e) => {
-                    e.stopPropagation();
-                    setSelection({ kind: "node", id: node.id });
-                    drag.current = { kind: "aimNode", id: node.id };
-                  }}
-                />
                 <circle
                   cx={node.position[0]}
                   cy={node.position[1]}

@@ -98,11 +98,13 @@ if (clicked) {
 }
 
 // --- 3. Walking into a room shows that room, unasked ---
-const firstNode = await page.evaluate(() => {
+const firstRoom = await page.evaluate(() => {
   const doc = JSON.parse(localStorage.getItem("mattermatt:property:demo-house"));
-  return doc.nodes[0].id;
+  // The room a photograph was taken in, so the pane has something to say about
+  // it. `?room=` walks you in, which is the only way inside now.
+  return doc.nodes[0].roomId;
 });
-await page.goto(`${base}/tour/demo-house?node=${firstNode}`, { waitUntil: "networkidle" });
+await page.goto(`${base}/tour/demo-house?room=${firstRoom}`, { waitUntil: "networkidle" });
 await page.waitForTimeout(5000);
 const inside = await paneState(page);
 await page.screenshot({ path: "shots/P2-pane-inside.png" });

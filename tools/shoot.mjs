@@ -34,8 +34,43 @@ page.on("pageerror", (e) => problems.push(`pageerror: ${e.message}`));
 
 await page.goto(base + route, { waitUntil: "networkidle" });
 
-// Give texture loads and the first animated frames time to settle.
-await page.waitForTimeout(3500);
+/**
+ * Wait for the camera to stop moving, not for a fixed number of seconds.
+ *
+ * A flat 3.5s was enough until the scene grew an occlusion pass. Headless
+ * chromium has no GPU, so under SwiftShader a frame can take the better part of
+ * a second at the "Best" quality tier - and the opening camera flight is driven
+ * per frame, so the shot came out partway through it. The house looked wrongly
+ * framed, which is indistinguishable from having actually broken the framing:
+ * I lost a while to that before working out the camera was simply still moving.
+ *
+ * `window.__camera` is written every frame by `CameraRig`, so this watches it
+ * settle instead of guessing. Falls back to a plain wait for the plan view and
+ * anything else with no camera at all.
+ */
+await page.waitForTimeout(1200);
+const settled = await page
+  .waitForFunction(
+    () => {
+      const readout = window.__camera;
+      if (!readout) return false;
+      const previous = window.__shotLast;
+      window.__shotLast = readout.position;
+      if (!previous) return false;
+      const moved = Math.hypot(
+        readout.position[0] - previous[0],
+        readout.position[1] - previous[1],
+        readout.position[2] - previous[2],
+      );
+      return moved < 0.002;
+    },
+    { timeout: 45_000, polling: 350 },
+  )
+  .then(() => true)
+  .catch(() => false);
+
+// Textures decode on their own schedule after the camera has arrived.
+await page.waitForTimeout(settled ? 1200 : 3500);
 
 const gl = await page.evaluate(() => {
   const canvas = document.querySelector("canvas");
@@ -63,6 +98,6 @@ if (flags.includes("--click-ring")) {
 await mkdir(dirname(out), { recursive: true });
 await page.screenshot({ path: out });
 
-console.log(JSON.stringify({ route, out, gl, problems }, null, 2));
+console.log(JSON.stringify({ route, out, gl, cameraSettled: settled, problems }, null, 2));
 await browser.close();
 process.exit(problems.length ? 1 : 0);

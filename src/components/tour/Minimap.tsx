@@ -51,7 +51,6 @@ export function Minimap({
     };
   }, [property.plan.rooms]);
 
-  if (!view) return null;
 
   const active = property.nodes.find((n) => n.id === activeNodeId) ?? null;
   const activeRoomId = active?.roomId ?? null;
@@ -83,6 +82,10 @@ export function Minimap({
       </button>
     );
   }
+
+
+  // Below the hooks, for the reason spelled out in NodeMarkers.
+  if (!view) return null;
 
   return (
     <div className="absolute right-3 bottom-3 w-56 overflow-hidden rounded-lg border border-ink-600 bg-ink-800/90 backdrop-blur">

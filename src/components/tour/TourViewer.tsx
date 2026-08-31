@@ -18,18 +18,20 @@ import {
 } from "@/lib/model/schemes";
 import { dayOfYear, solarPosition } from "@/lib/model/sun";
 import { WalkControls, type WalkState } from "@/components/tour/WalkControls";
+import { roomAt } from "@/lib/model/collide";
 import { ArchitecturalPlan } from "@/components/plan2d/ArchitecturalPlan";
 import { ScopeRail } from "@/components/bom/ScopeRail";
 import { Model } from "@/components/tour/Model";
 import { buildBom } from "@/lib/bom/build";
 import type { Element, Grade } from "@/lib/bom/condition";
 import type { Pick } from "@/lib/bom/pickable";
-import { saveProperty } from "@/lib/property-store";
+import { loadProperty, saveProperty } from "@/lib/property-store";
 import { NodeMarkers } from "@/components/tour/NodeMarkers";
 import { FinishProcessing } from "@/components/tour/FinishProcessing";
 import { Minimap } from "@/components/tour/Minimap";
 import { PublishPanel } from "@/components/tour/PublishPanel";
 import { FlatShell, PhotoShell } from "@/components/tour/PhotoShell";
+import { walkStartFor } from "@/lib/model/focus";
 import { levelName, levelsOf, nodeBaseY } from "@/lib/plan/geometry";
 import {
   SHELL_MOUNT_M,
@@ -38,7 +40,7 @@ import {
   shellProximity,
 } from "@/lib/render/proximity";
 import { hydrateMedia } from "@/lib/property-store";
-import type { Property, TourNode } from "@/lib/schema";
+import type { Plan, Property, TourNode } from "@/lib/schema";
 
 /**
  * How opaque a shell should be for a given transition.
@@ -186,6 +188,11 @@ function Scene({
   tourNodeId,
   onTourBeat,
   onTourFinish,
+  focusRoomId,
+  onFocusRoom,
+  onEnterRoom,
+  onWalkRoom,
+  walkStart,
 }: {
   property: Property;
   view: ViewState;
@@ -207,6 +214,12 @@ function Scene({
   tourNodeId: string | null;
   onTourBeat: (beat: Beat | null) => void;
   onTourFinish: () => void;
+  /** The room being looked at on its own, or null for the whole house. */
+  focusRoomId: string | null;
+  onFocusRoom: (roomId: string | null) => void;
+  onEnterRoom: (roomId: string) => void;
+  onWalkRoom: (roomId: string | null) => void;
+  walkStart: { position: [number, number]; level: number; yaw: number } | null;
 }) {
   const [dollOpacity, setDollOpacity] = useState(1);
   // Which storey the walker is standing on, which changes under them on the
@@ -289,6 +302,7 @@ function Scene({
         aspects={aspects}
         paused={touring}
         explode={explode}
+        focusRoomId={focusRoomId}
       />
 
       <DollhouseOpacityDriver transition={transition} onChange={setDollOpacity} />
@@ -309,8 +323,15 @@ function Scene({
         showLabels={view.mode === "dollhouse"}
         displayUnits={property.displayUnits}
         onlyLevel={view.mode === "walk" ? walkLevel : onlyLevel}
+        // The dollhouse only. Standing inside the house - on foot, or in a
+        // photograph, or being flown through one by the scripted tour - there is
+        // nothing to compare the room against, and ghosting the walls around
+        // you does not read as focus. It reads as the building dissolving.
+        focusRoomId={view.mode === "dollhouse" && !touring ? focusRoomId : null}
         pick={pick}
         onPick={onPick}
+        onFocusRoom={onPick ? (roomId) => onFocusRoom(roomId) : undefined}
+        onEnterRoom={onPick ? onEnterRoom : undefined}
         onMeasurePoint={measuring ? onMeasurePoint : undefined}
         walking={view.mode === "walk"}
         scheme={scheme}
@@ -332,6 +353,14 @@ function Scene({
         onLevelChange={setWalkLevel}
         state={walkState}
         enabled={view.mode === "walk"}
+        start={walkStart}
+      />
+
+      <WalkRoomDriver
+        plan={property.plan}
+        walkState={walkState}
+        enabled={view.mode === "walk"}
+        onRoomChange={onWalkRoom}
       />
 
       <NearbyShellDriver
@@ -379,6 +408,47 @@ function Scene({
       />
     </>
   );
+}
+
+/**
+ * Which room the walker is standing in.
+ *
+ * "Walking into a room shows that room's scope" was the scope pane's founding
+ * promise, and on foot it was never true - the effect that does it is gated on
+ * having stepped into a *photograph*, and the test that covers it navigates to
+ * `?node=` while its comment says "walking into a room". So the first-person
+ * mode, the one where you are most obviously in a particular room, was the one
+ * mode that never told the rail anything.
+ *
+ * Reported only when the room actually changes, the same way the photo shells
+ * are driven a few lines up: this runs at 60Hz and crossing a threshold is a
+ * rare event, so it must not cost a render on the frames where nothing happens.
+ */
+function WalkRoomDriver({
+  plan,
+  walkState,
+  enabled,
+  onRoomChange,
+}: {
+  plan: Plan;
+  walkState: React.MutableRefObject<WalkState>;
+  enabled: boolean;
+  onRoomChange: (roomId: string | null) => void;
+}) {
+  const last = useRef<string | null>(null);
+
+  useFrame(() => {
+    if (!enabled) return;
+    const walk = walkState.current;
+    const room = roomAt(plan, walk.level, walk.x, walk.y);
+    const id = room?.id ?? null;
+    if (id !== last.current) {
+      last.current = id;
+      onRoomChange(id);
+    }
+  });
+
+  return null;
 }
 
 /**
@@ -449,6 +519,23 @@ export function TourViewer({
    * opens the link.
    */
   const [pick, setPick] = useState<Pick | null>(null);
+
+  /**
+   * The one room being looked at, or null for the whole house.
+   *
+   * Separate from `pick`, which is finer - a pick can be a single worktop - and
+   * separate from `ViewState`, which is about how you are looking rather than
+   * at what. Keeping it apart means stepping into a photograph inside the
+   * focused room does not lose the focus, and no `mode ===` test anywhere has
+   * to learn about it.
+   */
+  const [focusRoomId, setFocusRoomId] = useState<string | null>(null);
+  /** Where a double click asked to be dropped in, consumed by WalkControls. */
+  const [walkStart, setWalkStart] = useState<{
+    position: [number, number];
+    level: number;
+    yaw: number;
+  } | null>(null);
 
   // Whether the browser currently holds the mouse. The prompt has to go the
   // moment it does, or it sits in the middle of the room you are walking
@@ -564,6 +651,23 @@ export function TourViewer({
   const [mounted, setMounted] = useState(false);
   useEffect(() => setMounted(true), []);
 
+  /**
+   * Escape lets go of the room.
+   *
+   * Only in the dollhouse. On foot Escape is how the browser hands back the
+   * pointer, and stealing it would leave someone locked into a first-person
+   * view with no way out - which is a far worse outcome than having to click
+   * "Whole house".
+   */
+  useEffect(() => {
+    if (!focusRoomId || view.mode === "walk") return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setFocusRoomId(null);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [focusRoomId, view.mode]);
+
   const [locked, setLocked] = useState(false);
   useEffect(() => {
     const onChange = () => setLocked(Boolean(document.pointerLockElement));
@@ -579,17 +683,40 @@ export function TourViewer({
     [property, onPropertyChange],
   );
 
+  /**
+   * Grade one element, without writing the photographs away.
+   *
+   * The property this component holds is **hydrated**: its `idb:` references
+   * have been swapped for object URLs so the shells can load. Saving that back
+   * persisted `blob:` URLs over the only pointers to the photographs, and they
+   * are dead the moment the page reloads - so grading a single worktop quietly
+   * emptied the tour, and took the repair path with it, since
+   * `FinishProcessing` looks for references beginning `idb:` and would find
+   * none.
+   *
+   * So the condition is written onto the *stored* document, which still has its
+   * references, and only the in-memory copy keeps the hydrated ones. Every other
+   * consumer already re-reads the unhydrated document for this reason; this was
+   * the one that did not.
+   */
   const grade = useCallback(
     (roomId: string, element: Element, value: Grade) => {
-      const next: Property = {
-        ...property,
-        condition: {
-          ...property.condition,
-          [roomId]: { ...(property.condition[roomId] ?? {}), [element]: value },
-        },
+      const condition = {
+        ...property.condition,
+        [roomId]: { ...(property.condition[roomId] ?? {}), [element]: value },
       };
-      saveProperty(next);
-      onPropertyChange?.(next);
+
+      // `?? property` is for the bundled samples, which are graded like any
+      // other tour but have never been in localStorage - `resolveProperty` fell
+      // through to fetching them. Falling back is safe for exactly those,
+      // because their photographs are plain paths that `resolveMediaUrl`
+      // returns unchanged, so their hydrated and stored forms are identical.
+      const stored = loadProperty(property.id) ?? property;
+      saveProperty({ ...stored, condition });
+      // The screen keeps the hydrated photographs. Handing it `stored` would
+      // trade a persistence bug for a rendering one: every live object URL
+      // would revert to an `idb:` reference and every shell would fail to load.
+      onPropertyChange?.({ ...property, condition });
     },
     [property, onPropertyChange],
   );
@@ -614,6 +741,31 @@ export function TourViewer({
     const url = new URL(window.location.href);
     url.searchParams.set("node", id);
     window.history.replaceState(null, "", url);
+  }, []);
+
+  /**
+   * Double click: stand in that room.
+   *
+   * Focused first, so backing out of walk mode leaves you looking at the room
+   * you were in rather than at the whole house again.
+   */
+  const enterRoom = useCallback(
+    (roomId: string) => {
+      const room = property.plan.rooms.find((r) => r.id === roomId);
+      if (!room) return;
+      setFocusRoomId(roomId);
+      setPick({ roomId, element: null });
+      setWalkStart(walkStartFor(property.plan, room));
+      setExplode(0);
+      setView({ mode: "walk" });
+    },
+    [property.plan],
+  );
+
+  /** Walking across a threshold moves the scope with you, unasked. */
+  const walkedInto = useCallback((roomId: string | null) => {
+    setFocusRoomId(roomId);
+    if (roomId) setPick({ roomId, element: null });
   }, []);
 
   const showDollhouse = useCallback(() => {
@@ -801,7 +953,12 @@ export function TourViewer({
             pick={pick}
             condition={pick ? property.condition[pick.roomId] ?? {} : {}}
             onGrade={grade}
-            onSelectRoom={(roomId) => setPick({ roomId, element: null })}
+            focusRoomId={focusRoomId}
+            onSelectRoom={(roomId) => {
+              setPick({ roomId, element: null });
+              setFocusRoomId(roomId);
+            }}
+            onClearFocus={() => setFocusRoomId(null)}
             onClear={() => setPick(null)}
             onOpenFull={() => {
               window.location.href = `/bom/${property.id}`;
@@ -830,6 +987,11 @@ export function TourViewer({
           />
         ) : (
         <Canvas
+          // Clicking the sky is the other half of clicking a room, and R3F
+          // hands it over for free: this fires only when a click hit nothing.
+          onPointerMissed={() => {
+            if (view.mode !== "walk") setFocusRoomId(null);
+          }}
           camera={{ fov: 60, near: 0.05, far: 200 }}
           dpr={[1, 2]}
           shadows="soft"
@@ -872,6 +1034,11 @@ export function TourViewer({
             tourNodeId={tourNodeId}
             onTourBeat={onTourBeat}
             onTourFinish={finishTour}
+            focusRoomId={focusRoomId}
+            onFocusRoom={setFocusRoomId}
+            onEnterRoom={enterRoom}
+            onWalkRoom={walkedInto}
+            walkStart={walkStart}
           />
         </Canvas>
         )}

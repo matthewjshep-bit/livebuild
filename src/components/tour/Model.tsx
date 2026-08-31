@@ -87,6 +87,21 @@ function wallGeometry(wall: WallSolid, baseY: number): THREE.BufferGeometry {
  * interior have to go, or a dollhouse shows you nothing but its own outside.
  * Four groups is four draw calls, which is affordable; per-wall would be forty.
  */
+/**
+ * How much of a room is left when it is not the one being looked at.
+ *
+ * Faded rather than hidden. A room lifted out of an empty void tells you
+ * nothing about where it sits in the house, and the whole reason to look at one
+ * room in a model rather than in a spreadsheet is that the model knows.
+ *
+ * Everything that is not the focused room goes to this together - including the
+ * walls, which unexploded are one merged mesh for the whole storey and cannot
+ * be dimmed a room at a time. The focused room therefore reads as a lit floor
+ * and its furniture inside a ghosted envelope, which is what an architectural
+ * drawing does to say "this one".
+ */
+const UNFOCUSED_OPACITY = 0.16;
+
 function ExteriorShell({
   walls,
   baseY,
@@ -179,8 +194,11 @@ function LevelModel({
   walking,
   scheme,
   explode,
+  focusRoomId,
   pick,
   onPick,
+  onFocusRoom,
+  onEnterRoom,
   onHover,
   onMeasurePoint,
 }: {
@@ -195,8 +213,21 @@ function LevelModel({
   onPick?: (pick: Pick) => void;
   onHover?: (pick: Pick | null) => void;
   onMeasurePoint?: (point: THREE.Vector3) => void;
+  onFocusRoom?: (roomId: string) => void;
+  onEnterRoom?: (roomId: string) => void;
+  focusRoomId?: string | null;
 }) {
   const baseY = levelBase(plan, level);
+
+  /**
+   * What everything that is not the focused room is drawn at.
+   *
+   * Multiplied into the opacity already in play rather than replacing it - that
+   * one is carrying the dollhouse fade and the backdrop behind a photograph,
+   * and overwriting it would undo both.
+   */
+  const dimmed = focusRoomId ? opacity * UNFOCUSED_OPACITY : opacity;
+  const opacityFor = (roomId: string) => (roomId === focusRoomId ? opacity : dimmed);
 
   // Geometry is rebuilt only when the house comes apart or goes back together,
   // never as the slider moves - the movement itself is a transform, and
@@ -450,13 +481,13 @@ function LevelModel({
             castShadow
             receiveShadow
             onPointerOver={(e) => {
-              if (!onPick) return;
+              if (!onPick && !onFocusRoom) return;
               e.stopPropagation();
               onHover?.({ roomId: surface.roomId, element: surface.element });
               document.body.style.cursor = "pointer";
             }}
             onPointerOut={() => {
-              if (!onPick) return;
+              if (!onPick && !onFocusRoom) return;
               onHover?.(null);
               document.body.style.cursor = "auto";
             }}
@@ -469,9 +500,26 @@ function LevelModel({
                 onMeasurePoint(e.point.clone());
                 return;
               }
-              if (!onPick) return;
+              if (!onPick && !onFocusRoom) return;
               e.stopPropagation();
-              onPick({ roomId: surface.roomId, element: surface.element });
+
+              // Counted off the native event rather than taken from R3F's
+              // `onDoubleClick`, which never arrives on a mesh here. It also
+              // removes a real hazard: the first click flies the camera to the
+              // room, so by the time the second lands the model has moved under
+              // the pointer, and two separate handlers would have to agree
+              // about an object that is no longer where it was.
+              if ((e.nativeEvent as MouseEvent).detail >= 2) {
+                onEnterRoom?.(surface.roomId);
+                return;
+              }
+
+              onPick?.({ roomId: surface.roomId, element: surface.element });
+              // Focusing a room already focused is a no-op all the way down -
+              // the state does not change, so the camera does not move. That is
+              // what lets you grade four fixtures in a bathroom without the
+              // view flying to it four times.
+              onFocusRoom?.(surface.roomId);
             }}
           >
             <meshStandardMaterial
@@ -482,7 +530,7 @@ function LevelModel({
               roughness={surface.element === "floor" ? 0.78 : 0.9}
               metalness={0}
               transparent
-              opacity={opacity}
+              opacity={opacityFor(surface.roomId)}
               // Lifting what is selected rather than tinting it: a colour shift
               // would fight the palette, and on a pale model a slight glow reads
               // as "this one" without looking like a different material.
@@ -493,6 +541,8 @@ function LevelModel({
         );
       })}
 
+      {/* One merged mesh for the whole storey's partitions, so it cannot be
+          dimmed a room at a time - it goes with the rest of the house. */}
       {!exploded && built.interior && (
         <mesh geometry={built.interior} castShadow receiveShadow>
           <meshStandardMaterial
@@ -500,7 +550,7 @@ function LevelModel({
             roughness={0.95}
             metalness={0}
             transparent
-            opacity={opacity}
+            opacity={dimmed}
           />
         </mesh>
       )}
@@ -512,7 +562,7 @@ function LevelModel({
         <ExteriorShell
           walls={built.exterior}
           baseY={baseY}
-          opacity={opacity}
+          opacity={dimmed}
           walking={walking}
           colour={scheme.wallExterior}
         />
@@ -520,7 +570,7 @@ function LevelModel({
 
       {!exploded && built.frames && (
         <mesh geometry={built.frames}>
-          <meshStandardMaterial color={PALETTE.frame} roughness={0.6} transparent opacity={opacity} />
+          <meshStandardMaterial color={PALETTE.frame} roughness={0.6} transparent opacity={dimmed} />
         </mesh>
       )}
       {!exploded && built.glass && (
@@ -537,7 +587,7 @@ function LevelModel({
             roughness={0.08}
             metalness={0.15}
             transparent
-            opacity={opacity * 0.92}
+            opacity={dimmed * 0.92}
           />
         </mesh>
       )}
@@ -554,11 +604,14 @@ export function Model({
   furnished = true,
   pick = null,
   onPick,
+  onFocusRoom,
+  onEnterRoom,
   onHover,
   onMeasurePoint,
   walking = false,
   scheme = DEFAULT_SCHEME,
   explode = 0,
+  focusRoomId = null,
 }: {
   plan: Plan;
   opacity: number;
@@ -580,6 +633,17 @@ export function Model({
   pick?: Pick | null;
   /** Absent means the model is not interrogable - no cursor, no picking. */
   onPick?: (pick: Pick) => void;
+  /**
+   * A single click, as "look at this room on its own".
+   *
+   * Keyed on the room and never on the element. Staging falls through to
+   * `"floor"` rather than reporting its room, so a click on a sofa carries an
+   * element that is a lie about what was hit - fine for the scope pane, which
+   * wants flooring lines either way, and wrong for anything that moves a camera.
+   */
+  onFocusRoom?: (roomId: string) => void;
+  /** A double click, as "put me in this room". */
+  onEnterRoom?: (roomId: string) => void;
   onHover?: (pick: Pick | null) => void;
   /** Set while the tape measure is out; receives the exact point clicked. */
   onMeasurePoint?: (point: THREE.Vector3) => void;
@@ -594,6 +658,14 @@ export function Model({
    * costed on its own.
    */
   explode?: number;
+  /**
+   * One room to hold at full strength while the rest of the house recedes.
+   *
+   * Dollhouse only. Inside the house on foot there is nothing to compare the
+   * room against - you are in it - and fading the walls around you would only
+   * make the building look like it was dissolving.
+   */
+  focusRoomId?: string | null;
 }) {
   const levels = useMemo(() => {
     const all = levelsOf(plan);
@@ -620,8 +692,11 @@ export function Model({
           walking={walking}
           scheme={scheme}
           explode={explode}
+          focusRoomId={focusRoomId}
           pick={pick}
           onPick={onPick}
+          onFocusRoom={onFocusRoom}
+          onEnterRoom={onEnterRoom}
           onHover={onHover}
           onMeasurePoint={onMeasurePoint}
         />
@@ -645,7 +720,14 @@ export function Model({
               distanceFactor={9}
               zIndexRange={[10, 0]}
             >
-              <div className="pointer-events-none select-none text-center">
+              <div
+                className="pointer-events-none select-none text-center transition-opacity"
+                // A label as bright as the focused room's, on a room that has
+                // faded to a ghost, competes with the one thing being looked at.
+                style={{
+                  opacity: focusRoomId && room.id !== focusRoomId ? 0.25 : 1,
+                }}
+              >
                 <div className="text-[13px] font-medium tracking-wide text-ink-900">
                   {room.label}
                 </div>

@@ -14,7 +14,7 @@ import {
   startingPoint,
 } from "@/lib/model/collide";
 import { MAX_STEP } from "@/lib/model/stairs";
-import type { Plan } from "@/lib/schema";
+import type { Plan, Vec2 } from "@/lib/schema";
 
 /**
  * Walking through the model on your own feet.
@@ -59,12 +59,22 @@ export function WalkControls({
   onLevelChange,
   state,
   enabled,
+  start = null,
 }: {
   plan: Plan;
   level: number;
   onLevelChange: (level: number) => void;
   /** Written every frame; a ref so walking costs no React renders. */
   state: React.MutableRefObject<WalkState>;
+  /**
+   * Where to be dropped in, when somewhere in particular was asked for.
+   *
+   * Absent, the walker lands in the middle of the largest room on the storey,
+   * which is the right answer when "walk the house" is the whole instruction.
+   * It is the wrong one when a specific room was double-clicked, and there was
+   * previously no way to say so.
+   */
+  start?: { position: Vec2; level: number; yaw: number } | null;
   enabled: boolean;
 }) {
   const camera = useThree((s) => s.camera);
@@ -111,19 +121,28 @@ export function WalkControls({
   // Drop the walker into the house when the mode opens.
   useEffect(() => {
     if (!enabled) return;
-    const [sx, sy] = startingPoint(plan, level);
-    const ground = groundAt(plan, level, sx, sy);
-    state.current = { x: sx, y: sy, level, yaw: 0 };
+    const at = start ?? { position: startingPoint(plan, level), level, yaw: null };
+    const [sx, sy] = at.position;
+    const ground = groundAt(plan, at.level, sx, sy);
+    state.current = { x: sx, y: sy, level: at.level, yaw: 0 };
     eye.current = ground.height + EYE_HEIGHT;
     foot.current = ground.height;
     velocity.current.set(0, 0);
     camera.position.set(sx, eye.current, sy);
+    // Dropping upstairs has to tell the viewer, or it goes on drawing the floor
+    // below and the walker stands on geometry that is not there.
+    if (at.level !== level) onLevelChange(at.level);
 
     // Level the camera. Entering walk mode inherits whatever angle the
     // dollhouse orbit was left at, which is steeply downward - so the first
     // thing you see on foot is the floor at your feet, and since pointer lock
     // only changes yaw and pitch from wherever it starts, it stays wrong.
-    camera.rotation.set(0, camera.rotation.y, 0, "YXZ");
+    //
+    // The yaw is inherited too, and that is fine walking into a house from
+    // nowhere in particular. Dropped into one named room it is not: you arrive
+    // facing whichever way the orbit happened to be left, which in a narrow
+    // room is a wall a metre from your face.
+    camera.rotation.set(0, at.yaw ?? camera.rotation.y, 0, "YXZ");
     camera.up.set(0, 1, 0);
 
     // Wider than the dollhouse uses. A 55-degree lens indoors feels like
@@ -134,8 +153,11 @@ export function WalkControls({
       camera.fov = 72;
       camera.updateProjectionMatrix();
     }
+    // `level` stays out on purpose - climbing the stairs must not re-drop you -
+    // but `start` is in, because asking for a different room is exactly a
+    // request to be moved.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [enabled, plan]);
+  }, [enabled, plan, start]);
 
   useFrame((_, delta) => {
     if (!enabled) return;

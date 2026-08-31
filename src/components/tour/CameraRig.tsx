@@ -4,6 +4,7 @@ import { useFrame, useThree } from "@react-three/fiber";
 import { useEffect, useRef } from "react";
 import * as THREE from "three";
 
+import { frameRoom } from "@/lib/model/focus";
 import { levelsOf, nodeBaseY, planBounds, planToWorld } from "@/lib/plan/geometry";
 import type { Plan, TourNode } from "@/lib/schema";
 
@@ -110,10 +111,20 @@ export function CameraRig({
   aspects,
   paused = false,
   explode = 0,
+  focusRoomId = null,
 }: {
   plan: Plan;
   nodes: TourNode[];
   view: ViewState;
+  /**
+   * One room being looked at on its own, or null for the whole house.
+   *
+   * Deliberately not part of `ViewState`. Focus is orthogonal to which mode you
+   * are in - you can be focused on a room and then step into a photograph in it
+   * - and folding it into the union would mean revisiting every `mode ===` test
+   * in this file and the viewer above it.
+   */
+  focusRoomId?: string | null;
   /** True while something else is driving the camera. */
   paused?: boolean;
   /** How far the house is pulled apart, so the camera can keep it in frame. */
@@ -142,16 +153,36 @@ export function CameraRig({
   });
   const startedAt = useRef(0);
   const previousView = useRef<ViewState | null>(null);
+  const previousFocus = useRef<string | null | undefined>(undefined);
 
   const byId = useRef(new Map<string, TourNode>());
   byId.current = new Map(nodes.map((n) => [n.id, n]));
 
   useEffect(() => {
     const previous = previousView.current;
+    // Focusing a room is a move like any other, and has to restart the eased
+    // flight or the camera arrives instantly. It cannot ride on the settle-lerp
+    // below instead: that copies the quaternion rather than slerping it, so the
+    // camera would snap round to face the new room while still gliding towards
+    // it, and slerping there would put lag into every orbit drag.
+    const focusChanged =
+      previousFocus.current !== undefined && previousFocus.current !== focusRoomId;
     const changed =
       !previous ||
       previous.mode !== view.mode ||
-      (previous.mode === "node" && view.mode === "node" && previous.nodeId !== view.nodeId);
+      (previous.mode === "node" && view.mode === "node" && previous.nodeId !== view.nodeId) ||
+      focusChanged;
+
+    if (focusChanged) {
+      // Distance and height come from the room; which side you are standing on
+      // is left alone, so the camera closes in from wherever you were rather
+      // than swinging round the house first.
+      const room = focusRoomId ? plan.rooms.find((r) => r.id === focusRoomId) : null;
+      const framed = room ? frameRoom(plan, room) : defaultOrbit(plan);
+      orbit.current.distance = framed.distance;
+      orbit.current.elevation = framed.elevation;
+    }
+    previousFocus.current = focusRoomId;
 
     if (changed) {
       from.current.position.copy(camera.position);
@@ -167,7 +198,7 @@ export function CameraRig({
       }
     }
     previousView.current = view;
-  }, [view, camera]);
+  }, [view, camera, focusRoomId, plan]);
 
   useEffect(() => {
     const element = gl.domElement;
@@ -275,7 +306,10 @@ export function CameraRig({
     const t = easeInOutCubic(raw);
 
     if (view.mode === "dollhouse") {
-      const center = planCenter(plan);
+      const room = focusRoomId ? plan.rooms.find((r) => r.id === focusRoomId) : null;
+      const center = room
+        ? new THREE.Vector3(...frameRoom(plan, room).center)
+        : planCenter(plan);
       // Pulling the house apart makes it bigger, so the camera has to give
       // ground or the pieces simply leave the frame - which is what happened
       // the first time, and looks like the rooms have been deleted.
@@ -288,6 +322,16 @@ export function CameraRig({
       scratch.quaternion.setFromRotationMatrix(scratch.lookAt);
       applyFov(DOLLHOUSE_FOV);
       transition.current = { fromNodeId: from.current.nodeId, toNodeId: null, t: raw };
+
+      // A readout for the browser suite, alongside WalkControls' `__walk` and
+      // the shell driver's `__shell`. Where the camera ended up cannot be seen
+      // from outside the canvas, and a screenshot cannot tell "flew to the
+      // kitchen" from "happened to be pointing that way".
+      (window as unknown as { __camera?: unknown }).__camera = {
+        focusRoomId: focusRoomId ?? null,
+        position: [camera.position.x, camera.position.y, camera.position.z],
+        target: [center.x, center.y, center.z],
+      };
     } else {
       const node = byId.current.get(view.nodeId);
       if (!node) return;

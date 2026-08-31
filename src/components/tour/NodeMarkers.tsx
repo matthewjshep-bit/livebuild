@@ -168,7 +168,6 @@ export function NodeMarkers({
   /** Walking on foot: the rings are a way of moving you no longer need. */
   hidden?: boolean;
 }) {
-  if (hidden) return null;
   const active = nodes.find((n) => n.id === activeNodeId) ?? null;
 
   const onShownFloor = useMemo(() => {
@@ -241,6 +240,12 @@ export function NodeMarkers({
     const allowed = new Set(active.neighbors);
     return nodes.filter((n) => allowed.has(n.id));
   }, [nodes, onShownFloor, mode, active]);
+
+  // After the hooks, not before them. `hidden` genuinely changes - it is true
+  // on foot and the moment the explode slider leaves zero - so returning early
+  // above meant React saw a different number of hooks between two renders of
+  // the same component, which is the one rule it cannot recover from.
+  if (hidden) return null;
 
   return (
     <group>

@@ -166,6 +166,7 @@ export function BomTree({
   bom,
   compact = false,
   selectedRoomId = null,
+  onlyRoomId = null,
   onSelectRoom,
 }: {
   bom: Bom;
@@ -173,14 +174,44 @@ export function BomTree({
   compact?: boolean;
   /** Highlighted and forced open - driven by what is selected in the model. */
   selectedRoomId?: string | null;
+  /**
+   * Show one room as its own project, rather than the house with a row lit up.
+   *
+   * Three things have to move together or the number is wrong: the whole-house
+   * block goes, the other rooms go, and the footer stops being the house's
+   * total. Filtering the list while leaving the footer alone would put the
+   * price of a re-roof under one bedroom's name.
+   */
+  onlyRoomId?: string | null;
   onSelectRoom?: (roomId: string) => void;
 }) {
-  const levels = [...new Set(bom.rooms.map((r) => r.level))].sort((a, b) => a - b);
+  const only = onlyRoomId ? bom.rooms.find((r) => r.roomId === onlyRoomId) ?? null : null;
+  const rooms = only ? [only] : bom.rooms;
+  const levels = [...new Set(rooms.map((r) => r.level))].sort((a, b) => a - b);
+
+  const footer = only
+    ? {
+        label: only.label,
+        total: only.total,
+        material: only.material,
+        labour: only.labour,
+        lines: only.assemblies.reduce((sum, a) => sum + a.lines.length, 0),
+      }
+    : {
+        label: "Total",
+        total: bom.total,
+        material: bom.material,
+        labour: bom.labour,
+        lines: bom.lineCount,
+      };
 
   return (
     <div className={compact ? "" : "rounded-lg border border-ink-600 bg-ink-800"}>
-      {bom.house.length > 0 && (
-        <div className="border-b border-ink-700">
+      {/* Roof, systems and exterior belong to no room, so a room on its own
+          must not carry them - not even as context, since anything in this
+          column reads as part of the figure at the bottom of it. */}
+      {!only && bom.house.length > 0 && (
+        <div className="border-b border-ink-700" data-house-block>
           <div className="grid grid-cols-[1fr_auto] gap-3 px-3 py-2.5">
             <span className="text-sm font-medium text-mist-200">
               Whole house
@@ -203,7 +234,7 @@ export function BomTree({
               {level === 0 ? "Ground floor" : level > 0 ? "Upstairs" : "Basement"}
             </div>
           )}
-          {bom.rooms
+          {rooms
             .filter((r) => r.level === level)
             .map((room) => (
               <Room
@@ -220,14 +251,18 @@ export function BomTree({
         </div>
       ))}
 
-      <div className="grid grid-cols-[1fr_auto] gap-3 border-t border-ink-600 px-3 py-3">
-        <span className="text-sm font-semibold text-mist-200">Total</span>
+      <div
+        className="grid grid-cols-[1fr_auto] gap-3 border-t border-ink-600 px-3 py-3"
+        data-tree-total
+        data-room={only ? only.roomId : undefined}
+      >
+        <span className="text-sm font-semibold text-mist-200">{footer.label}</span>
         <span className="text-right">
           <div className="tabular-nums text-lg font-semibold text-mist-200">
-            {money(bom.total)}
+            {money(footer.total)}
           </div>
           <div className="text-[11px] text-mist-400">
-            {money(bom.material)} material · {money(bom.labour)} labour · {bom.lineCount} lines
+            {money(footer.material)} material · {money(footer.labour)} labour · {footer.lines} lines
           </div>
         </span>
       </div>

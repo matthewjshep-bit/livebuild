@@ -2,6 +2,9 @@
 
 import { useState } from "react";
 
+import { verifyRoom, type VerifyOutcome } from "@/lib/spec/verify-client";
+import type { CapturePose } from "@/lib/render/capture";
+
 import { type HouseSpec, type Source } from "@/lib/spec/schema";
 import { ftToM, mToFt } from "@/lib/units";
 import type { Property } from "@/lib/schema";
@@ -52,6 +55,8 @@ export function RoomSpecPanel({
   onPropertyChange?: (property: Property) => void;
 }) {
   const [open, setOpen] = useState(false);
+  const [checking, setChecking] = useState<string | null>(null);
+  const [outcome, setOutcome] = useState<VerifyOutcome | null>(null);
 
   const room = roomId ? property.plan.rooms.find((r) => r.id === roomId) : null;
   const spec = roomId ? property.spec?.rooms[roomId] : null;
@@ -125,6 +130,9 @@ export function RoomSpecPanel({
   const assumed = Object.values(spec.source).filter(
     (s) => s === "inferred" || s === "assumed",
   ).length;
+
+  // Nothing to check the room against without one.
+  const hasPhoto = property.nodes.some((n) => n.roomId === room.id);
 
   return (
     <div className="mt-1.5" data-room-spec>
@@ -264,6 +272,80 @@ export function RoomSpecPanel({
                   </Row>
                 );
               })}
+            </div>
+          )}
+
+          {/*
+            Checking the room against its own photograph.
+            
+            By hand, one room at a time, and never on its own. This is the only
+            pass that can leave a room worse than it found it - everything that
+            stops it doing so is arithmetic rather than good intentions, and it
+            has still not earned running unattended.
+          */}
+          {hasPhoto && onPropertyChange && (
+            <div className="mt-2 border-t border-ink-600 pt-2">
+              <button
+                onClick={async () => {
+                  const capture = (window as unknown as {
+                    __capture?: (pose: CapturePose) => string | null;
+                  }).__capture;
+                  if (!capture || !property.spec) return;
+                  setChecking("Rendering the room as it was photographed");
+                  setOutcome(null);
+                  const result = await verifyRoom(
+                    property,
+                    property.spec,
+                    room.id,
+                    capture,
+                    (round, score) =>
+                      setChecking(`Round ${round} · ${Math.round(score * 100)}% alike`),
+                  );
+                  setChecking(null);
+                  if (!result) return;
+                  setOutcome(result);
+                  if (result.applied.length > 0) {
+                    onPropertyChange({
+                      ...property,
+                      spec: {
+                        ...property.spec,
+                        rooms: { ...property.spec.rooms, [room.id]: result.spec },
+                      },
+                    });
+                  }
+                }}
+                disabled={Boolean(checking)}
+                className="w-full rounded border border-ink-500 px-3 py-1.5 text-[11px] text-mist-200 transition hover:bg-ink-600 disabled:opacity-50"
+              >
+                {checking ?? "Check against the photos"}
+              </button>
+
+              {outcome && (
+                <div className="mt-1.5 text-[10px] leading-relaxed text-mist-400">
+                  {outcome.poseProblem ? (
+                    <span>
+                      The render and the photograph are not of the same view
+                      {outcome.poseProblem === "none" ? "" : ` (${outcome.poseProblem})`}, so
+                      nothing was changed.
+                    </span>
+                  ) : outcome.applied.length > 0 ? (
+                    <span>
+                      Corrected {outcome.applied.length}{" "}
+                      {outcome.applied.length === 1 ? "thing" : "things"}:{" "}
+                      {outcome.applied.map((d) => d.observed).join(", ")}.
+                    </span>
+                  ) : (
+                    <span>
+                      Nothing worth changing
+                      {outcome.because === "converged"
+                        ? " — it already matches."
+                        : outcome.because === "no-improvement"
+                          ? " — the corrections it wanted did not improve the match."
+                          : "."}
+                    </span>
+                  )}
+                </div>
+              )}
             </div>
           )}
 

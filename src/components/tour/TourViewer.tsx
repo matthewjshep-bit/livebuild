@@ -23,6 +23,7 @@ import { ArchitecturalPlan } from "@/components/plan2d/ArchitecturalPlan";
 import { ScopeRail } from "@/components/bom/ScopeRail";
 import { Model } from "@/components/tour/Model";
 import { applySpec } from "@/lib/spec/apply";
+import { captureFromPose, type CapturePose } from "@/lib/render/capture";
 import { inferHouse } from "@/lib/spec/infer";
 import { HouseSpec } from "@/lib/spec/schema";
 import { Post } from "@/components/tour/Post";
@@ -146,6 +147,30 @@ function SceneReadout({ mode, furnished }: { mode: ViewState["mode"]; furnished:
       textures: gl.info.memory.textures,
     };
   });
+
+  return null;
+}
+
+/**
+ * A way to photograph the model from inside the canvas.
+ *
+ * Published on `window` rather than passed out through React, and that is not
+ * laziness: the renderer and the scene only exist inside the canvas, while
+ * everything that wants a capture - the verify pass, the browser suite - lives
+ * outside it. It is the same arrangement `window.__walk`, `window.__camera` and
+ * `window.__scene` already use, for the same reason.
+ */
+function CaptureRig() {
+  const gl = useThree((s) => s.gl);
+  const scene = useThree((s) => s.scene);
+
+  useEffect(() => {
+    const w = window as unknown as { __capture?: (pose: CapturePose) => string | null };
+    w.__capture = (pose) => captureFromPose(gl, scene, pose);
+    return () => {
+      delete w.__capture;
+    };
+  }, [gl, scene]);
 
   return null;
 }
@@ -279,6 +304,8 @@ function Scene({
       />
 
       <SceneReadout mode={view.mode} furnished={furnished} />
+
+      <CaptureRig />
 
       <Post quality={quality} />
 

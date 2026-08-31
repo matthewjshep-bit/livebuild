@@ -1,4 +1,5 @@
 import type { HouseSpec } from "@/lib/spec/schema";
+import { applyShapeEdits } from "@/lib/plan/shape";
 import type { Opening, Plan } from "@/lib/schema";
 
 /**
@@ -9,11 +10,12 @@ import type { Opening, Plan } from "@/lib/schema";
  * polygon is destroyed by the next reshape without a word - whereas the
  * observation that produced it survives, and can simply be applied again.
  *
- * Only two kinds of thing cross over here: how tall a room is, and how it opens
- * onto the next one. Everything else the spec knows - what the floor is made
- * of, what colour the walls are, what profile the skirting has - is a finish
- * rather than a shape, and the renderer reads it directly. Copying finishes
- * into the plan would put the same fact in two places and guarantee they drift.
+ * Three kinds of thing cross over here: what shape a room is, how tall it is,
+ * and how it opens onto the next one. Everything else the spec knows - what the
+ * floor is made of, what colour the walls are, what profile the skirting has -
+ * is a finish rather than a shape, and the renderer reads it directly. Copying
+ * finishes into the plan would put the same fact in two places and guarantee
+ * they drift.
  *
  * Applied at build time and after every inference run, so that by the time
  * anything downstream sees a `Plan` it is already the plan the spec describes.
@@ -29,6 +31,12 @@ const CASED_M = 1.8;
 
 export function applySpec(plan: Plan, spec: HouseSpec | null | undefined): Plan {
   if (!spec) return plan;
+
+  // Shape first, then everything measured against it. A ceiling height is a
+  // property of a room, and reshaping the room afterwards would apply it to a
+  // room that no longer exists in that form.
+  const reshaped = applyShapeEdits(plan, spec.shapeEdits);
+  plan = reshaped.plan;
 
   const rooms = plan.rooms.map((room) => {
     const height = spec.rooms[room.id]?.ceiling?.heightM;

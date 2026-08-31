@@ -46,8 +46,18 @@ function MediaThumb({ src }: { src: string }) {
       </div>
     );
   }
+  // Named rather than empty. The "No photo" branch above is text and gets
+  // announced, so leaving this decorative made the two states asymmetric: a
+  // viewpoint with no photograph said so, and one with a photograph said
+  // nothing at all, which reads as the same thing.
   // eslint-disable-next-line @next/next/no-img-element
-  return <img src={url} alt="" className="h-24 w-full rounded object-cover" />;
+  return (
+    <img
+      src={url}
+      alt="The photograph taken from this viewpoint"
+      className="h-24 w-full rounded object-cover"
+    />
+  );
 }
 
 export function Inspector({

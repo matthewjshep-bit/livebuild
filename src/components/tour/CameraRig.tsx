@@ -1,6 +1,8 @@
 "use client";
 
 import { useFrame, useThree } from "@react-three/fiber";
+
+import { usePrefersReducedMotion } from "@/lib/a11y/reduced-motion";
 import { useEffect, useRef } from "react";
 import * as THREE from "three";
 
@@ -295,6 +297,14 @@ export function CameraRig({
     perspective.updateProjectionMatrix();
   };
 
+  // The camera is moved from JavaScript every frame, so the reduced-motion
+  // rule in `globals.css` never reaches it. This is also the motion that
+  // matters most: an 850ms flight across a house is a large field movement,
+  // repeated on every click, and it is the classic vestibular trigger. Asked
+  // for less motion, the camera cuts instead - it still arrives in the same
+  // place looking the same way, it simply does not travel there.
+  const reducedMotion = usePrefersReducedMotion();
+
   useFrame(() => {
     // Walking hands the camera to WalkControls entirely, and a scripted tour
     // takes it the same way. Two things writing camera.position on the same
@@ -302,7 +312,9 @@ export function CameraRig({
     if (view.mode === "walk" || view.mode === "plan" || paused) return;
 
     const elapsed = performance.now() - startedAt.current;
-    const raw = THREE.MathUtils.clamp(elapsed / TRANSITION_MS, 0, 1);
+    const raw = reducedMotion
+      ? 1
+      : THREE.MathUtils.clamp(elapsed / TRANSITION_MS, 0, 1);
     const t = easeInOutCubic(raw);
 
     if (view.mode === "dollhouse") {

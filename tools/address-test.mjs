@@ -19,6 +19,7 @@
  * real address, and they stay assertions.
  */
 import { chromium } from "playwright";
+import { drawLayout } from "./lib/flow.mjs";
 
 const BASE = process.env.BASE_URL ?? "http://localhost:3000";
 const ADDRESS = "902 23rd Avenue East, Seattle, WA 98112";
@@ -127,11 +128,10 @@ check("a located address is buildable whatever the map holds",
 
 if (await buildButton.count()) {
   await buildButton.click();
-  let built = false;
-  for (let i = 0; i < 40 && !built; i++) {
-    await page.waitForTimeout(2000);
-    built = await page.evaluate(() => /Here is your house/.test(document.body.innerText));
-  }
+  // The build stops to be drawn now. An address with no photographs still has
+  // to produce a whole house, so the suggested layout is accepted here - the
+  // point of this test is that a bare address is buildable at all.
+  const built = await drawLayout(page, { timeoutMs: 200_000 });
   check("a house was built from the address alone", built);
 
   if (built) {

@@ -25,6 +25,7 @@ import { deleteMedia, mediaKeys, mediaRef, refToKey, resolveMediaUrl } from "@/l
 import { layoutFromSpec } from "@/lib/plan/autolayout";
 import { type PackPlan, layoutFromFootprint } from "@/lib/plan/footprint";
 import { arrangeRooms } from "@/lib/plan/layout-client";
+import { checkDrawn, drawableBoundary } from "@/lib/plan/drawn";
 import { roomKind } from "@/lib/plan/room-kind";
 import { type HouseSpec, describeToSpec } from "@/lib/plan/describe";
 import { buildBom } from "@/lib/bom/build";
@@ -57,7 +58,13 @@ import { M_PER_FT, sqftToM2 } from "@/lib/units";
  * corrects rather than authors, which is a far smaller job and a much better
  * first impression.
  */
-type Stage = "photos" | "building" | "review";
+/**
+ * "gathering" and "building" both show the same progress screen and are
+ * deliberately two states rather than one: the first is finding out about the
+ * house, the second is constructing it, and the layout stage sits between them
+ * because that is where the decision belongs.
+ */
+type Stage = "photos" | "gathering" | "layout" | "building" | "review";
 
 /**
  * A readable id that cannot collide.
@@ -121,6 +128,11 @@ function NewTourInner() {
 
   const [step, setStep] = useState<BuildStep | null>(null);
   const [notes, setNotes] = useState<string[]>([]);
+  /** What the evidence says, held between the two halves of the build. */
+  const [evidence, setEvidence] = useState<BuildEvidence | null>(null);
+  /** The layout as drawn. Starts empty, because the user draws it. */
+  const [layoutPlan, setLayoutPlan] = useState<Plan | null>(null);
+  const [suggesting, setSuggesting] = useState(false);
   /** How far the condition scan has got, or null when it is not running. */
   const [scan, setScan] = useState<GradeProgress | null>(null);
   /** How far the interior read has got, or null when it is not running. */
@@ -720,11 +732,85 @@ function NewTourInner() {
     [facts, listingSite, propertyId, label, syncUp, scanCondition, readInterior],
   );
 
+  /** How many photographs each room has, for the badge under it. */
+  const photoCounts = useMemo(
+    () =>
+      photos.reduce<Record<string, number>>((acc, p) => {
+        if (p.roomLabel) acc[p.roomLabel] = (acc[p.roomLabel] ?? 0) + 1;
+        return acc;
+      }, {}),
+    [photos],
+  );
+
+  /**
+   * The outline the user draws inside, and what is wrong with the drawing.
+   *
+   * The boundary is deliberately not `footprint.outline`: the packer discards
+   * rectangles under 25 sqft, so a porch survives in the outline and is absent
+   * from the buildable ground. Drawn against the raw outline it would be a gap
+   * nobody could ever fill, and Continue would never enable.
+   */
+  const boundary = useMemo(
+    () => (evidence?.footprint ? drawableBoundary(evidence.footprint) : null),
+    [evidence],
+  );
+
+  const layoutCheck = useMemo(() => {
+    if (!layoutPlan || !boundary?.ok) return null;
+    if (layoutPlan.rooms.length === 0) return null;
+    return checkDrawn(layoutPlan.rooms, boundary.outline, 0);
+  }, [layoutPlan, boundary]);
+
+  /** Rooms the house is known to have that are not on the drawing yet. */
+  const unplaced = useMemo(() => {
+    if (!evidence || !layoutPlan) return [];
+    const drawn = new Set(layoutPlan.rooms.map((r) => r.label));
+    return evidence.rooms.filter((r) => !drawn.has(r.label)).map((r) => r.label);
+  }, [evidence, layoutPlan]);
+
+  /**
+   * Fill the canvas with what the packer would have done.
+   *
+   * The same arrangement the build produced on its own until now, offered
+   * rather than assumed. It is a starting point for a ten-room house, and the
+   * honest reason it exists is that the alternative to a tedious screen is a
+   * tired person approving anything to get past it.
+   */
+  const suggestLayout = useCallback(async () => {
+    if (!evidence) return;
+    setSuggesting(true);
+    try {
+      const { footprint: prepared, rooms, adjacency, outside } = evidence;
+      const plans = new Map<number, PackPlan>();
+      if (prepared) {
+        const groundLabels = rooms
+          .filter((r) => r.level === 0 && roomKind(r.label) !== "outside")
+          .map((r) => r.label);
+        const arranged = await arrangeRooms(prepared, groundLabels, adjacency, {
+          frontDoorBearing: outside?.frontDoorBearing ?? null,
+          garageBearing: outside?.garage?.bearing ?? null,
+          planXBearing: 90 + prepared.rotationDeg,
+        });
+        if (arranged) plans.set(0, arranged.plan);
+      }
+      const built = prepared
+        ? layoutFromFootprint({ rooms }, prepared, adjacency, plans)
+        : layoutFromSpec({ rooms }, facts?.sqft ? sqftToM2(facts.sqft) : undefined, adjacency);
+      setLayoutPlan({
+        scaleRef: { px: 1, meters: M_PER_FT },
+        rooms: built.rooms,
+        openings: built.openings,
+      });
+    } finally {
+      setSuggesting(false);
+    }
+  }, [evidence, facts]);
+
   const build = useCallback(async () => {
-    setStage("building");
+    setStage("gathering");
     setFailed(null);
     try {
-      const { evidence, photos: labelled } = await gatherEvidence(
+      const { evidence: found, photos: labelled } = await gatherEvidence(
         {
           photos,
           spec,
@@ -736,8 +822,24 @@ function NewTourInner() {
         setStep,
       );
       if (labelled.some((p) => p.roomLabel)) setPhotos(labelled);
-      adjacencyRef.current = evidence.adjacency;
-      await construct(evidence, null);
+      adjacencyRef.current = found.adjacency;
+      setEvidence(found);
+
+      /**
+       * Stop, and hand the house over.
+       *
+       * The canvas opens empty on purpose. Everything the packer would have
+       * guessed is still one button away, but it is a button rather than a
+       * default, so a machine's arrangement can never reach the built house
+       * wearing somebody's approval.
+       */
+      setLayoutPlan({
+        scaleRef: { px: 1, meters: M_PER_FT },
+        rooms: [],
+        openings: [],
+      });
+      setStep(null);
+      setStage("layout");
     } catch (error) {
       // Most of the pipeline already fails soft - a classify batch, a pose
       // batch and the exterior read all swallow their own errors. What is left
@@ -749,7 +851,7 @@ function NewTourInner() {
       setStep(null);
       setStage("photos");
     }
-  }, [photos, spec, facts, footprint, listingSite, exterior, construct]);
+  }, [photos, spec, facts, footprint, listingSite, exterior]);
 
 
   if (restoring) {
@@ -871,10 +973,89 @@ function NewTourInner() {
           </>
         )}
 
-        {stage === "building" && (
+        {stage === "layout" && layoutPlan && evidence && (
+          <div className="mx-auto max-w-4xl">
+            <div className="mb-4">
+              <h1 className="text-xl font-semibold tracking-tight">Draw the layout</h1>
+              <p className="mt-1 text-sm text-mist-400">
+                {boundary?.ok
+                  ? "This is the building's real outline, measured. Place each room inside it, and drag them together — rooms that touch get a doorway."
+                  : "Place each room, and drag them together — rooms that touch get a doorway."}
+              </p>
+              {boundary?.ok && boundary.note && (
+                <p className="mt-1 text-xs text-mist-400">{boundary.note}</p>
+              )}
+              {boundary && !boundary.ok && (
+                <p className="mt-1 text-xs text-warn">
+                  {boundary.why} Drawing freely instead; the shape will be fitted afterwards.
+                </p>
+              )}
+            </div>
+
+            <div className="mb-3 flex flex-wrap items-center gap-2">
+              <button
+                onClick={suggestLayout}
+                disabled={suggesting}
+                data-testid="suggest-layout"
+                className="rounded border border-ink-500 px-3 py-1.5 text-xs hover:bg-ink-600 disabled:opacity-50"
+              >
+                {suggesting ? "Working it out…" : "Suggest a layout"}
+              </button>
+              <span className="text-xs text-mist-400">
+                {evidence.rooms.length} rooms to place
+                {evidence.addedByInventory.length > 0 &&
+                  ` · ${evidence.addedByInventory.length} the listing implied but no photo showed`}
+              </span>
+            </div>
+
+            <PlanBuilder
+              plan={layoutPlan}
+              photoCounts={photoCounts}
+              displayUnits="ft"
+              livingAreaSqft={facts?.sqft ?? undefined}
+              boundary={boundary?.ok ? boundary.outline : null}
+              check={layoutCheck}
+              unplaced={unplaced}
+              adjacency={evidence.adjacency}
+              showHeading={false}
+              onChange={setLayoutPlan}
+            />
+
+            <div className="mt-4 flex flex-wrap items-center gap-3">
+              <button
+                onClick={() => {
+                  setStage("building");
+                  void construct(evidence, layoutPlan).catch((error) => {
+                    setFailed(
+                      error instanceof Error ? error.message : "Something went wrong building the house.",
+                    );
+                    setStep(null);
+                    setStage("layout");
+                  });
+                }}
+                disabled={layoutPlan.rooms.length === 0 || (layoutCheck ? !layoutCheck.ok : false)}
+                data-testid="build-from-layout"
+                className="rounded bg-accent px-4 py-2 text-sm font-medium text-ink-900 hover:bg-accent/90 disabled:opacity-40"
+              >
+                Build this house
+              </button>
+              <span className="text-xs text-mist-400">
+                {layoutPlan.rooms.length === 0
+                  ? "Place a room to begin, or ask for a suggestion."
+                  : layoutCheck && !layoutCheck.ok
+                    ? layoutCheck.why
+                    : `${layoutPlan.rooms.length} rooms, ${layoutPlan.openings.length} doorways.`}
+              </span>
+            </div>
+          </div>
+        )}
+
+        {(stage === "building" || stage === "gathering") && (
           <div className="mx-auto max-w-md py-20 text-center">
             <div className="text-5xl">🏗️</div>
-            <h2 className="mt-4 text-lg font-medium">Building your house</h2>
+            <h2 className="mt-4 text-lg font-medium">
+              {stage === "gathering" ? "Looking at your house" : "Building your house"}
+            </h2>
             <p className="mt-2 text-sm text-mist-400">
               {step?.label ?? "Getting started"}
               {step && step.total > 1 && ` · ${step.done}/${step.total}`}
@@ -1039,10 +1220,7 @@ function NewTourInner() {
 
             <PlanBuilder
               plan={plan}
-              photoCounts={photos.reduce<Record<string, number>>((acc, p) => {
-                if (p.roomLabel) acc[p.roomLabel] = (acc[p.roomLabel] ?? 0) + 1;
-                return acc;
-              }, {})}
+              photoCounts={photoCounts}
               displayUnits="ft"
               livingAreaSqft={facts?.sqft ?? undefined}
               onChange={(next) => {

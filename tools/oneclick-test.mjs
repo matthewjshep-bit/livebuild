@@ -10,6 +10,7 @@
 import { chromium } from "playwright";
 import { readdirSync } from "node:fs";
 import { join } from "node:path";
+import { drawLayout } from "./lib/flow.mjs";
 
 const base = process.env.BASE_URL ?? "http://localhost:3000";
 const dir = "public/properties/demo-house/photos";
@@ -37,12 +38,9 @@ await page.waitForTimeout(2000);
 await page.screenshot({ path: "shots/C1-drop.png" });
 await page.getByRole("button", { name: "Build my tour" }).click();
 
-let arrived = false;
-for (let i = 0; i < 60; i++) {
-  await page.waitForTimeout(3000);
-  arrived = await page.evaluate(() => /Here is your house/.test(document.body.innerText));
-  if (arrived) break;
-}
+// The build stops to be drawn. "One click" now means one click plus accepting
+// the suggested layout, which is the same arrangement this test always got.
+const arrived = await drawLayout(page, { timeoutMs: 200_000 });
 const seconds = Math.round((Date.now() - startedAt) / 1000);
 await page.screenshot({ path: "shots/C2-review.png" });
 

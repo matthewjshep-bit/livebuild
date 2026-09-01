@@ -6,6 +6,7 @@ import { ROOM_PRESETS, autoOpenings, boundsOf, rectangle, typicalSize } from "@/
 import { SketchImport } from "@/components/wizard/SketchImport";
 import { area, centroid, levelName, levelsOf } from "@/lib/plan/geometry";
 import { isStairs } from "@/lib/plan/room-kind";
+import type { DrawnCheck } from "@/lib/plan/drawn";
 import type { Plan, Room, Vec2 } from "@/lib/schema";
 import { M_PER_FT, formatArea } from "@/lib/units";
 
@@ -93,6 +94,11 @@ export function PlanBuilder({
   photoCounts,
   displayUnits,
   livingAreaSqft,
+  boundary,
+  check,
+  unplaced,
+  adjacency,
+  showHeading = true,
   onChange,
 }: {
   plan: Plan;
@@ -100,6 +106,34 @@ export function PlanBuilder({
   displayUnits: "ft" | "m";
   /** From a listing, if there was one — used to scale a drawing. */
   livingAreaSqft?: number;
+  /**
+   * The building's measured outline, when there is one.
+   *
+   * Drawn heavily and always kept in frame, because when it is present it is
+   * the thing being drawn inside rather than a decoration. Absent for a tour
+   * with no site, where free dragging is the only sensible tool and always was.
+   */
+  boundary?: Vec2[] | null;
+  /**
+   * What is wrong with the drawing right now, shaded as you work.
+   *
+   * The check itself lives with whoever owns the gate; this only draws it.
+   * Showing faults continuously is what keeps "rejected, never repaired"
+   * humane - nobody should reach the end of a layout and be told no.
+   */
+  check?: DrawnCheck | null;
+  /** Rooms the house is known to have that are not on the plan yet. */
+  unplaced?: string[];
+  /** Pairs seen through an opening in the photographs. */
+  adjacency?: Array<[string, string]>;
+  /**
+   * Whether to print its own title.
+   *
+   * On the review screen this is one panel among several and needs to say what
+   * it is. On the layout stage it is the entire screen and the page has already
+   * said so - two headings a line apart read as a bug.
+   */
+  showHeading?: boolean;
   onChange: (plan: Plan) => void;
 }) {
   const svgRef = useRef<SVGSVGElement>(null);
@@ -138,7 +172,10 @@ export function PlanBuilder({
   // The whole plan, not just this floor, so a ghosted storey stays in frame and
   // stairs can be lined up against the floor below.
   const view = useMemo(() => {
-    const all = plan.rooms.flatMap((r) => r.polygon);
+    // The boundary counts even when nothing is drawn yet, which is the whole
+    // of the empty-canvas case: an outline you cannot see is one you cannot
+    // draw inside.
+    const all = [...plan.rooms.flatMap((r) => r.polygon), ...(boundary ?? [])];
     if (all.length === 0) return { x: -6, y: -6, size: 12 };
     const xs = all.map((p) => p[0]);
     const ys = all.map((p) => p[1]);
@@ -150,7 +187,7 @@ export function PlanBuilder({
       y,
       size: Math.max(Math.max(...xs) - x, Math.max(...ys) - y) + pad,
     };
-  }, [plan.rooms]);
+  }, [plan.rooms, boundary]);
 
   const toPlan = (clientX: number, clientY: number): Vec2 => {
     const svg = svgRef.current;
@@ -178,10 +215,23 @@ export function PlanBuilder({
         }))
       : { x0: 0, y0: 0, x1: 0, y1: 0 };
 
+    /**
+     * Where a new room lands.
+     *
+     * Beside the others, so it is visibly unattached until placed on purpose.
+     * But on an empty floor with a boundary that rule would drop the first
+     * room of the house outside the house, which reads as a bug rather than as
+     * an invitation - so the first one starts in the building's own corner.
+     */
+    const at: Vec2 =
+      onFloor.length === 0 && boundary && boundary.length > 0
+        ? [Math.min(...boundary.map((p) => p[0])), Math.min(...boundary.map((p) => p[1]))]
+        : [b.x1 + 1.2, b.y0];
+
     const room: Room = {
       id: nextRoomId(plan.rooms),
       label,
-      polygon: rectangle(b.x1 + 1.2, b.y0, w, h),
+      polygon: rectangle(at[0], at[1], w, h),
       ceilingHeight: 2.7,
       level,
     };
@@ -303,10 +353,14 @@ export function PlanBuilder({
     <div className="mx-auto w-full max-w-5xl">
       <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
         <div>
-          <h2 className="text-lg font-medium">Build the layout</h2>
-          <p className="text-sm text-mist-400">
-            Drag rooms together. Touching rooms get a doorway automatically.
-          </p>
+          {showHeading && (
+            <>
+              <h2 className="text-lg font-medium">Build the layout</h2>
+              <p className="text-sm text-mist-400">
+                Drag rooms together. Touching rooms get a doorway automatically.
+              </p>
+            </>
+          )}
         </div>
         <div className="flex items-center gap-1.5">
           <button
@@ -476,6 +530,44 @@ export function PlanBuilder({
           if (e.target === svgRef.current) setSelected(null);
         }}
       >
+        {/* The building, when it is measured. Drawn first and beneath
+            everything, and never interactive - it is the constraint, not a
+            thing to be dragged. */}
+        {boundary && boundary.length > 2 && (
+          <polygon
+            points={boundary.map((p) => `${p[0]},${p[1]}`).join(" ")}
+            fill="#11161d"
+            stroke="#7d8899"
+            strokeWidth={view.size / 220}
+            style={{ pointerEvents: "none" }}
+          />
+        )}
+
+        {/* What is wrong, shaded where it is wrong. A gap is the common one and
+            the only one a careful person still hits: it means a piece of the
+            house belongs to no room, and a room with no walls touching it gets
+            no doorways and cannot be walked into. */}
+        {check &&
+          !check.ok &&
+          [
+            ...check.gaps.map((r) => ({ r, fill: "#f2a54133", stroke: "#f2a541" })),
+            ...check.overlaps.map((r) => ({ r, fill: "#e5484d33", stroke: "#e5484d" })),
+            ...check.overhangs.map((r) => ({ r, fill: "#e5484d33", stroke: "#e5484d" })),
+          ].map(({ r, fill, stroke }, i) => (
+            <rect
+              key={`fault-${i}`}
+              x={r.x0}
+              y={r.y0}
+              width={r.x1 - r.x0}
+              height={r.y1 - r.y0}
+              fill={fill}
+              stroke={stroke}
+              strokeDasharray={`${view.size / 120} ${view.size / 200}`}
+              strokeWidth={view.size / 500}
+              style={{ pointerEvents: "none" }}
+            />
+          ))}
+
         {/* Storeys below and above, ghosted. Essential for stairs: they connect
             only where their footprints overlap, so you need to see through. */}
         {otherFloors.map((room) => {
@@ -609,6 +701,78 @@ export function PlanBuilder({
           touching anything, so {stranded.length === 1 ? "it has" : "they have"} no way in. Drag{" "}
           {stranded.length === 1 ? "it" : "them"} against a neighbour.
         </p>
+      )}
+
+      {/* Why the drawing is not finished, in the same words the shading uses. */}
+      {check && !check.ok && (
+        <p
+          data-testid="layout-fault"
+          className="mt-2 rounded border border-warn/40 bg-warn/10 px-3 py-2 text-xs text-warn"
+        >
+          {check.why}
+        </p>
+      )}
+
+      {/*
+        The rooms the house is known to have and the drawing does not.
+        This is what makes the stage guidance rather than homework: the bed and
+        bath count came off the listing and is never wrong, so a room on this
+        list is a room that exists whether or not anybody photographed it.
+      */}
+      {unplaced && unplaced.length > 0 && (
+        <div className="mt-2 rounded border border-ink-600 bg-ink-800 px-3 py-2">
+          <p className="text-xs text-mist-400">
+            Still to place — {unplaced.length} room{unplaced.length === 1 ? "" : "s"} the house is
+            known to have:
+          </p>
+          <div className="mt-1.5 flex flex-wrap gap-1.5">
+            {unplaced.map((label) => (
+              <button
+                key={label}
+                data-testid="unplaced-room"
+                onClick={() => addRoom(label)}
+                className="rounded border border-ink-500 px-2 py-1 text-xs hover:bg-ink-600"
+              >
+                + {label}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/*
+        Rooms seen through an opening in the photographs, and whether the
+        drawing agrees. Never a gate: the outline is measured and the
+        photographs are not, so a pair that cannot be made to touch inside the
+        real building is the conflict being flagged rather than an error.
+      */}
+      {adjacency && adjacency.length > 0 && (
+        <div className="mt-2 rounded border border-ink-600 bg-ink-800 px-3 py-2">
+          <p className="text-xs text-mist-400">Seen connected in the photos:</p>
+          <div className="mt-1.5 flex flex-wrap gap-1.5">
+            {adjacency.map(([a, b]) => {
+              const met = plan.openings.some((o) => {
+                const first = plan.rooms.find((r) => r.id === o.between[0])?.label;
+                const second = plan.rooms.find((r) => r.id === o.between[1])?.label;
+                return (
+                  (first === a && second === b) || (first === b && second === a)
+                );
+              });
+              return (
+                <span
+                  key={`${a}|${b}`}
+                  className={`rounded border px-2 py-1 text-xs ${
+                    met
+                      ? "border-ink-500 text-mist-400"
+                      : "border-warn/40 bg-warn/10 text-warn"
+                  }`}
+                >
+                  {met ? "✓" : "·"} {a} — {b}
+                </span>
+              );
+            })}
+          </div>
+        </div>
       )}
     </div>
   );

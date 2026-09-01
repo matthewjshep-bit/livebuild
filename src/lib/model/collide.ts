@@ -20,10 +20,27 @@ export const WALKER_RADIUS = 0.28;
 /** Eye height for an average adult. */
 export const EYE_HEIGHT = 1.62;
 
-export type Collider = { x0: number; y0: number; x1: number; y1: number };
+/**
+ * A wall to bump into, as a box that knows which way it is turned.
+ *
+ * This used to be an axis-aligned rectangle, which is exact for a wall running
+ * along x or y and badly wrong for one at any other angle: the bounding box of a
+ * four-metre wall at 45 degrees is nearly three metres square, so it seals the
+ * doorways either side of it and blocks open floor a metre away. Storing the
+ * turn instead costs two numbers and a rotation in the test.
+ */
+export type Collider = {
+  center: Vec2;
+  /** Half its length along the wall, and half its thickness across. */
+  halfLength: number;
+  halfThickness: number;
+  /** The wall's own direction, precomputed so the test does no trigonometry. */
+  cos: number;
+  sin: number;
+};
 
 /**
- * Blocking rectangles for a storey, in plan space.
+ * Blocking boxes for a storey, in plan space.
  *
  * Headers are skipped: the piece above a doorway is a wall in the model and a
  * gap to walk through in practice, and treating it as solid would seal every
@@ -36,24 +53,37 @@ export function collidersFor(plan: Plan, level: number): Collider[] {
     // Anything starting above knee height is something you walk under.
     if (wall.header || wall.base > 0.4) continue;
 
-    const alongX = Math.abs(wall.angleDeg) < 45;
-    const halfW = (alongX ? wall.length : wall.thickness) / 2;
-    const halfD = (alongX ? wall.thickness : wall.length) / 2;
-
+    // The same convention the renderer uses: a box built along its local +x and
+    // turned by `angleDeg`, which sends +x to (cos, -sin) in plan.
+    const r = (wall.angleDeg * Math.PI) / 180;
     out.push({
-      x0: wall.center[0] - halfW,
-      y0: wall.center[1] - halfD,
-      x1: wall.center[0] + halfW,
-      y1: wall.center[1] + halfD,
+      center: wall.center,
+      halfLength: wall.length / 2,
+      halfThickness: wall.thickness / 2,
+      cos: Math.cos(r),
+      sin: -Math.sin(r),
     });
   }
   return out;
 }
 
-/** Would a walker of the given radius overlap anything solid here? */
+/**
+ * Would a walker of the given radius overlap anything solid here?
+ *
+ * The point is moved into each wall's own frame and tested against two
+ * intervals - which for an axis-aligned wall is arithmetically the same test as
+ * before, and for any other wall is the one that was meant all along.
+ */
 export function blocked(colliders: Collider[], x: number, y: number, radius = WALKER_RADIUS): boolean {
   for (const c of colliders) {
-    if (x > c.x0 - radius && x < c.x1 + radius && y > c.y0 - radius && y < c.y1 + radius) {
+    const dx = x - c.center[0];
+    const dy = y - c.center[1];
+    const along = dx * c.cos + dy * c.sin;
+    const across = -dx * c.sin + dy * c.cos;
+    if (
+      Math.abs(along) < c.halfLength + radius &&
+      Math.abs(across) < c.halfThickness + radius
+    ) {
       return true;
     }
   }

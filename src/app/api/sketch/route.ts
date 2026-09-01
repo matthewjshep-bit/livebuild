@@ -38,6 +38,27 @@ const SketchSchema = z.object({
   notes: z.array(z.string()).describe("Two to four short phrases on what you read"),
 });
 
+/**
+ * What changes when the drawing was drawn by a professional.
+ *
+ * Appended rather than replacing the prompt, because everything it already says
+ * about reading a plan into rectangles is still true - a printed plan is a
+ * neater version of the same problem. What differs is that it carries real
+ * information a sketch does not: dimension strings, a scale bar, walls with
+ * thickness, and a great deal of furniture and annotation drawn to a standard
+ * that makes it look load-bearing when it is not.
+ */
+const FLOORPLAN = `
+
+This drawing is a printed or professionally drawn floor plan rather than a hand sketch. Four things follow:
+
+- **Dimensions are written down.** Strings like 12'-6" x 14'-0", 3.6m x 4.2m, or a number under a room name are the room's real size. Put them in writtenFeet - they are far better than anything measured off the image, and they are the difference between a plan that is the right shape and one that is the right size.
+- **Walls have thickness.** A printed plan draws walls as two lines or as a filled band. A room's rectangle is the *inside* of those walls, not the middle and not the outside.
+- **There is a lot that is not the building.** Furniture, appliances, fixtures, dimension lines, leader lines, hatching, north arrows, scale bars, title blocks, logos and page furniture. None of it is a room. A bath drawn in a bathroom is not a room; the bathroom is.
+- **Rooms are named, and the names are reliable.** Prefer the plan's own label over anything inferred from what is drawn inside it.
+
+Read only the plan itself. If the page shows two floors side by side, use level 0 and 1; if it shows the same floor twice - a furnished and an unfurnished version, or a dimensioned one - read it once.`
+
 const SYSTEM = `You read hand-drawn floor plans and return them as rectangles.
 
 The drawing is usually a phone photo of paper: wobbly lines, uneven lighting, maybe at a slight angle. Read it as if it were straight on and neatly drawn.
@@ -64,9 +85,11 @@ export async function POST(request: Request) {
   }
 
   let dataUrl: string;
+  let kind: "sketch" | "floorplan" = "sketch";
   try {
     const body = await request.json();
     dataUrl = typeof body?.image === "string" ? body.image : "";
+    if (body?.kind === "floorplan") kind = "floorplan";
   } catch {
     return Response.json({ error: "bad-request" }, { status: 400 });
   }
@@ -84,7 +107,7 @@ export async function POST(request: Request) {
       // Reading a wobbly sketch into consistent coordinates is genuinely harder
       // than naming a room, and a misread here costs the user the whole layout.
       output_config: { effort: "high", format: zodOutputFormat(SketchSchema) },
-      system: SYSTEM,
+      system: kind === "floorplan" ? SYSTEM + FLOORPLAN : SYSTEM,
       messages: [
         {
           role: "user",

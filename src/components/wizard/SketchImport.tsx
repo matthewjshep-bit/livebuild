@@ -51,7 +51,13 @@ export function SketchImport({
   const [dragging, setDragging] = useState(false);
   // Drawing is the default. Photographing paper works, but it assumes you are
   // not already sitting at the machine you are building the tour on.
-  const [mode, setMode] = useState<"draw" | "photo">("draw");
+  /**
+   * "photo" and "floorplan" take the same picture down the same path and differ
+   * only in what the reader is told it is looking at - which is worth a mode of
+   * its own, because a printed plan carries written dimensions and a great deal
+   * of furniture drawn to a standard that makes it look structural.
+   */
+  const [mode, setMode] = useState<"draw" | "photo" | "floorplan">("draw");
   const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -72,7 +78,7 @@ export function SketchImport({
       const response = await fetch("/api/sketch", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ image: dataUrl }),
+        body: JSON.stringify({ image: dataUrl, kind: mode === "floorplan" ? "floorplan" : "sketch" }),
       });
 
       if (!response.ok) {
@@ -160,6 +166,17 @@ export function SketchImport({
         >
           Photo of paper
         </button>
+        <button
+          onClick={() => setMode("floorplan")}
+          data-testid="import-floorplan"
+          className={`rounded px-3 py-1.5 text-xs transition ${
+            mode === "floorplan"
+              ? "bg-accent text-ink-900"
+              : "border border-ink-500 text-mist-200 hover:bg-ink-600"
+          }`}
+        >
+          Floor plan
+        </button>
       </div>
 
       {mode === "draw" && (
@@ -169,7 +186,7 @@ export function SketchImport({
         </div>
       )}
 
-      {mode === "photo" && (
+      {(mode === "photo" || mode === "floorplan") && (
       <div
         onDragOver={(e) => {
           e.preventDefault();
@@ -194,9 +211,19 @@ export function SketchImport({
           <div className="space-y-1">
             <div className="text-3xl">{busy ? "👀" : "✏️"}</div>
             <p className="text-sm text-mist-200">
-              {busy ? "Reading your drawing…" : "Drop a photo of your sketch"}
+              {busy
+                ? "Reading your drawing…"
+                : mode === "floorplan"
+                  ? "Drop the floor plan"
+                  : "Drop a photo of your sketch"}
             </p>
-            {!busy && <p className="text-xs text-mist-400">or click to choose one</p>}
+            {!busy && (
+              <p className="text-xs text-mist-400">
+                {mode === "floorplan"
+                  ? "From a listing, an appraisal or a builder — written dimensions are used"
+                  : "or click to choose one"}
+              </p>
+            )}
           </div>
         )}
         <input
@@ -213,7 +240,7 @@ export function SketchImport({
       </div>
       )}
 
-      {mode === "photo" && error && <p className="mt-2 text-xs text-warn">{error}</p>}
+      {mode !== "draw" && error && <p className="mt-2 text-xs text-warn">{error}</p>}
       <p className="mt-2 text-[11px] text-mist-400">
         This replaces the current layout. You can still drag and rotate afterwards.
       </p>

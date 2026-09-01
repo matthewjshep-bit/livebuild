@@ -96,6 +96,7 @@ export function PlanBuilder({
   livingAreaSqft,
   boundary,
   check,
+  backdrop,
   unplaced,
   adjacency,
   showHeading = true,
@@ -122,6 +123,14 @@ export function PlanBuilder({
    * humane - nobody should reach the end of a layout and be told no.
    */
   check?: DrawnCheck | null;
+  /**
+   * The satellite image, already placed in plan coordinates.
+   *
+   * Plain numbers rather than a component, so the drawing surface does no
+   * fetching and the arithmetic that positions it stays in `site/frame.ts`
+   * where it is round-tripped by a test.
+   */
+  backdrop?: { href: string; x: number; y: number; size: number; transform: string } | null;
   /** Rooms the house is known to have that are not on the plan yet. */
   unplaced?: string[];
   /** Pairs seen through an opening in the photographs. */
@@ -530,14 +539,33 @@ export function PlanBuilder({
           if (e.target === svgRef.current) setSelected(null);
         }}
       >
+        {/* The ground the house stands on. Dimmed hard: it is there to place
+            the building against, and a bright aerial photograph competes with
+            the drawing it is supposed to be helping. */}
+        {backdrop && (
+          <g transform={backdrop.transform} style={{ pointerEvents: "none" }}>
+            <image
+              href={backdrop.href}
+              x={backdrop.x}
+              y={backdrop.y}
+              width={backdrop.size}
+              height={backdrop.size}
+              opacity={0.55}
+              preserveAspectRatio="none"
+            />
+          </g>
+        )}
+
         {/* The building, when it is measured. Drawn first and beneath
             everything, and never interactive - it is the constraint, not a
             thing to be dragged. */}
         {boundary && boundary.length > 2 && (
           <polygon
             points={boundary.map((p) => `${p[0]},${p[1]}`).join(" ")}
-            fill="#11161d"
-            stroke="#7d8899"
+            // Filled only when there is nothing underneath. Over a satellite
+            // image the fill would hide the very thing it is drawn against.
+            fill={backdrop ? "#11161d55" : "#11161d"}
+            stroke={backdrop ? "#ffd166" : "#7d8899"}
             strokeWidth={view.size / 220}
             style={{ pointerEvents: "none" }}
           />

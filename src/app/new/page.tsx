@@ -26,6 +26,9 @@ import { layoutFromSpec } from "@/lib/plan/autolayout";
 import { type PackPlan, layoutFromFootprint } from "@/lib/plan/footprint";
 import { arrangeRooms } from "@/lib/plan/layout-client";
 import { checkDrawn, drawableBoundary } from "@/lib/plan/drawn";
+import { GOOGLE_ATTRIBUTION } from "@/lib/site/geo";
+import { tileExtentFor, tilePlacement } from "@/lib/site/frame";
+import { useSiteTile } from "@/components/wizard/useSiteTile";
 import { roomKind } from "@/lib/plan/room-kind";
 import { type HouseSpec, describeToSpec } from "@/lib/plan/describe";
 import { buildBom } from "@/lib/bom/build";
@@ -780,6 +783,37 @@ function NewTourInner() {
     [evidence],
   );
 
+  /**
+   * The satellite image behind the drawing.
+   *
+   * Fetched at the footprint frame's own centre - the building's centroid -
+   * rather than at the geocoded address, which can land on a corner or out in
+   * the street and would slide the whole picture sideways by the difference.
+   */
+  const tilePlace = useMemo(() => {
+    const frame = evidence?.footprint?.frame;
+    if (!frame || !evidence?.footprint) return null;
+    return {
+      lat: frame.centre.lat,
+      lon: frame.centre.lon,
+      extentM: tileExtentFor(evidence.footprint),
+    };
+  }, [evidence]);
+
+  const tile = useSiteTile(tilePlace);
+
+  const backdrop = useMemo(() => {
+    const frame = evidence?.footprint?.frame;
+    if (!frame || !tile || !tilePlace) return null;
+    const placed = tilePlacement(frame, {
+      lat: tilePlace.lat,
+      lon: tilePlace.lon,
+      sizePx: tile.sizePx,
+      metresPerPixel: tile.metresPerPixel,
+    });
+    return { href: tile.href, ...placed };
+  }, [evidence, tile, tilePlace]);
+
   const layoutCheck = useMemo(() => {
     if (!layoutPlan || !boundary?.ok) return null;
     if (layoutPlan.rooms.length === 0) return null;
@@ -1010,6 +1044,9 @@ function NewTourInner() {
               {boundary?.ok && boundary.note && (
                 <p className="mt-1 text-xs text-mist-400">{boundary.note}</p>
               )}
+              {backdrop && (
+                <p className="mt-1 text-[11px] text-mist-400">{GOOGLE_ATTRIBUTION}</p>
+              )}
               {boundary && !boundary.ok && (
                 <p className="mt-1 text-xs text-warn">
                   {boundary.why} Drawing freely instead; the shape will be fitted afterwards.
@@ -1040,6 +1077,7 @@ function NewTourInner() {
               livingAreaSqft={facts?.sqft ?? undefined}
               boundary={boundary?.ok ? boundary.outline : null}
               check={layoutCheck}
+              backdrop={backdrop}
               unplaced={unplaced}
               adjacency={evidence.adjacency}
               showHeading={false}

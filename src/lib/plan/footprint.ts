@@ -236,6 +236,28 @@ export type Footprint = {
   areaSqft: number;
   /** How far the building was rotated to square it up, in degrees. */
   rotationDeg: number;
+  /**
+   * How a point on the map becomes a point on this plan.
+   *
+   * Every number here is already computed while squaring the building up and
+   * was, until now, thrown away - which is why nothing could put the satellite
+   * image behind the drawing. The plan is the outline projected about its own
+   * centroid, rotated straight, moved to its own corner and sometimes scaled to
+   * the listing's area, and three of those four steps went unrecorded.
+   *
+   * Optional, because a footprint restored from a document written before this
+   * existed has none. A missing frame means no backdrop - a plainer drawing
+   * surface, not a broken one.
+   */
+  frame?: {
+    /** The centroid the projection was taken about. */
+    centre: { lat: number; lon: number };
+    rotationDeg: number;
+    /** The corner the outline was moved to zero from, in rotated metres. */
+    offset: Vec2;
+    /** The listing-area nudge, or 1 when none was applied. */
+    scale: number;
+  };
   /** Vertices before and after simplification, so the reduction is visible. */
   vertices: { raw: number; simplified: number };
 };
@@ -302,6 +324,10 @@ export function prepareFootprint(
   targetGroundSqft?: number,
   roomCount?: number,
 ): Footprint {
+  const centre = {
+    lat: ring.reduce((sum, p) => sum + p[0], 0) / ring.length,
+    lon: ring.reduce((sum, p) => sum + p[1], 0) / ring.length,
+  };
   const local = toLocalMetres(ring);
   const angle = dominantAngle(local);
   const squared = rotate(local, angle);
@@ -337,6 +363,7 @@ export function prepareFootprint(
   const minY = Math.min(...ys);
   outline = outline.map(([x, y]) => [x - minX, y - minY] as Vec2);
 
+  let scale = 1;
   if (targetGroundSqft && targetGroundSqft > 100) {
     const current = polygonArea(outline) / (M_PER_FT * M_PER_FT);
     if (current > 50) {
@@ -346,6 +373,7 @@ export function prepareFootprint(
       // would produce a house that matches neither.
       if (factor > 0.6 && factor < 1.7) {
         outline = outline.map(([x, y]) => [x * factor, y * factor] as Vec2);
+        scale = factor;
       }
     }
   }
@@ -366,6 +394,7 @@ export function prepareFootprint(
     rects,
     areaSqft: polygonArea(outline) / (M_PER_FT * M_PER_FT),
     rotationDeg: angle,
+    frame: { centre, rotationDeg: angle, offset: [minX, minY], scale },
     vertices: { raw: ring.length, simplified: outline.length },
   };
 }

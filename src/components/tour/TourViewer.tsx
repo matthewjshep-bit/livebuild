@@ -609,7 +609,13 @@ export function TourViewer({
   const bom = useMemo(
     () =>
       onPropertyChange
-        ? buildBom(property.plan, property.condition, property.rates, property.houseCondition)
+        ? buildBom(
+            property.plan,
+            property.condition,
+            property.rates,
+            property.houseCondition,
+            property.kind ?? "house",
+          )
         : null,
     [property, onPropertyChange],
   );

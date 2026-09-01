@@ -178,9 +178,9 @@ check(
 
   // The sanity check must actually respond.
   check("adding house scope moves the sanity verdict up",
-    ["light", "medium", "heavy", "above"].includes(withHouse.sanity.verdict),
-    withHouse.sanity.verdict);
-  check("the sanity check explains itself", withHouse.sanity.summary.length > 20);
+    ["light", "medium", "heavy", "above"].includes(withHouse.sanity!.verdict),
+    withHouse.sanity!.verdict);
+  check("the sanity check explains itself", withHouse.sanity!.summary.length > 20);
 
   // And the CSV carries it.
   const csv = bomToCsv(withHouse, "Demo House");
@@ -192,7 +192,7 @@ check(
   console.log(
     `  house scope: $${Math.round(withHouse.houseTotal).toLocaleString()} on top of ` +
     `$${Math.round(withoutHouse.total).toLocaleString()} of rooms → ` +
-    `$${Math.round(withHouse.total).toLocaleString()} (${withHouse.sanity.verdict})`,
+    `$${Math.round(withHouse.total).toLocaleString()} (${withHouse.sanity!.verdict})`,
   );
 }
 

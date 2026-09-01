@@ -31,6 +31,9 @@ import type { Exterior } from "@/lib/schema";
  * arranging is the decision the user is being handed.
  */
 
+/** How many distinct spaces a "room" build may come out as. */
+const MAX_ROOM_MODE_SPACES = 3;
+
 export type BuildEvidence = {
   /** Bumped if the shape changes, so a stale saved brief is ignored not misread. */
   version: 1;
@@ -53,6 +56,16 @@ export type BuildEvidence = {
 };
 
 export type GatherInput<T extends BuildPhoto> = {
+  /**
+   * Whether this is one room or a whole house.
+   *
+   * A room needs none of the second half of this function - no exterior, no
+   * outline, no bed and bath count to reconcile against - and it needs one
+   * thing a house does not: the photographs are all of the same small number of
+   * spaces, and saying so is what stops twelve pictures of a kitchen being
+   * scattered across nine rooms.
+   */
+  mode?: "room" | "house";
   photos: T[];
   /** The described room list, when the house was described. */
   spec: HouseSpec | null;
@@ -92,9 +105,48 @@ export async function gatherEvidence<T extends BuildPhoto>(
     );
   }
 
-  const roomLabels: string[] = [];
+  let roomLabels: string[] = [];
   for (const photo of labelled) {
     if (photo.roomLabel && !roomLabels.includes(photo.roomLabel)) roomLabels.push(photo.roomLabel);
+  }
+
+  /**
+   * A room is a room, however many ways the classifier saw it.
+   *
+   * Photographs of one kitchen come back labelled kitchen, dining, living and
+   * hallway - not because the model is wrong but because a kitchen photographed
+   * from the doorway genuinely contains a doorway. For a house that is useful
+   * evidence; for a room it is nine rooms where there is one.
+   *
+   * So the labels are ranked by how many photographs carry them and the tail is
+   * folded into the most popular. Three rather than one, because an open-plan
+   * kitchen and diner or a bedroom with its ensuite are what people actually
+   * photograph together, and forcing those into a single space would be its own
+   * kind of wrong.
+   */
+  if (input.mode === "room" && roomLabels.length > 0) {
+    const tally = new Map<string, number>();
+    for (const photo of labelled) {
+      if (!photo.roomLabel) continue;
+      tally.set(photo.roomLabel, (tally.get(photo.roomLabel) ?? 0) + 1);
+    }
+    const ranked = [...tally].sort((a, z) => z[1] - a[1]).map(([label]) => label);
+    const keep = ranked.slice(0, MAX_ROOM_MODE_SPACES);
+    const folded = keep.length > 0 ? keep : roomLabels.slice(0, 1);
+
+    let moved = 0;
+    for (const photo of labelled) {
+      if (photo.roomLabel && !folded.includes(photo.roomLabel)) {
+        photo.roomLabel = folded[0];
+        moved++;
+      }
+    }
+    if (moved > 0) {
+      notes.push(
+        `${moved} photo${moved === 1 ? "" : "s"} looked like another room from the doorway; kept ${moved === 1 ? "it" : "them"} with the ${folded[0].toLowerCase()}.`,
+      );
+    }
+    roomLabels = folded;
   }
 
   // --- 2. What does the house look like from outside? ---
@@ -104,12 +156,13 @@ export async function gatherEvidence<T extends BuildPhoto>(
   // from a table of typical room sizes, because this ran afterwards. Skipped
   // without a site, and failing quietly - a house down a private track has no
   // street view, and that is not an error.
+  const houseMode = input.mode !== "room";
   let outside = input.exterior;
   let tracedRing: Array<[number, number]> | null = null;
   let tracedConfidence: "high" | "low" | null = null;
   let houseCondition: HouseCondition = {};
 
-  if (input.site) {
+  if (houseMode && input.site) {
     onStep?.({ label: "Looking at the outside", done: 0, total: 1 });
     const seen = await readExterior({
       lat: input.site.lat,
@@ -150,6 +203,27 @@ export async function gatherEvidence<T extends BuildPhoto>(
   let rooms: RoomEntry[] =
     source.length > 0 ? source : roomLabels.map((l) => ({ label: l, level: 0 }));
 
+  // A room with no photographs at all is nothing to build; a *house* with none
+  // is still a house, and gets the typical one below.
+  if (rooms.length === 0 && !houseMode) {
+    return {
+      evidence: {
+        version: 1,
+        photos: [],
+        adjacency: [],
+        rooms: [],
+        addedByInventory: [],
+        outside: null,
+        houseCondition: {},
+        footprint: null,
+        shapeFrom: "none",
+        storeys: 1,
+        notes: ["No room could be made out from those photographs."],
+      },
+      photos: labelled,
+    };
+  }
+
   if (rooms.length === 0) {
     rooms = [
       "Living Room", "Kitchen", "Dining Room", "Primary Bedroom",
@@ -160,10 +234,14 @@ export async function gatherEvidence<T extends BuildPhoto>(
     );
   }
 
-  const inventory = reconcileInventory(rooms, {
-    beds: input.facts?.beds ?? null,
-    baths: input.facts?.baths ?? null,
-  });
+  // A listing's bed and bath count says nothing about a single room, and
+  // applying it would add eight rooms nobody photographed.
+  const inventory = houseMode
+    ? reconcileInventory(rooms, {
+        beds: input.facts?.beds ?? null,
+        baths: input.facts?.baths ?? null,
+      })
+    : { rooms, added: [], notes: [] };
   rooms = inventory.rooms;
   notes.push(...inventory.notes);
 
@@ -182,7 +260,7 @@ export async function gatherEvidence<T extends BuildPhoto>(
   // invented from a table of typical room sizes. Then, failing both, that
   // rectangle - but with a house's proportions rather than a square, which is
   // the difference between a ranch and a block of flats.
-  let ring = input.footprint?.ring ?? null;
+  let ring = houseMode ? (input.footprint?.ring ?? null) : null;
   let shapeFrom: BuildEvidence["shapeFrom"] = ring ? "map" : "none";
 
   if (!ring && tracedRing) {
@@ -194,7 +272,7 @@ export async function gatherEvidence<T extends BuildPhoto>(
         : "No building is drawn on the map here, so the outline was read off the satellite image.",
     );
   }
-  if (!ring && input.site) {
+  if (!ring && houseMode && input.site) {
     ring = syntheticRing(input.site, input.facts?.sqft ? input.facts.sqft / storeys : 1600);
     shapeFrom = "invented";
     notes.push(

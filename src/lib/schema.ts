@@ -226,6 +226,22 @@ export const Property = z.object({
   houseCondition: z.record(z.string(), Grade).default({}),
   /** Rate-card overrides, keyed by rate id. Absent means the default. */
   rates: z.record(z.string(), z.number()).default({}),
+  /**
+   * Whether this is a whole house or a room on its own.
+   *
+   * Optional, and absent means a house - which is what every document written
+   * before this existed is, so nothing has to be migrated. It exists because a
+   * handful of judgements are only sensible about a house: a two-hundred-square-
+   * foot kitchen should not be told it is "below the usual range for a house
+   * under 1,000 sqft", and it has no roof, no furnace and no foundation to
+   * report as ungraded.
+   *
+   * Deliberately stored rather than inferred. "No site and not many rooms"
+   * describes a single room and also describes a house drawn by hand, and
+   * guessing between them would put the wrong advice on somebody's scope of
+   * work with nothing to point at.
+   */
+  kind: z.enum(["room", "house"]).nullish(),
   /** Where on earth the house is, and which way it faces. */
   site: Site.nullish(),
   /** What the outside looks like, from the map and from imagery. */

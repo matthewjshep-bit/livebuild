@@ -187,7 +187,13 @@ function NewTourInner() {
   const scopeTotal = useMemo(
     () =>
       property
-        ? buildBom(property.plan, property.condition, property.rates, property.houseCondition)
+        ? buildBom(
+            property.plan,
+            property.condition,
+            property.rates,
+            property.houseCondition,
+            property.kind ?? "house",
+          )
             .total
         : 0,
     [property],
@@ -734,6 +740,16 @@ function NewTourInner() {
       let assembled: Property = {
         id: propertyId,
         label: label || "My home",
+        /**
+         * What this document is, said rather than worked out later.
+         *
+         * "No site and not many rooms" describes a single room and also
+         * describes a house somebody drew by hand, and guessing between them
+         * would put house-sized rehab advice on a kitchen's scope of work with
+         * nothing to point at. A room is a build that was never drawn and never
+         * had an outline.
+         */
+        kind: drawn === null && !prepared && rooms.length <= 3 ? "room" : "house",
         displayUnits: "ft",
         plan: nextPlan,
         nodes: placed.nodes,
@@ -961,12 +977,33 @@ function NewTourInner() {
           footprint,
           site: listingSite,
           exterior,
+          mode,
         },
         setStep,
       );
       if (labelled.some((p) => p.roomLabel)) setPhotos(labelled);
       adjacencyRef.current = found.adjacency;
       setEvidence(found);
+
+      /**
+       * A room is built; a house is drawn first.
+       *
+       * There is nothing to lay out when there is one room, or three that were
+       * photographed together - no outline to fill, no arrangement to choose,
+       * and a blank canvas asking somebody to place a kitchen inside nothing is
+       * a worse question than not asking.
+       */
+      if (mode === "room") {
+        if (found.rooms.length === 0) {
+          setFailed(found.notes[0] ?? "No room could be made out from those photographs.");
+          setStep(null);
+          setStage("photos");
+          return;
+        }
+        setStage("building");
+        await construct(found, null);
+        return;
+      }
 
       /**
        * Stop, and hand the house over.
@@ -994,7 +1031,7 @@ function NewTourInner() {
       setStep(null);
       setStage("photos");
     }
-  }, [photos, spec, sheet, mode, facts, footprint, listingSite, exterior]);
+  }, [photos, spec, sheet, mode, facts, footprint, listingSite, exterior, construct]);
 
 
   if (restoring) {
@@ -1041,11 +1078,24 @@ function NewTourInner() {
         {stage === "photos" && (
           <>
             <div className="mx-auto mb-6 max-w-3xl text-center">
-              <h1 className="text-2xl font-semibold tracking-tight">Make a house</h1>
+              <h1 className="text-2xl font-semibold tracking-tight">
+                {mode === "room" ? "Photograph the room" : "Make a house"}
+              </h1>
               <p className="mt-2 text-sm leading-relaxed text-mist-400">
-                The address gives the building&rsquo;s real outline, which way it faces and
-                what the outside is made of. The photographs can come from anywhere &mdash;
-                dropped in, a Drive folder someone sent you, or pulled from the listing.
+                {mode === "room" ? (
+                  <>
+                    Every wall, and the corners between them. More angles of the same
+                    room read better than one of each &mdash; the shape is worked out
+                    from where things overlap.
+                  </>
+                ) : (
+                  <>
+                    The address gives the building&rsquo;s real outline, which way it faces
+                    and what the outside is made of. The photographs can come from anywhere
+                    &mdash; dropped in, a Drive folder someone sent you, or pulled from the
+                    listing.
+                  </>
+                )}
               </p>
             </div>
 
@@ -1059,7 +1109,11 @@ function NewTourInner() {
               </div>
             )}
 
-            <PropertyStart onImported={importListing} />
+            {/* A room has no address. Not merely unnecessary - offering one
+                invites somebody to type it, and then the satellite trace and
+                the whole house-shaped pipeline follow from a building that has
+                nothing to do with the kitchen they photographed. */}
+            {mode === "house" && <PropertyStart onImported={importListing} />}
 
             {/* What the address actually turned up, before anything is built.
                 Saying so here is what makes the next click feel safe. */}

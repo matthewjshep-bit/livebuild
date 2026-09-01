@@ -123,9 +123,11 @@ export function ScopeRail({
               )}
             </div>
           ) : (
-            <div className="mt-0.5 text-[11px] leading-relaxed text-mist-400">
-              {bom.sanity.summary}
-            </div>
+            bom.sanity && (
+              <div className="mt-0.5 text-[11px] leading-relaxed text-mist-400">
+                {bom.sanity.summary}
+              </div>
+            )
           )}
           {scope && onClearFocus && (
             <button

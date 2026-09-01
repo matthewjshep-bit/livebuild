@@ -62,7 +62,13 @@ export default function BomPage({ params }: { params: Promise<{ id: string }> })
   const bom = useMemo(
     () =>
       property
-        ? buildBom(property.plan, property.condition, property.rates, property.houseCondition)
+        ? buildBom(
+            property.plan,
+            property.condition,
+            property.rates,
+            property.houseCondition,
+            property.kind ?? "house",
+          )
         : null,
     [property],
   );
@@ -175,7 +181,11 @@ export default function BomPage({ params }: { params: Promise<{ id: string }> })
             })}
           </span>
         </div>
-        <p className="mt-2 text-xs leading-relaxed text-mist-400">{bom.sanity.summary}</p>
+        {/* A single room has no house-sized range to be compared against, so
+            it is told nothing rather than told something untrue. */}
+        {bom.sanity && (
+          <p className="mt-2 text-xs leading-relaxed text-mist-400">{bom.sanity.summary}</p>
+        )}
         {bom.assumedTotal > 0 && (
           <p className="mt-1.5 text-xs text-warn">
             {Math.round((bom.assumedTotal / Math.max(bom.total, 1)) * 100)}% of this rests on

@@ -82,7 +82,8 @@ export type Bom = {
   houseTotal: number;
   livingSqft: number;
   /** The itemised total placed against whole-project ranges by house size. */
-  sanity: Comparison;
+  /** Null for a single room, which has no house-sized range to be compared to. */
+  sanity: Comparison | null;
   unknownHouseElements: string[];
   material: number;
   labour: number;
@@ -246,6 +247,8 @@ export function buildBom(
   condition: ConditionMap = {},
   rateOverrides?: Record<string, number>,
   houseCondition: HouseCondition = {},
+  /** "room" suppresses the judgements that are only sensible about a house. */
+  kind: "room" | "house" = "house",
 ): Bom {
   const rates = resolveRates(rateOverrides);
   const rooms = takeoffForPlan(plan)
@@ -273,8 +276,19 @@ export function buildBom(
     houseLabour: house.reduce((s, a) => s + a.labour, 0),
     houseTotal: house.reduce((s, a) => s + a.total, 0),
     livingSqft,
-    sanity: compareToBands(total, livingSqft),
-    unknownHouseElements: HOUSE_ELEMENTS.filter((e) => isUnknown(houseCondition[e])),
+    /**
+     * Both of these are statements about a house, so a room gets neither.
+     *
+     * The bands compare a total against what a rehab of that size usually
+     * costs, and the smallest band starts at a thousand square feet - so a
+     * kitchen was reliably told it came in "below the usual range for a house
+     * under 1,000 sqft", which is true, useless and slightly alarming. The
+     * unknown-elements list is worse: it reported a roof, a furnace and a
+     * foundation as ungraded for a room that has none of them.
+     */
+    sanity: kind === "room" ? null : compareToBands(total, livingSqft),
+    unknownHouseElements:
+      kind === "room" ? [] : HOUSE_ELEMENTS.filter((e) => isUnknown(houseCondition[e])),
     material,
     labour,
     total,

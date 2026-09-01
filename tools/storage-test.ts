@@ -17,7 +17,12 @@
 // needs. Static imports evaluate in order, which is what makes this work where
 // a dynamic import would need a top-level await that tsx cannot compile.
 import { storage } from "./lib/fake-storage";
-import { listPropertyIds, loadProperty, saveProperty } from "../src/lib/property-store";
+import {
+  listPropertyIds,
+  loadProperty,
+  recoverOrphanedKeys,
+  saveProperty,
+} from "../src/lib/property-store";
 import type { Property } from "../src/lib/schema";
 import { M_PER_FT } from "../src/lib/units";
 
@@ -120,9 +125,82 @@ check(
   doomed.join(","),
 );
 
+// --- A house stranded by the storage rename comes back ---
+//
+// Not hypothetical. The app renamed every `mattermatt:` key to `livebuild:`,
+// deleted the original, and then reverted the rename - leaving every tour built
+// in between under a prefix nothing looked for. This is the recovery, and it is
+// pinned here so the next person to consider renaming a storage key has to
+// delete a passing test to do it.
+{
+  storage.clear();
+
+  const stranded = {
+    id: "forest-hills",
+    label: "20491 Forest Hills Dr",
+    displayUnits: "ft",
+    plan: { scaleRef: { px: 1, meters: M_PER_FT }, rooms: [], openings: [] },
+    nodes: [],
+    splats: [],
+    condition: {},
+    houseCondition: {},
+    rates: {},
+  };
+  storage.setItem("livebuild:property:forest-hills", JSON.stringify(stranded));
+  storage.setItem("livebuild:index", JSON.stringify(["forest-hills"]));
+  storage.setItem("livebuild:admin-key", "hunter2");
+
+  // Through the real entry point, so the wiring is proved and not just the
+  // function: a recovery nothing calls is the same as no recovery.
+  recoverOrphanedKeys(true);
+  const ids = listPropertyIds();
+  check("a stranded tour is found again", ids.includes("forest-hills"), ids.join(","));
+  check("and it loads", loadProperty("forest-hills")?.label === "20491 Forest Hills Dr");
+  check(
+    "under the name in use",
+    storage.getItem("mattermatt:property:forest-hills") !== null,
+  );
+  check(
+    "and the stranded copy is cleared away",
+    storage.getItem("livebuild:property:forest-hills") === null,
+  );
+  // Everything moved, not just the documents - the publish passphrase went too,
+  // and a passphrase that will not stay answered is its own small mystery.
+  check("the passphrase comes back as well", storage.getItem("mattermatt:admin-key") === "hunter2");
+}
+
+// --- and it can never clobber newer work ---
+{
+  storage.clear();
+  const newer = {
+    id: "forest-hills",
+    label: "The newer one",
+    displayUnits: "ft",
+    plan: { scaleRef: { px: 1, meters: M_PER_FT }, rooms: [], openings: [] },
+    nodes: [],
+    splats: [],
+    condition: {},
+    houseCondition: {},
+    rates: {},
+  };
+  storage.setItem("mattermatt:property:forest-hills", JSON.stringify(newer));
+  storage.setItem("mattermatt:index", JSON.stringify(["forest-hills"]));
+  storage.setItem(
+    "livebuild:property:forest-hills",
+    JSON.stringify({ ...newer, label: "A stale copy" }),
+  );
+
+  recoverOrphanedKeys(true);
+  check(
+    "a stale copy never overwrites the current document",
+    loadProperty("forest-hills")?.label === "The newer one",
+    loadProperty("forest-hills")?.label,
+  );
+}
+
 console.log(
   failures === 0
-    ? "STORAGE OK - a corrupt index loses no tours, orphans are recovered, ids do not collide"
+    ? "STORAGE OK - a corrupt index loses no tours, a tour stranded by the rename comes back without clobbering newer work, ids do not collide"
     : `STORAGE BROKEN - ${failures} check(s) failed`,
 );
 process.exit(failures === 0 ? 0 : 1);

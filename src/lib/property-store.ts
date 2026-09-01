@@ -3,7 +3,7 @@
 import { deleteMediaFor, resolveMediaUrl } from "@/lib/media-store";
 import { buildWalkGraph } from "@/lib/plan/walkgraph";
 import { Property, parseProperty } from "@/lib/schema";
-import { INDEX_KEY, PROPERTY_PREFIX } from "@/lib/storage/namespace";
+import { INDEX_KEY, PROPERTY_PREFIX, STORAGE_NS } from "@/lib/storage/namespace";
 
 /**
  * Persistence for the proof of concept: localStorage plus JSON import/export.
@@ -16,6 +16,75 @@ import { INDEX_KEY, PROPERTY_PREFIX } from "@/lib/storage/namespace";
 // Both spelled out in one place - see `storage/namespace`, which explains why
 // they still carry the old product name.
 const KEY_PREFIX = PROPERTY_PREFIX;
+
+/**
+ * Keys written while the app briefly renamed its own storage.
+ *
+ * This is here because the rename actually happened, in this repository, and it
+ * took people's houses with it. The app moved every `mattermatt:` key to
+ * `livebuild:` and deleted the original; the rename was then reverted, and
+ * every tour built in between was left sitting under a prefix nothing looks for
+ * any more. A house that vanishes off the home page is indistinguishable from a
+ * house that was never built.
+ *
+ * So it is carried back, and - unlike last time - the carrying-back **stays**.
+ * A migration is cheap to keep and expensive to have needed: it costs one scan
+ * of localStorage on first read, and deleting it is what turned the first
+ * rename into data loss the second time round. There is no third name planned;
+ * that is exactly what would have been said about the second.
+ *
+ * Only localStorage was ever affected. The photographs live in IndexedDB, which
+ * kept its name throughout precisely because it cannot be renamed in place, so
+ * nothing of the expensive half was ever at risk.
+ */
+const ORPHANED_PREFIX = "livebuild:";
+
+let recovered = false;
+
+/**
+ * Bring anything stranded by the rename back under the name in use.
+ *
+ * Copy, verify, then delete - in that order, and the removal is guarded by a
+ * read-back rather than assumed. If the write fails, on quota or in a private
+ * window, the stranded copy is still there to be found on the next load, which
+ * is the whole point of doing it in that order.
+ *
+ * A key that already exists under the current name is left alone and the
+ * stranded copy dropped: the current one is either the same document or a newer
+ * one, and a stale copy must never clobber newer work.
+ *
+ * Runs once per page load, because it walks the whole of localStorage and
+ * every read would otherwise pay for it. `force` exists so the recovery can be
+ * exercised more than once in a test - this is the one piece of behaviour here
+ * that runs exactly when somebody's houses are missing, so being able to test
+ * it twice is worth one argument.
+ */
+export function recoverOrphanedKeys(force = false): void {
+  if ((recovered && !force) || !canUseStorage()) return;
+  recovered = true;
+  try {
+    const stranded: string[] = [];
+    for (let i = 0; i < window.localStorage.length; i++) {
+      const key = window.localStorage.key(i);
+      if (key?.startsWith(ORPHANED_PREFIX)) stranded.push(key);
+    }
+    // Collected first, then rewritten: mutating localStorage while walking it
+    // by index shifts the keys still to come and would skip half of them.
+    for (const key of stranded) {
+      const restored = `${STORAGE_NS}:${key.slice(ORPHANED_PREFIX.length)}`;
+      const value = window.localStorage.getItem(key);
+      if (value === null) continue;
+      if (window.localStorage.getItem(restored) === null) {
+        window.localStorage.setItem(restored, value);
+        if (window.localStorage.getItem(restored) !== value) continue;
+      }
+      window.localStorage.removeItem(key);
+    }
+  } catch {
+    // Nothing is lost by giving up here: the stranded keys are untouched and
+    // the next load tries again.
+  }
+}
 
 function canUseStorage(): boolean {
   // Storage throws outright in some privacy modes rather than returning null,
@@ -79,6 +148,7 @@ function scanPropertyIds(): string[] {
  */
 export function listPropertyIds(): string[] {
   if (!canUseStorage()) return [];
+  recoverOrphanedKeys();
 
   let indexed: string[] = [];
   try {
@@ -120,6 +190,10 @@ export function saveProperty(property: Property): void {
 
 export function loadProperty(id: string): Property | null {
   if (!canUseStorage()) return null;
+  // Also here, not only in the listing: a `/tour/<id>` link opened directly
+  // never goes near the home page, and a shared link that 404s is exactly the
+  // way somebody finds out their house is gone.
+  recoverOrphanedKeys();
   try {
     const raw = window.localStorage.getItem(KEY_PREFIX + id);
     return raw ? withWalkGraph(parseProperty(JSON.parse(raw))) : null;

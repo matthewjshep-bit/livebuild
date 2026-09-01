@@ -4,7 +4,7 @@ import { Html } from "@react-three/drei";
 import { useFrame } from "@react-three/fiber";
 import { useMemo, useRef } from "react";
 import * as THREE from "three";
-import { boxGeometry, merged, solid } from "@/lib/model/solids";
+import { boxGeometry, merged, slabGeometry, solid } from "@/lib/model/solids";
 import { runGeometry } from "@/lib/model/profiles";
 import { joineryFor } from "@/lib/model/joinery";
 import { ceilingParts } from "@/lib/model/ceiling";
@@ -30,7 +30,7 @@ import {
   type Surface,
   wallSurface,
 } from "@/lib/model/textures";
-import { type WallSolid, wallsForLevel } from "@/lib/model/walls";
+import { type WallSolid, roomIsRectilinear, wallsForLevel } from "@/lib/model/walls";
 import { wallPiecesAround, windowsForLevel } from "@/lib/model/windows";
 import { boundsOf } from "@/lib/plan/autolayout";
 import {
@@ -38,6 +38,7 @@ import {
   centroid,
   levelBase,
   levelsOf,
+  signedArea,
   wallSegmentsForRoom,
 } from "@/lib/plan/geometry";
 import { decompose } from "@/lib/plan/footprint";
@@ -348,19 +349,41 @@ function LevelModel({
       const ceilingTone = roomSpec?.ceiling?.colour ?? scheme.ceiling;
       const trimTone = roomSpec?.trim?.colour ?? scheme.trim;
 
+      /**
+       * The floor, built two ways depending on the room's shape.
+       *
+       * A rectilinear room goes through `decompose` exactly as it always has -
+       * maximal rectangles, then cut where a stairwell drops through. That path
+       * is what every existing test exercises and it produces boxes, which
+       * merge and cost less than triangles.
+       *
+       * Anything else is triangulated from its own outline, because `decompose`
+       * uses the polygon's own x and y values as gridlines: handed a room at
+       * seven degrees it returns a coarse staircase that does not cover the
+       * shape, with no error. A wrong floor is not a thing anybody notices from
+       * outside; they notice it by walking through it.
+       *
+       * The stair hole is the one thing the triangulated path gives up for now,
+       * so a stairwell in an angled room is not cut out of it yet.
+       */
       const holes = floorHolesFor(plan, room);
-      const floorPieces = decompose(room.polygon).flatMap((rect) =>
-        subtractRects(rect, holes),
-      );
-      for (const piece of floorPieces) {
-        const pw = piece.x1 - piece.x0;
-        const pd = piece.y1 - piece.y0;
-        addSurface(
-          room.id,
-          "floor",
-          floorTone,
-          boxGeometry([piece.x0 + pw / 2, baseY - SLAB / 2, piece.y0 + pd / 2], [pw, SLAB, pd]),
+      if (roomIsRectilinear(room.polygon)) {
+        const floorPieces = decompose(room.polygon).flatMap((rect) =>
+          subtractRects(rect, holes),
         );
+        for (const piece of floorPieces) {
+          const pw = piece.x1 - piece.x0;
+          const pd = piece.y1 - piece.y0;
+          addSurface(
+            room.id,
+            "floor",
+            floorTone,
+            boxGeometry([piece.x0 + pw / 2, baseY - SLAB / 2, piece.y0 + pd / 2], [pw, SLAB, pd]),
+          );
+        }
+      } else {
+        const slab = slabGeometry(room.polygon, baseY, SLAB);
+        if (slab) addSurface(room.id, "floor", floorTone, slab);
       }
 
       /**
@@ -426,11 +449,27 @@ function LevelModel({
       // and they carried on through every doorway - while `takeoff.baseboardLf`
       // has always been door-subtracted, off this very function. The model and
       // the price now measure the same skirting.
-      if (floorPieces.length > 0) {
+      if (area(room.polygon) > 1e-6) {
         const h = roomSpec?.trim?.baseboardM ?? BASEBOARD_HEIGHT;
         const profile = roomSpec?.trim?.profile ?? "square";
-        const midX = (b.x0 + b.x1) / 2;
-        const midY = (b.y0 + b.y1) / 2;
+
+        /**
+         * Which way is into the room, across a run of its boundary.
+         *
+         * Read off the winding rather than guessed at. `wallSegmentsForRoom`
+         * walks the polygon in order, so for a positively wound room the
+         * inward normal of a→b is (-dy, dx) - exact, at any angle, and correct
+         * for a concave room where the old test was not. That test asked
+         * whether the bounding box's centre was above or below the run, which
+         * for an L-shaped room's notch points the skirting into the wall.
+         */
+        const wound = signedArea(room.polygon) >= 0 ? 1 : -1;
+        const inwardOf = (ax: number, ay: number, bx: number, by: number): [number, number] => {
+          const dx = bx - ax;
+          const dy = by - ay;
+          const length = Math.hypot(dx, dy) || 1;
+          return [(-dy / length) * wound, (dx / length) * wound];
+        };
 
         for (const segment of wallSegmentsForRoom(room, plan.openings)) {
           const [ax, ay] = segment.a;
@@ -443,10 +482,7 @@ function LevelModel({
           // the boundary, so the answer is the perpendicular that points at the
           // middle - and it has to be right, or the skirting is built inside
           // the plaster where nobody will ever see it.
-          const alongX = runX >= runY;
-          const inward: [number, number] = alongX
-            ? [0, midY > (ay + by) / 2 ? 1 : -1]
-            : [midX > (ax + bx) / 2 ? 1 : -1, 0];
+          const inward = inwardOf(ax, ay, bx, by);
 
           const run = runGeometry(profile, segment, {
             height: h,
@@ -477,10 +513,7 @@ function LevelModel({
             const runX = Math.abs(bx - ax);
             const runY = Math.abs(by - ay);
             if (runX < 1e-4 && runY < 1e-4) continue;
-            const alongX = runX >= runY;
-            const inward: [number, number] = alongX
-              ? [0, midY > (ay + by) / 2 ? 1 : -1]
-              : [midX > (ax + bx) / 2 ? 1 : -1, 0];
+            const inward = inwardOf(ax, ay, bx, by);
             const run = runGeometry(profile, segment, {
               height: crownM,
               depth: crownM * 0.8,

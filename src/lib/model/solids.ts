@@ -1,6 +1,9 @@
 import * as THREE from "three";
 import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
 import { RoundedBoxGeometry } from "three/examples/jsm/geometries/RoundedBoxGeometry.js";
+import { cleanPolygon, triangles } from "@/lib/model/tessellate";
+import { signedArea } from "@/lib/plan/geometry";
+import type { Vec2 } from "@/lib/schema";
 
 /**
  * The three ways this model makes a solid.
@@ -20,6 +23,67 @@ export function boxGeometry(
   const geometry = new THREE.BoxGeometry(size[0], size[1], size[2]);
   if (rotationY) geometry.rotateY(rotationY);
   geometry.translate(center[0], center[1], center[2]);
+  return geometry;
+}
+
+/**
+ * A floor slab in the shape of the room it is under.
+ *
+ * `boxGeometry` is right for a rectangular room and there is no box that is
+ * right for any other kind, which is why floors have gone through `decompose`
+ * until now - and why a room at any angle came back as a coarse staircase that
+ * did not cover it. This builds the slab from the polygon itself: a top face
+ * from the triangulation, a bottom face from the same triangles wound the other
+ * way, and a quad down each boundary edge so the slab has sides when you stand
+ * beside it in the dollhouse.
+ *
+ * Normals are computed rather than authored, and UVs are left to
+ * `applyWorldUvs`, which derives them from world position and face direction -
+ * so a tiled floor lines up across pieces regardless of how they were cut.
+ */
+export function slabGeometry(
+  polygon: Vec2[],
+  topY: number,
+  thickness: number,
+): THREE.BufferGeometry | null {
+  const tris = triangles(polygon);
+  if (tris.length === 0) return null;
+
+  const bottomY = topY - thickness;
+  const positions: number[] = [];
+
+  const push = (x: number, y: number, z: number) => positions.push(x, y, z);
+
+  for (const [a, b, c] of tris) {
+    // Top, wound so the face looks up.
+    push(a[0], topY, a[1]);
+    push(c[0], topY, c[1]);
+    push(b[0], topY, b[1]);
+    // Bottom, wound the other way so it looks down.
+    push(a[0], bottomY, a[1]);
+    push(b[0], bottomY, b[1]);
+    push(c[0], bottomY, c[1]);
+  }
+
+  // The sides come from the outline rather than from the triangles, so the
+  // interior edges the triangulation invented do not get walls of their own.
+  const ring = cleanPolygon(polygon);
+  const wound = signedArea(ring) >= 0 ? ring : [...ring].reverse();
+  for (let i = 0; i < wound.length; i++) {
+    const a = wound[i];
+    const b = wound[(i + 1) % wound.length];
+    push(a[0], topY, a[1]);
+    push(a[0], bottomY, a[1]);
+    push(b[0], topY, b[1]);
+
+    push(b[0], topY, b[1]);
+    push(a[0], bottomY, a[1]);
+    push(b[0], bottomY, b[1]);
+  }
+
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
+  geometry.computeVertexNormals();
   return geometry;
 }
 

@@ -41,8 +41,8 @@ await page.evaluate(async () => {
     bedroom: { floor: "poor" },
   };
   raw.houseCondition = { roof: "poor", hvac: "dated" };
-  localStorage.setItem("livebuild:property:demo-house", JSON.stringify(raw));
-  localStorage.setItem("livebuild:index", JSON.stringify(["demo-house"]));
+  localStorage.setItem("mattermatt:property:demo-house", JSON.stringify(raw));
+  localStorage.setItem("mattermatt:index", JSON.stringify(["demo-house"]));
 });
 await page.goto(`${BASE}/tour/demo-house`, { waitUntil: "networkidle" });
 await page.waitForSelector("canvas", { timeout: 25_000 });
@@ -184,7 +184,7 @@ const walk = await walker();
 check("double click puts you on foot", Boolean(walk), "no walker state");
 if (walk) {
   const room = await page.evaluate((id) => {
-    const doc = JSON.parse(localStorage.getItem("livebuild:property:demo-house"));
+    const doc = JSON.parse(localStorage.getItem("mattermatt:property:demo-house"));
     return doc.plan.rooms.find((r) => r.id === id) ?? null;
   }, (await railRoom()) ?? walkRoom);
   if (room) {
@@ -208,8 +208,8 @@ if (walk) {
 await page.goto(`${BASE}/tour/two-storey`, { waitUntil: "networkidle" });
 await page.evaluate(async () => {
   const raw = await fetch("/properties/two-storey/property.json").then((r) => r.json());
-  localStorage.setItem("livebuild:property:two-storey", JSON.stringify(raw));
-  localStorage.setItem("livebuild:index", JSON.stringify(["two-storey"]));
+  localStorage.setItem("mattermatt:property:two-storey", JSON.stringify(raw));
+  localStorage.setItem("mattermatt:index", JSON.stringify(["two-storey"]));
 });
 await page.goto(`${BASE}/tour/two-storey`, { waitUntil: "networkidle" });
 await page.waitForSelector("canvas", { timeout: 25_000 });

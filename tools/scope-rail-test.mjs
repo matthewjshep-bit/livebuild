@@ -37,8 +37,8 @@ const check = (name, ok, detail = "") => {
 await page.goto(`${BASE}/tour/two-storey`, { waitUntil: "networkidle" });
 await page.evaluate(async () => {
   const raw = await fetch("/properties/two-storey/property.json").then((r) => r.json());
-  localStorage.setItem("livebuild:property:two-storey", JSON.stringify(raw));
-  localStorage.setItem("livebuild:index", JSON.stringify(["two-storey"]));
+  localStorage.setItem("mattermatt:property:two-storey", JSON.stringify(raw));
+  localStorage.setItem("mattermatt:index", JSON.stringify(["two-storey"]));
 });
 
 await page.goto(`${BASE}/tour/two-storey`, { waitUntil: "networkidle" });

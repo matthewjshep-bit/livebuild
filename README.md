@@ -3,6 +3,16 @@
 Hyper-realistic 3D replicas of houses, built from **photographs, satellite
 imagery and the map** - no depth-sensing camera, no per-scan fee.
 
+> **On the name.** The product is Livebuild.ai; the plumbing still says
+> `mattermatt`, and that is deliberate rather than a rename left half-done.
+> Anything that has to agree with something *outside* this repository keeps the
+> old name - the browser-storage keys and IndexedDB database holding houses
+> people have already built, the `MATTERMATT_ADMIN_KEY` set in the hosting
+> dashboard, and the npm/repo name. Renaming those does not move the thing they
+> point at, it abandons it. Everything a user reads is Livebuild.ai. The storage
+> side is named once in `src/lib/storage/namespace.ts`, so switching it later is
+> one edit plus a migration.
+
 ## The idea
 
 The photographs are evidence, not scenery. Nothing you took a picture of is

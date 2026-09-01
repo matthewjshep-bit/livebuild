@@ -29,7 +29,7 @@ import { BUCKET, SUPABASE_URL } from "@/lib/cloud/config";
  * passphrase - and the operator has no way to see why.
  */
 const serviceRoleKey = () => (process.env.SUPABASE_SERVICE_ROLE_KEY ?? "").trim();
-const adminKey = () => (process.env.LIVEBUILD_ADMIN_KEY ?? "").trim();
+const adminKey = () => (process.env.MATTERMATT_ADMIN_KEY ?? "").trim();
 
 export function serviceClient() {
   const key = serviceRoleKey();

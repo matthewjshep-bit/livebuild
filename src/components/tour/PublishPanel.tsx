@@ -6,6 +6,7 @@ import { type PublishProgress, publishProperty } from "@/lib/cloud/publish";
 import { toSlug } from "@/lib/cloud/config";
 import { loadProperty } from "@/lib/property-store";
 import type { Property } from "@/lib/schema";
+import { ADMIN_KEY_STORAGE } from "@/lib/storage/namespace";
 
 /**
  * Publish a local tour and get a link worth sending.
@@ -15,7 +16,7 @@ import type { Property } from "@/lib/schema";
  * stops people publishing.
  */
 
-const KEY_STORAGE = "livebuild:admin-key";
+const KEY_STORAGE = ADMIN_KEY_STORAGE;
 
 function formatBytes(bytes: number): string {
   if (bytes < 1024 ** 2) return `${(bytes / 1024).toFixed(0)} KB`;

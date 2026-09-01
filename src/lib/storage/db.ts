@@ -1,5 +1,7 @@
 "use client";
 
+import { STORAGE_NS } from "@/lib/storage/namespace";
+
 /**
  * The one IndexedDB connection, shared by everything that persists.
  *
@@ -15,17 +17,7 @@
  * would blow the quota on the first import.
  */
 
-/**
- * Kept under the old product name on purpose.
- *
- * A database cannot be renamed in place: the only way to move to `livebuild` is
- * to open both, copy every record across and delete the original - and this
- * store holds the photo and depth blobs, tens of megabytes per house. That is a
- * quota-doubling copy with a real chance of failing halfway, in exchange for a
- * string nobody ever sees. The localStorage keys were worth renaming because
- * they are kilobytes; this is not.
- */
-const DB_NAME = "mattermatt";
+const DB_NAME = STORAGE_NS;
 const DB_VERSION = 2;
 
 export const MEDIA_STORE = "media";

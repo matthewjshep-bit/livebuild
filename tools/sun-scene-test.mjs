@@ -47,13 +47,13 @@ const seeded = await page.evaluate(async () => {
     label: "Sun fixture",
     site: { lat: 47.62, lon: -122.3, planXBearing: 90 },
   };
-  window.localStorage.setItem("livebuild:property:sun-fixture", JSON.stringify(withSite));
+  window.localStorage.setItem("mattermatt:property:sun-fixture", JSON.stringify(withSite));
   // The real index key. The tour page happens to load a property directly, so
   // an earlier version of this passed with the wrong key - which would have
   // left the fixture invisible everywhere else in the app.
-  const index = JSON.parse(window.localStorage.getItem("livebuild:index") ?? "[]");
+  const index = JSON.parse(window.localStorage.getItem("mattermatt:index") ?? "[]");
   if (!index.includes("sun-fixture")) index.push("sun-fixture");
-  window.localStorage.setItem("livebuild:index", JSON.stringify(index));
+  window.localStorage.setItem("mattermatt:index", JSON.stringify(index));
   return true;
 });
 check("the fixture was seeded", seeded);

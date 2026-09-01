@@ -77,8 +77,8 @@ const empty = await page.evaluate(() => ({
   unplaced: document.querySelectorAll('[data-testid="unplaced-room"]').length,
   canBuild: !document.querySelector('[data-testid="build-from-layout"]')?.disabled,
   rooms: (() => {
-    const index = JSON.parse(localStorage.getItem("livebuild:index") ?? "[]");
-    const doc = JSON.parse(localStorage.getItem("livebuild:property:" + index.pop()) ?? "null");
+    const index = JSON.parse(localStorage.getItem("mattermatt:index") ?? "[]");
+    const doc = JSON.parse(localStorage.getItem("mattermatt:property:" + index.pop()) ?? "null");
     return doc?.plan?.rooms?.length ?? null;
   })(),
 }));
@@ -149,7 +149,7 @@ if (await deleteButton.count()) {
 // classifier can be re-run; a hand-drawn house cannot be got back from
 // anything, so losing it to a refresh would be the worst failure here.
 const before = await page.evaluate(() => {
-  const index = JSON.parse(localStorage.getItem("livebuild:index") ?? "[]");
+  const index = JSON.parse(localStorage.getItem("mattermatt:index") ?? "[]");
   return {
     id: index[index.length - 1],
     summary: document.body.innerText.match(/(\d+) rooms, (\d+) doorways\./)?.[0] ?? null,
@@ -193,8 +193,8 @@ check("the drawn layout builds a house", built);
 await page.screenshot({ path: "shots/L4-built.png" });
 
 const doc = await page.evaluate(() => {
-  const index = JSON.parse(localStorage.getItem("livebuild:index") ?? "[]");
-  const d = JSON.parse(localStorage.getItem("livebuild:property:" + index.pop()) ?? "null");
+  const index = JSON.parse(localStorage.getItem("mattermatt:index") ?? "[]");
+  const d = JSON.parse(localStorage.getItem("mattermatt:property:" + index.pop()) ?? "null");
   return d
     ? { rooms: d.plan.rooms.length, doorways: d.plan.openings.length, id: d.id }
     : null;

@@ -60,8 +60,8 @@ await page.waitForTimeout(1200);
 await page.screenshot({ path: "shots/B2-bom-graded.png", fullPage: true });
 
 const after = await page.evaluate(() => {
-  const index = JSON.parse(localStorage.getItem("livebuild:index") ?? "[]");
-  const doc = JSON.parse(localStorage.getItem("livebuild:property:" + index.pop()) ?? "null");
+  const index = JSON.parse(localStorage.getItem("mattermatt:index") ?? "[]");
+  const doc = JSON.parse(localStorage.getItem("mattermatt:property:" + index.pop()) ?? "null");
   const text = document.body.innerText;
   return {
     roomsGraded: Object.keys(doc?.condition ?? {}).length,

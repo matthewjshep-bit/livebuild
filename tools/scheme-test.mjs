@@ -39,12 +39,12 @@ await page.goto(`${BASE}/tour/demo-house`, { waitUntil: "networkidle" });
 await page.evaluate(async () => {
   const raw = await fetch("/properties/demo-house/property.json").then((r) => r.json());
   window.localStorage.setItem(
-    "livebuild:property:scheme-fixture",
+    "mattermatt:property:scheme-fixture",
     JSON.stringify({ ...raw, id: "scheme-fixture", site: { lat: 47.62, lon: -122.3, planXBearing: 90 } }),
   );
-  const index = JSON.parse(window.localStorage.getItem("livebuild:index") ?? "[]");
+  const index = JSON.parse(window.localStorage.getItem("mattermatt:index") ?? "[]");
   if (!index.includes("scheme-fixture")) index.push("scheme-fixture");
-  window.localStorage.setItem("livebuild:index", JSON.stringify(index));
+  window.localStorage.setItem("mattermatt:index", JSON.stringify(index));
 });
 
 await page.goto(`${BASE}/tour/scheme-fixture`, { waitUntil: "networkidle" });

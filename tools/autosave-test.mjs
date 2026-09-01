@@ -39,7 +39,7 @@ const check = (name, ok, detail = "") => {
 };
 
 const ids = () =>
-  page.evaluate(() => JSON.parse(localStorage.getItem("livebuild:index") ?? "[]"));
+  page.evaluate(() => JSON.parse(localStorage.getItem("mattermatt:index") ?? "[]"));
 
 /** How many of a tour's photo blobs are actually in the media store. */
 const blobsFor = (id) =>
@@ -120,7 +120,7 @@ check(
 );
 
 const stillLoads = await page.evaluate(
-  (id) => Boolean(JSON.parse(localStorage.getItem("livebuild:property:" + id) ?? "null")),
+  (id) => Boolean(JSON.parse(localStorage.getItem("mattermatt:property:" + id) ?? "null")),
   firstId,
 );
 check("and its document is intact", stillLoads);
@@ -129,13 +129,13 @@ check("and its document is intact", stillLoads);
 await page.goto(`${BASE}/tour/${firstId}`, { waitUntil: "networkidle" });
 await page.waitForTimeout(4000);
 await page.evaluate((id) => {
-  const doc = JSON.parse(localStorage.getItem("livebuild:property:" + id));
+  const doc = JSON.parse(localStorage.getItem("mattermatt:property:" + id));
   doc.condition = { ...(doc.condition ?? {}), probe: { floor: "poor" } };
-  localStorage.setItem("livebuild:property:" + id, JSON.stringify(doc));
+  localStorage.setItem("mattermatt:property:" + id, JSON.stringify(doc));
 }, firstId);
 
 const refs = await page.evaluate((id) => {
-  const doc = JSON.parse(localStorage.getItem("livebuild:property:" + id) ?? "null");
+  const doc = JSON.parse(localStorage.getItem("mattermatt:property:" + id) ?? "null");
   return (doc?.nodes ?? []).map((n) => String(n.photo).slice(0, 5));
 }, firstId);
 check(

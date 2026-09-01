@@ -53,7 +53,7 @@ const beforeShot = PNG.sync.read(await page.locator("canvas").screenshot());
 
 // The pose of the demo house's first photograph, in world terms.
 const shot = await page.evaluate(() => {
-  const doc = JSON.parse(localStorage.getItem("livebuild:property:demo-house") ?? "null");
+  const doc = JSON.parse(localStorage.getItem("mattermatt:property:demo-house") ?? "null");
   const node = doc?.nodes?.[0];
   const pose = node
     ? {

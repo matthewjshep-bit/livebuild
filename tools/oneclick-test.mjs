@@ -46,8 +46,8 @@ await page.screenshot({ path: "shots/C2-review.png" });
 
 const built = await page.evaluate(() => {
   const text = document.body.innerText;
-  const index = JSON.parse(localStorage.getItem("livebuild:index") ?? "[]");
-  const doc = JSON.parse(localStorage.getItem("livebuild:property:" + index.pop()) ?? "null");
+  const index = JSON.parse(localStorage.getItem("mattermatt:index") ?? "[]");
+  const doc = JSON.parse(localStorage.getItem("mattermatt:property:" + index.pop()) ?? "null");
   return {
     summary: text.match(/\d+ rooms, \d+ doorways\./)?.[0] ?? null,
     connections: text.match(/Spotted \d+ connections? between rooms/)?.[0] ?? null,

@@ -93,9 +93,9 @@ export async function build(page, { timeoutMs = 200_000 } = {}) {
 /** The saved property document, which is what the app actually recorded. */
 export async function savedProperty(page) {
   return page.evaluate(() => {
-    const index = JSON.parse(localStorage.getItem("livebuild:index") ?? "[]");
+    const index = JSON.parse(localStorage.getItem("mattermatt:index") ?? "[]");
     const id = index[index.length - 1];
-    const doc = JSON.parse(localStorage.getItem("livebuild:property:" + id) ?? "null");
+    const doc = JSON.parse(localStorage.getItem("mattermatt:property:" + id) ?? "null");
     return doc ? { ...doc, _id: id } : null;
   });
 }

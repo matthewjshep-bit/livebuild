@@ -59,10 +59,10 @@ const seed = async (id, exterior) => {
         rates: {},
         exterior,
       };
-      localStorage.setItem("livebuild:property:" + id, JSON.stringify(property));
-      const index = JSON.parse(localStorage.getItem("livebuild:index") ?? "[]");
+      localStorage.setItem("mattermatt:property:" + id, JSON.stringify(property));
+      const index = JSON.parse(localStorage.getItem("mattermatt:index") ?? "[]");
       if (!index.includes(id)) index.push(id);
-      localStorage.setItem("livebuild:index", JSON.stringify(index));
+      localStorage.setItem("mattermatt:index", JSON.stringify(index));
     },
     { id, exterior },
   );

@@ -63,17 +63,17 @@ await page.evaluate((id) => {
     houseCondition: {},
     rates: {},
   };
-  localStorage.setItem("livebuild:property:" + id, JSON.stringify(property));
-  const index = JSON.parse(localStorage.getItem("livebuild:index") ?? "[]");
+  localStorage.setItem("mattermatt:property:" + id, JSON.stringify(property));
+  const index = JSON.parse(localStorage.getItem("mattermatt:index") ?? "[]");
   if (!index.includes(id)) index.push(id);
-  localStorage.setItem("livebuild:index", JSON.stringify(index));
+  localStorage.setItem("mattermatt:index", JSON.stringify(index));
 }, ID);
 
 await page.goto(`${BASE}/editor?id=${ID}`, { waitUntil: "networkidle" });
 await page.waitForSelector("aside", { timeout: 20_000 });
 
 const before = await page.evaluate(
-  (id) => JSON.parse(localStorage.getItem("livebuild:property:" + id)),
+  (id) => JSON.parse(localStorage.getItem("mattermatt:property:" + id)),
   ID,
 );
 check("the fixture starts with no viewpoints", before.nodes.length === 0, `${before.nodes.length}`);
@@ -94,7 +94,7 @@ let saved = before;
 for (let i = 0; i < 90; i++) {
   await page.waitForTimeout(2000);
   saved = await page.evaluate(
-    (id) => JSON.parse(localStorage.getItem("livebuild:property:" + id)),
+    (id) => JSON.parse(localStorage.getItem("mattermatt:property:" + id)),
     ID,
   );
   if (saved.nodes.length > 0) break;

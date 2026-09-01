@@ -4,6 +4,7 @@ import { publishProperty } from "@/lib/cloud/publish";
 import { isCloudConfigured, newSlug } from "@/lib/cloud/config";
 import { loadProperty, saveProperty } from "@/lib/property-store";
 import type { Property } from "@/lib/schema";
+import { ADMIN_KEY_STORAGE } from "@/lib/storage/namespace";
 
 /**
  * Keeping a tour somewhere other than this browser.
@@ -24,7 +25,7 @@ import type { Property } from "@/lib/schema";
  * kept on the document rather than derived again each time.
  */
 
-const KEY_STORAGE = "livebuild:admin-key";
+const KEY_STORAGE = ADMIN_KEY_STORAGE;
 
 function adminKey(): string {
   try {

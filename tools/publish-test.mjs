@@ -21,11 +21,11 @@ import { readFileSync } from "node:fs";
 const base = process.env.BASE_URL ?? "http://localhost:3000";
 
 // Read the admin key the same way the server does.
-let adminKey = process.env.LIVEBUILD_ADMIN_KEY ?? "";
+let adminKey = process.env.MATTERMATT_ADMIN_KEY ?? "";
 if (!adminKey) {
   try {
     const env = readFileSync(".env.local", "utf8");
-    adminKey = env.match(/^LIVEBUILD_ADMIN_KEY=(.*)$/m)?.[1]?.trim() ?? "";
+    adminKey = env.match(/^MATTERMATT_ADMIN_KEY=(.*)$/m)?.[1]?.trim() ?? "";
   } catch {
     /* no env file */
   }
@@ -42,7 +42,7 @@ if (!status.storage) {
   process.exit(0);
 }
 if (!adminKey) {
-  console.log(JSON.stringify({ verdict: "SKIPPED - LIVEBUILD_ADMIN_KEY not found" }, null, 2));
+  console.log(JSON.stringify({ verdict: "SKIPPED - MATTERMATT_ADMIN_KEY not found" }, null, 2));
   process.exit(0);
 }
 
@@ -78,8 +78,8 @@ if (!built) {
 // flat photographs - which is half of what publishing is for.
 for (let i = 0; i < 40; i++) {
   const done = await page.evaluate(() => {
-    const index = JSON.parse(localStorage.getItem("livebuild:index") ?? "[]");
-    const doc = JSON.parse(localStorage.getItem("livebuild:property:" + index.pop()) ?? "null");
+    const index = JSON.parse(localStorage.getItem("mattermatt:index") ?? "[]");
+    const doc = JSON.parse(localStorage.getItem("mattermatt:property:" + index.pop()) ?? "null");
     return doc && doc.nodes.length > 0 && doc.nodes.every((n) => n.depth);
   });
   if (done) break;
@@ -87,7 +87,7 @@ for (let i = 0; i < 40; i++) {
 }
 
 const id = await page.evaluate(() =>
-  JSON.parse(localStorage.getItem("livebuild:index") ?? "[]").pop(),
+  JSON.parse(localStorage.getItem("mattermatt:index") ?? "[]").pop(),
 );
 await page.goto(`${base}/tour/${id}`, { waitUntil: "networkidle" });
 await page.waitForTimeout(3000);

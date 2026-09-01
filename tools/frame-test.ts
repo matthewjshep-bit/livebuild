@@ -159,6 +159,37 @@ for (const turnDeg of [0, 20, 47, -35]) {
   check("a frameless footprint is representable", stripped.frame === undefined);
 }
 
+// --- a traced outline is never resized, so it stays on its own roof ---
+//
+// The backdrop is the whole reason. A traced ring is measured in the aerial
+// photograph's own pixels and is then drawn back on top of that photograph
+// while somebody lays rooms out against the roof they can see. Scaling it to
+// agree with a listing's square footage floats the outline inside its own roof,
+// which is obviously wrong to look at - and it scales towards the wrong number
+// anyway, because a listing states living area and a roof covers more ground.
+{
+  const ring = houseRing(LAT, LON, 0);
+  const unscaled = prepareFootprint(ring, undefined, 9);
+  const asMeasured = prepareFootprint(ring, 900, 9, "measured");
+  const asTraced = prepareFootprint(ring, 900, 9, "traced");
+
+  check("a measured outline is nudged towards the stated area",
+    Math.abs(asMeasured.areaSqft - unscaled.areaSqft) > 1,
+    `${asMeasured.areaSqft.toFixed(0)} vs ${unscaled.areaSqft.toFixed(0)}`);
+  check("a traced one keeps the size it was traced at",
+    Math.abs(asTraced.areaSqft - unscaled.areaSqft) < 1e-6,
+    `${asTraced.areaSqft.toFixed(0)} vs ${unscaled.areaSqft.toFixed(0)}`);
+  check("and its frame records no scaling", asTraced.frame?.scale === 1,
+    `${asTraced.frame?.scale}`);
+
+  // Which is what keeps it registered to the picture it came from.
+  if (asTraced.frame) {
+    const mapped = ring.map(([lat, lon]) => latLonToPlan(asTraced.frame!, lat, lon));
+    const spanX = Math.max(...mapped.map((p) => p[0])) - Math.min(...mapped.map((p) => p[0]));
+    check("a 16m house is still 16m after tracing", Math.abs(spanX - 16) < 1.5, `${spanX.toFixed(2)}m`);
+  }
+}
+
 if (failures > 0) {
   console.error(`\nFRAME: ${failures} failure(s)`);
   process.exit(1);

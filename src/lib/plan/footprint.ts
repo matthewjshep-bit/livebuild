@@ -324,17 +324,21 @@ export function prepareFootprint(
   targetGroundSqft?: number,
   roomCount?: number,
   /**
-   * How much the ring itself is worth believing.
+   * Where the ring came from, which decides whether it may be resized at all.
    *
-   * A surveyed outline is a measurement and the listing's floor area is a
-   * rounded marketing number, so the outline wins and the area only nudges it.
-   * A traced outline is neither: it is a vision model following a roof edge in
-   * an aerial photograph, and it is generous - a patio, a deck and a pool
-   * surround read as one continuous surface with the roof from above. Against
-   * that, a stated floor area is the harder fact, and the correction has to be
-   * allowed to be large enough to matter. A trace 60% over is not unusual and
-   * is entirely invisible until somebody notices the kitchen is 1,356 square
-   * feet.
+   * A traced ring is **not scaled**, and that is the whole point of the
+   * distinction. It was measured in an aerial photograph's own pixels, so it is
+   * registered to that photograph - and it is now drawn on top of it while
+   * somebody lays rooms out against the roof they can see. Shrinking it to
+   * agree with a number breaks the one property it has: a house whose outline
+   * floats inside its own roof is obviously wrong to look at, and being
+   * obviously wrong is worse than being slightly large.
+   *
+   * It would also be shrinking towards the wrong figure. A listing's square
+   * footage is *living area*: measured to the inside of the walls, excluding
+   * the garage, excluding the eaves. A roof legitimately covers appreciably
+   * more ground than that, so making the two equal does not correct an error,
+   * it introduces one.
    */
   trust: "measured" | "traced" = "measured",
 ): Footprint {
@@ -378,17 +382,16 @@ export function prepareFootprint(
   outline = outline.map(([x, y]) => [x - minX, y - minY] as Vec2);
 
   let scale = 1;
-  if (targetGroundSqft && targetGroundSqft > 100) {
+  // A traced outline keeps the size it was traced at, so it stays registered to
+  // the photograph it came from and to the one it will be drawn on.
+  if (trust !== "traced" && targetGroundSqft && targetGroundSqft > 100) {
     const current = polygonArea(outline) / (M_PER_FT * M_PER_FT);
     if (current > 50) {
       const factor = Math.sqrt(targetGroundSqft / current);
-      // A measured outline is only nudged: a factor far from one means the
-      // footprint and the listing disagree about which building this is, and
-      // trusting either blindly produces a house that matches neither. A traced
-      // one is given far more rope, because the disagreement is much more
-      // likely to be the trace being wrong than the listing being wrong.
-      const [low, high] = trust === "traced" ? [0.45, 2.2] : [0.6, 1.7];
-      if (factor > low && factor < high) {
+      // Only nudge. A factor far from one means the footprint and the listing
+      // disagree about which building this is, and trusting either blindly
+      // would produce a house that matches neither.
+      if (factor > 0.6 && factor < 1.7) {
         outline = outline.map(([x, y]) => [x * factor, y * factor] as Vec2);
         scale = factor;
       }

@@ -152,7 +152,20 @@ export function PropertyStart({
         className="flex gap-2"
         onSubmit={(e) => {
           e.preventDefault();
-          void run("outline");
+          /**
+           * A pasted listing link asks for the listing.
+           *
+           * The cheap lookup is the right default for a typed address - it is
+           * seconds and free, and somebody who already has the photographs
+           * should not pay a multi-minute scrape to record where the house is.
+           * A URL is not that. Somebody who pastes a listing has handed over
+           * the one thing that knows this property's own rooftop coordinates,
+           * its floor area and its photographs, and running the map-only half
+           * on it throws all three away - then builds a house from a geocode
+           * that, for the address this was found on, landed in the middle of
+           * the road with a neighbour's roof nearer than its own.
+           */
+          void run(looksLikeUrl(query) ? "full" : "outline");
         }}
       >
         <input
@@ -170,7 +183,7 @@ export function PropertyStart({
           disabled={working || query.trim().length < 6}
           className="shrink-0 rounded-lg bg-accent px-6 py-3 text-sm font-semibold text-ink-900 disabled:opacity-35"
         >
-          {working ? "Working…" : "Find it"}
+          {working ? "Working…" : looksLikeUrl(query) ? "Get the listing" : "Find it"}
         </button>
       </form>
 
@@ -181,10 +194,23 @@ export function PropertyStart({
       {found?.located && photosAvailable && found.mode === "outline" && !working && (
         <button
           onClick={() => void run("full")}
-          className="mt-2 w-full rounded-lg border border-ink-500 px-4 py-2.5 text-xs text-mist-200 transition hover:bg-ink-600"
+          className={`mt-2 w-full rounded-lg px-4 py-2.5 text-xs transition ${
+            found.outlined
+              ? "border border-ink-500 text-mist-200 hover:bg-ink-600"
+              : "bg-accent font-semibold text-ink-900 hover:bg-accent/90"
+          }`}
         >
-          Also pull the photos and room counts from the listing
-          <span className="ml-1 text-mist-400">&mdash; a couple of minutes</span>
+          {found.outlined ? (
+            <>
+              Also pull the photos and room counts from the listing
+              <span className="ml-1 text-mist-400">&mdash; a couple of minutes</span>
+            </>
+          ) : (
+            <>
+              Pull the listing to place this house properly
+              <span className="ml-1 opacity-70">&mdash; a couple of minutes</span>
+            </>
+          )}
         </button>
       )}
 
@@ -201,7 +227,7 @@ export function PropertyStart({
         <p className="mt-2 text-xs text-mist-400">
           {found.outlined
             ? "Found the building, its outline and which way it faces. Add photographs below to fill it in."
-            : "Found where it is, but no building is drawn there on the map. It will still be built on the right site, facing the right way — add photographs below, or pull the listing."}
+            : "Found where it is, but no building is drawn there on the map, so the outline has to be read off the satellite image — and an address can geocode to the kerb or a driveway, which is how a neighbour's roof gets traced instead. The listing carries this house's own position and floor area, which fixes both."}
         </p>
       )}
 

@@ -1,5 +1,6 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";
+import { outputConfig, policyFor } from "@/lib/ai/policy";
 import { z } from "zod";
 
 /**
@@ -123,13 +124,24 @@ export async function POST(request: Request) {
   try {
     const client = new Anthropic();
     const response = await client.messages.parse({
-      model: "claude-opus-5",
-      max_tokens: 16000,
+      model: policyFor("pose").model,
+      max_tokens: policyFor("pose").maxTokens,
       // Reasoning about which wall is which from converging perspective lines
       // is the hardest visual judgement in this app, and a wrong answer points
       // the tour at a wall.
-      output_config: { effort: "high", format: zodOutputFormat(PoseSchema) },
-      system: SYSTEM,
+      output_config: outputConfig("pose", zodOutputFormat(PoseSchema)),
+      system: [
+        {
+          type: "text",
+          text: SYSTEM,
+          // Identical on every call of a build - seven for the photographs,
+          // one per room for the interiors - so it is written to the cache
+          // once and read back for the rest at a tenth of the price. The
+          // prompts here are long, and on a nine-room house this is the
+          // largest single saving available without changing an answer.
+          cache_control: { type: "ephemeral" },
+        },
+      ],
       messages: [{ role: "user", content }],
     });
 

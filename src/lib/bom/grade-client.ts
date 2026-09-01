@@ -10,6 +10,7 @@ import {
 import { getMedia, isManagedRef, refToKey } from "@/lib/media-store";
 import { roomKind } from "@/lib/plan/room-kind";
 import type { Property } from "@/lib/schema";
+import { policyFor } from "@/lib/ai/policy";
 
 /**
  * Grade every room from its own photos.
@@ -20,7 +21,7 @@ import type { Property } from "@/lib/schema";
  * is `not_visible` and it does not need asking for.
  */
 
-const GRADE_EDGE = 900;
+const GRADE_EDGE = policyFor("condition").imageEdge;
 const MAX_PER_ROOM = 4;
 
 async function thumbnail(blob: Blob): Promise<string | null> {

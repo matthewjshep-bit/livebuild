@@ -12,6 +12,7 @@ import {
 import { roomAdjacency } from "@/lib/plan/geometry";
 import { boundsOf } from "@/lib/plan/autolayout";
 import type { Property, Room } from "@/lib/schema";
+import { policyFor } from "@/lib/ai/policy";
 
 /**
  * Read every photographed room, then reason about the ones nobody shot.
@@ -35,7 +36,10 @@ import type { Property, Room } from "@/lib/schema";
  * exactly this argument at 900px to justify going above the classifier's 768;
  * the same argument carries further here.
  */
-const EDGE = 1280;
+// Taken from the policy so a draft build sends small pictures as well as
+// asking a cheap model - images are half the cost of a build, and they are
+// shrunk here on the client long before any route is reached.
+const EDGE = policyFor("room-read").imageEdge;
 const QUALITY = 0.88;
 const MAX_PER_ROOM = 4;
 

@@ -1,5 +1,6 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";
+import { outputConfig, policyFor } from "@/lib/ai/policy";
 import { z } from "zod";
 
 /**
@@ -295,12 +296,12 @@ export async function POST(request: Request) {
   try {
     const client = new Anthropic();
     const response = await client.messages.parse({
-      model: "claude-opus-5",
-      max_tokens: 16000,
+      model: policyFor("site-read").model,
+      max_tokens: policyFor("site-read").maxTokens,
       // Reading a roof off an oblique photograph is a judgement, not a
       // recognition - the same kind of task as reading a hand-drawn plan, which
       // also runs high.
-      output_config: { effort: "high", format: zodOutputFormat(ReadSchema) },
+      output_config: outputConfig("site-read", zodOutputFormat(ReadSchema)),
       system: systemPrompt(
         outline.length
           ? knownShape(outlineText, overhead?.size ?? TRACE_FRAME_PX)

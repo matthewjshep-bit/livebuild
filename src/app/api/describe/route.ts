@@ -1,5 +1,6 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";
+import { outputConfig, policyFor } from "@/lib/ai/policy";
 import { z } from "zod";
 
 import { ROOM_PRESETS } from "@/lib/plan/autolayout";
@@ -79,11 +80,11 @@ export async function POST(request: Request) {
     const client = new Anthropic();
 
     const response = await client.messages.parse({
-      model: "claude-opus-5",
-      max_tokens: 16000,
+      model: policyFor("describe").model,
+      max_tokens: policyFor("describe").maxTokens,
       // A structured extraction from one paragraph; low effort is ample and
       // keeps the step feeling instant.
-      output_config: { effort: "low", format: zodOutputFormat(HouseSchema) },
+      output_config: outputConfig("describe", zodOutputFormat(HouseSchema)),
       system: SYSTEM,
       messages: [{ role: "user", content: text }],
     });

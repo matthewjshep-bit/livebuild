@@ -1,5 +1,6 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";
+import { outputConfig, policyFor } from "@/lib/ai/policy";
 import { z } from "zod";
 
 /**
@@ -102,11 +103,11 @@ export async function POST(request: Request) {
   try {
     const client = new Anthropic();
     const response = await client.messages.parse({
-      model: "claude-opus-5",
-      max_tokens: 16000,
+      model: policyFor("sketch").model,
+      max_tokens: policyFor("sketch").maxTokens,
       // Reading a wobbly sketch into consistent coordinates is genuinely harder
       // than naming a room, and a misread here costs the user the whole layout.
-      output_config: { effort: "high", format: zodOutputFormat(SketchSchema) },
+      output_config: outputConfig("sketch", zodOutputFormat(SketchSchema)),
       system: kind === "floorplan" ? SYSTEM + FLOORPLAN : SYSTEM,
       messages: [
         {

@@ -1,6 +1,7 @@
 "use client";
 
 import type { ListingResult } from "@/lib/listing/types";
+import { policyFor } from "@/lib/ai/policy";
 
 /**
  * Client helpers for importing a listing and auto-labelling its photos.
@@ -20,7 +21,7 @@ import type { ListingResult } from "@/lib/listing/types";
  * point where it was shown not to hurt, and well below what would strain a
  * request body.
  */
-const CLASSIFY_EDGE = 768;
+const CLASSIFY_EDGE = policyFor("classify").imageEdge;
 const CLASSIFY_BATCH = 6;
 
 /**

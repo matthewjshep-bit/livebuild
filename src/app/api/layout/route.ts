@@ -1,5 +1,6 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";
+import { outputConfig, policyFor } from "@/lib/ai/policy";
 import { z } from "zod";
 
 /**
@@ -139,12 +140,12 @@ export async function POST(request: Request) {
   try {
     const client = new Anthropic();
     const response = await client.messages.parse({
-      model: "claude-opus-5",
-      max_tokens: 16000,
+      model: policyFor("layout").model,
+      max_tokens: policyFor("layout").maxTokens,
       // Laying out a house is a judgement about how people live in one rather
       // than a recognition task - the same kind of reasoning as reading a
       // hand-drawn plan, which also runs high.
-      output_config: { effort: "high", format: zodOutputFormat(PlanSchema) },
+      output_config: outputConfig("layout", zodOutputFormat(PlanSchema)),
       system: systemPrompt(),
       messages: [{ role: "user", content: described.join("\n") }],
     });

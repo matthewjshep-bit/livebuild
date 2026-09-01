@@ -1,5 +1,6 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";
+import { outputConfig, policyFor } from "@/lib/ai/policy";
 import { z } from "zod";
 
 /**
@@ -122,12 +123,23 @@ export async function POST(request: Request) {
   try {
     const client = new Anthropic();
     const response = await client.messages.parse({
-      model: "claude-opus-5",
-      max_tokens: 16000,
+      model: policyFor("classify").model,
+      max_tokens: policyFor("classify").maxTokens,
       // Recognising a kitchen is not hard; the effort is better spent on the
       // handful of genuinely ambiguous shots, which adaptive thinking handles.
-      output_config: { effort: "low", format: zodOutputFormat(AssignmentSchema) },
-      system: systemPrompt(rooms),
+      output_config: outputConfig("classify", zodOutputFormat(AssignmentSchema)),
+      system: [
+        {
+          type: "text",
+          text: systemPrompt(rooms),
+          // Identical on every call of a build - seven for the photographs,
+          // one per room for the interiors - so it is written to the cache
+          // once and read back for the rest at a tenth of the price. The
+          // prompts here are long, and on a nine-room house this is the
+          // largest single saving available without changing an answer.
+          cache_control: { type: "ephemeral" },
+        },
+      ],
       messages: [{ role: "user", content }],
     });
 

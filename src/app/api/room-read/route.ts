@@ -1,5 +1,6 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";
+import { outputConfig, policyFor } from "@/lib/ai/policy";
 import { z } from "zod";
 
 import { SCALE_TOLERANCE, scaleError, snapTo } from "@/lib/spec/standards";
@@ -239,10 +240,21 @@ export async function POST(request: Request) {
   try {
     const client = new Anthropic();
     const response = await client.messages.parse({
-      model: "claude-opus-5",
-      max_tokens: 16000,
-      output_config: { effort: "high", format: zodOutputFormat(ReadSchema) },
-      system: SYSTEM,
+      model: policyFor("room-read").model,
+      max_tokens: policyFor("room-read").maxTokens,
+      output_config: outputConfig("room-read", zodOutputFormat(ReadSchema)),
+      system: [
+        {
+          type: "text",
+          text: SYSTEM,
+          // Identical on every call of a build - seven for the photographs,
+          // one per room for the interiors - so it is written to the cache
+          // once and read back for the rest at a tenth of the price. The
+          // prompts here are long, and on a nine-room house this is the
+          // largest single saving available without changing an answer.
+          cache_control: { type: "ephemeral" },
+        },
+      ],
       messages: [{ role: "user", content }],
     });
 

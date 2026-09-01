@@ -155,6 +155,23 @@ for (const degrees of ANGLES) {
   }
   check(`${at}: corners are solid`, holes === 0, `${holes} corner probes found air`);
 
+  // --- the doorways are found by looking at the rooms, not by being handed over ---
+  //
+  // Everything above rotates the openings along with the plan, which tests the
+  // wall sweep but lets `autoOpenings` off entirely. Derived afresh from the
+  // turned rooms it has to find the same pairs - and until this passed it found
+  // none at all, because it compared bounding boxes.
+  const derived = autoOpenings(plan.rooms);
+  const pairsOf = (list: typeof derived) =>
+    list
+      .filter((o) => o.kind !== "stairs")
+      .map((o) => [...o.between].sort().join("-"))
+      .sort()
+      .join(" ");
+  check(`${at}: the same doorways are derived from the turned rooms`,
+    pairsOf(derived) === pairsOf(base.openings),
+    `${pairsOf(derived) || "none"}`);
+
   // --- every room can still be walked into ---
   const adjacency = roomAdjacency(plan);
   const seen = new Set<string>(["living"]);
@@ -177,10 +194,68 @@ for (const degrees of ANGLES) {
     `${start.map((v) => v.toFixed(2)).join(", ")}`);
 }
 
+// --- genuinely angled, not merely rotated ---
+//
+// Turning a house keeps every corner at ninety degrees, so everything above
+// could pass with a mitre that is only ever right at a right angle. These two
+// rooms share a wall at about sixty degrees to the horizontal and meet it at
+// corners that are nothing like square.
+{
+  const wedgeA: Room = {
+    id: "a", label: "Living Room", ceilingHeight: 2.7, level: 0,
+    polygon: [[0, 0], [6, 0], [3, 5]],
+  };
+  const wedgeB: Room = {
+    id: "b", label: "Kitchen", ceilingHeight: 2.7, level: 0,
+    polygon: [[6, 0], [9, 5], [3, 5]],
+  };
+  const rooms = [wedgeA, wedgeB];
+  const plan: Plan = { scaleRef: { px: 1, meters: 1 }, rooms, openings: autoOpenings(rooms) };
+
+  check("two rooms sharing an angled wall find each other", plan.openings.length === 1,
+    `${plan.openings.length} openings`);
+
+  const walls = wallsForLevel(plan, 0);
+  check("and the wall between them is built", walls.length > 0, `${walls.length} solids`);
+
+  // The shared edge runs from (6,0) to (3,5): one partition, cut by its doorway
+  // into two solid pieces with a header bridging the gap between them.
+  const partitions = walls.filter((w) => !w.exterior);
+  const solidPieces = partitions.filter((w) => !w.header);
+  const headers = partitions.filter((w) => w.header);
+  check("the shared wall has exactly one doorway in it", headers.length === 1,
+    `${headers.length} headers`);
+  check("and is otherwise solid", solidPieces.length === 2,
+    solidPieces.map((w) => w.length.toFixed(2)).join(", "));
+
+  const shared = Math.hypot(3 - 6, 5 - 0);
+  const built = solidPieces.reduce((sum, w) => sum + w.length, 0) + headers.reduce((sum, w) => sum + w.length, 0);
+  check("the pieces add back up to the wall",
+    Math.abs(built - shared) < 0.5,
+    `${built.toFixed(2)}m built against a ${shared.toFixed(2)}m wall`);
+
+  // Turned to match the wall rather than snapped to an axis, which is the whole
+  // point: at 0 or 90 this would be indistinguishable from the old behaviour.
+  // Measured the way `toSolid` does: the renderer's rotateY sends a box's local
+  // +x to (cos, -sin) in plan, so the angle is read off the direction with y
+  // negated. Using atan2(dy, dx) instead gives the supplementary angle, which
+  // describes the same line and none of the same rotations.
+  const dir: Vec2 = [3 - 6, 5 - 0];
+  const bearing = (((Math.atan2(-dir[1], dir[0]) * 180) / Math.PI) % 180 + 180) % 180;
+  for (const piece of partitions) {
+    check(`a piece is turned to match the wall (${piece.angleDeg.toFixed(1)})`,
+      Math.abs(piece.angleDeg - bearing) < 1,
+      `${piece.angleDeg.toFixed(1)} vs ${bearing.toFixed(1)}`);
+  }
+
+  const floor = rooms.reduce((sum, r) => sum + area(r.polygon), 0);
+  check("both wedges have area", floor > 20, `${floor.toFixed(1)}`);
+}
+
 if (failures > 0) {
   console.error(`\nROTATE: ${failures} failure(s)`);
   process.exit(1);
 }
 console.log(
-  "ROTATE OK - a house turned through 0, 7, 17, 30, 45 and 63 degrees builds the same walls, the same headers, solid corners and reachable rooms",
+  "ROTATE OK - a house turned through 0, 7, 17, 30, 45 and 63 degrees builds the same walls, the same headers, solid corners, the same doorways and reachable rooms; and two rooms sharing a wall at 59 degrees get one partition turned to match it",
 );

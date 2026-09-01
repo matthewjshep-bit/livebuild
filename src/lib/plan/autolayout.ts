@@ -1,6 +1,6 @@
 import { M_PER_FT } from "@/lib/units";
 import type { Opening, Plan, Room, TourNode, Vec2 } from "@/lib/schema";
-import { area, centroid, planDirToHeading } from "@/lib/plan/geometry";
+import { area, centroid, planDirToHeading, signedArea } from "@/lib/plan/geometry";
 import { type RoomKind, isLivingArea, isStairs, roomKind } from "@/lib/plan/room-kind";
 
 /**
@@ -343,9 +343,44 @@ const WALL_TOUCH_TOLERANCE_M = 0.15;
  *
  * Assumes axis-aligned rectangular rooms, which is what the wizard produces.
  */
+/**
+ * Where two rooms actually touch, edge against edge.
+ *
+ * This compared bounding boxes, which is exact for axis-aligned rectangles and
+ * useless for anything else. Turned seven degrees, a house produced **no
+ * doorways at all** - every room sealed - and turned sixty-three it produced
+ * *wrong* ones, joining the bathroom to the kitchen because their boxes
+ * overlapped while their walls were nowhere near each other. A false doorway is
+ * worse than a missing one: it punches a hole through a wall that is standing
+ * somewhere else.
+ *
+ * So the test is now the one it always meant: find a pair of edges that face
+ * each other, lie on the same line, and overlap along it. Three conditions,
+ * each of which is what a person would check by eye.
+ */
 export function autoOpenings(rooms: Room[]): Opening[] {
   const openings: Opening[] = [];
   let counter = 1;
+
+  /** Every edge of a room, with the direction and outward normal it carries. */
+  const edgesOf = (room: Room) => {
+    const poly = room.polygon;
+    const out: Array<{ a: Vec2; b: Vec2; n: Vec2; t: Vec2; length: number }> = [];
+    const wound = signedArea(poly) >= 0 ? poly : [...poly].reverse();
+    for (let i = 0; i < wound.length; i++) {
+      const a = wound[i];
+      const b = wound[(i + 1) % wound.length];
+      const dx = b[0] - a[0];
+      const dy = b[1] - a[1];
+      const length = Math.hypot(dx, dy);
+      if (length < 1e-9) continue;
+      // Outward normal of a→b on a positively wound polygon.
+      out.push({ a, b, n: [dy / length, -dx / length], t: [dx / length, dy / length], length });
+    }
+    return out;
+  };
+
+  const dot = (u: Vec2, v: Vec2) => u[0] * v[0] + u[1] * v[1];
 
   for (let i = 0; i < rooms.length; i++) {
     for (let j = i + 1; j < rooms.length; j++) {
@@ -354,46 +389,54 @@ export function autoOpenings(rooms: Room[]): Opening[] {
       // case below.
       if (rooms[i].level !== rooms[j].level) continue;
 
-      const a = boundsOf(rooms[i].polygon);
-      const b = boundsOf(rooms[j].polygon);
+      let best: { at: Vec2; width: number; overlap: number } | null = null;
 
-      // Vertical shared wall: one room's right edge meets the other's left.
-      const verticalTouch =
-        Math.abs(a.x1 - b.x0) < WALL_TOUCH_TOLERANCE_M ||
-        Math.abs(b.x1 - a.x0) < WALL_TOUCH_TOLERANCE_M;
-      if (verticalTouch) {
-        const lo = Math.max(a.y0, b.y0);
-        const hi = Math.min(a.y1, b.y1);
-        if (hi - lo >= MIN_SHARED_WALL_M) {
-          const x = Math.abs(a.x1 - b.x0) < WALL_TOUCH_TOLERANCE_M ? a.x1 : a.x0;
-          openings.push({
-            id: `d${counter++}`,
-            between: [rooms[i].id, rooms[j].id],
-            at: [x, (lo + hi) / 2],
-            width: Math.min(0.9, hi - lo),
-            kind: "door",
-          });
-          continue;
+      for (const ea of edgesOf(rooms[i])) {
+        for (const eb of edgesOf(rooms[j])) {
+          // 1. They must face each other. Two rooms sharing a wall meet it from
+          //    opposite sides, so their outward normals are opposed.
+          if (dot(ea.n, eb.n) > -0.999) continue;
+
+          // 2. They must lie on the same line, not merely be parallel. Measured
+          //    as the perpendicular distance between them, which is what the
+          //    old coordinate comparison was doing for the two special cases it
+          //    could express.
+          const gap = Math.abs(dot(ea.n, [eb.a[0] - ea.a[0], eb.a[1] - ea.a[1]]));
+          if (gap > WALL_TOUCH_TOLERANCE_M) continue;
+
+          // 3. They must overlap along that line, by enough to be a wall two
+          //    rooms share rather than two rooms grazing at a corner.
+          const pa0 = dot(ea.t, ea.a);
+          const pa1 = dot(ea.t, ea.b);
+          const pb0 = dot(ea.t, eb.a);
+          const pb1 = dot(ea.t, eb.b);
+          const lo = Math.max(Math.min(pa0, pa1), Math.min(pb0, pb1));
+          const hi = Math.min(Math.max(pa0, pa1), Math.max(pb0, pb1));
+          const overlap = hi - lo;
+          if (overlap < MIN_SHARED_WALL_M) continue;
+
+          // Placed at the middle of what they share, on the midline between the
+          // two faces so the doorway sits in the wall rather than on one side.
+          const mid = (lo + hi) / 2;
+          const onA: Vec2 = [ea.t[0] * mid + ea.n[0] * dot(ea.n, ea.a), ea.t[1] * mid + ea.n[1] * dot(ea.n, ea.a)];
+          const at: Vec2 = [onA[0] + (ea.n[0] * gap) / 2, onA[1] + (ea.n[1] * gap) / 2];
+
+          if (!best || overlap > best.overlap) {
+            best = { at, width: Math.min(0.9, overlap), overlap };
+          }
         }
       }
 
-      // Horizontal shared wall.
-      const horizontalTouch =
-        Math.abs(a.y1 - b.y0) < WALL_TOUCH_TOLERANCE_M ||
-        Math.abs(b.y1 - a.y0) < WALL_TOUCH_TOLERANCE_M;
-      if (horizontalTouch) {
-        const lo = Math.max(a.x0, b.x0);
-        const hi = Math.min(a.x1, b.x1);
-        if (hi - lo >= MIN_SHARED_WALL_M) {
-          const y = Math.abs(a.y1 - b.y0) < WALL_TOUCH_TOLERANCE_M ? a.y1 : a.y0;
-          openings.push({
-            id: `d${counter++}`,
-            between: [rooms[i].id, rooms[j].id],
-            at: [(lo + hi) / 2, y],
-            width: Math.min(0.9, hi - lo),
-            kind: "door",
-          });
-        }
+      // One doorway per pair, through whichever wall they share most of - the
+      // same rule as before, now that a pair can share more than one.
+      if (best) {
+        openings.push({
+          id: `d${counter++}`,
+          between: [rooms[i].id, rooms[j].id],
+          at: best.at,
+          width: best.width,
+          kind: "door",
+        });
       }
     }
   }

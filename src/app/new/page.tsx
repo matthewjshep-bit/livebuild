@@ -22,10 +22,10 @@ import {
   type ListingResult,
 } from "@/lib/listing/types";
 import { deleteMedia, mediaKeys, mediaRef, refToKey, resolveMediaUrl } from "@/lib/media-store";
-import { layoutFromSpec } from "@/lib/plan/autolayout";
+import { autoOpenings, layoutFromSpec } from "@/lib/plan/autolayout";
 import { type PackPlan, layoutFromFootprint } from "@/lib/plan/footprint";
 import { arrangeRooms } from "@/lib/plan/layout-client";
-import { checkDrawn, drawableBoundary } from "@/lib/plan/drawn";
+import { checkDrawn, drawableBoundary, fitToBuilding } from "@/lib/plan/drawn";
 import { GOOGLE_ATTRIBUTION } from "@/lib/site/geo";
 import { tileExtentFor, tilePlacement } from "@/lib/site/frame";
 import { useSiteTile } from "@/components/wizard/useSiteTile";
@@ -865,6 +865,28 @@ function NewTourInner() {
     }
   }, [evidence, facts]);
 
+  /**
+   * Snap what has been drawn onto the building, keeping the arrangement.
+   *
+   * The way out of a gate nobody could otherwise satisfy. Dragging rectangles
+   * until they exactly tile an irregular outline is not something a person can
+   * do - every nudge opens a gap on one side while closing another - so the
+   * arrangement is kept and only the sizes are given up.
+   */
+  const [fitProblem, setFitProblem] = useState<string | null>(null);
+  const fitLayout = useCallback(() => {
+    if (!evidence?.footprint || !layoutPlan) return;
+    const fitted = fitToBuilding(layoutPlan.rooms, evidence.footprint, 0);
+    if (!fitted.ok) {
+      setFitProblem(fitted.why);
+      return;
+    }
+    setFitProblem(null);
+    const upstairs = layoutPlan.rooms.filter((r) => r.level !== 0);
+    const rooms = [...fitted.rooms, ...upstairs];
+    setLayoutPlan({ ...layoutPlan, rooms, openings: autoOpenings(rooms) });
+  }, [evidence, layoutPlan]);
+
   const build = useCallback(async () => {
     setStage("gathering");
     setFailed(null);
@@ -1037,9 +1059,13 @@ function NewTourInner() {
             <div className="mb-4">
               <h1 className="text-xl font-semibold tracking-tight">Draw the layout</h1>
               <p className="mt-1 text-sm text-mist-400">
-                {boundary?.ok
-                  ? "This is the building's real outline, measured. Place each room inside it, and drag them together — rooms that touch get a doorway."
-                  : "Place each room, and drag them together — rooms that touch get a doorway."}
+                {!boundary?.ok
+                  ? "Place each room, and drag them together — rooms that touch get a doorway."
+                  : evidence.shapeFrom === "map"
+                    ? "This is the building's outline as surveyed on the map. Place each room inside it, and drag them together — rooms that touch get a doorway."
+                    : evidence.shapeFrom === "traced"
+                      ? "No building is drawn on the map here, so this outline was read off the satellite image — check it against the roof before you trust it. Place each room inside it; rooms that touch get a doorway."
+                      : "Nothing measured this building, so the outline is a typical shape rather than this house's. Place each room inside it; rooms that touch get a doorway."}
               </p>
               {boundary?.ok && boundary.note && (
                 <p className="mt-1 text-xs text-mist-400">{boundary.note}</p>
@@ -1047,6 +1073,7 @@ function NewTourInner() {
               {backdrop && (
                 <p className="mt-1 text-[11px] text-mist-400">{GOOGLE_ATTRIBUTION}</p>
               )}
+              {fitProblem && <p className="mt-1 text-xs text-warn">{fitProblem}</p>}
               {boundary && !boundary.ok && (
                 <p className="mt-1 text-xs text-warn">
                   {boundary.why} Drawing freely instead; the shape will be fitted afterwards.
@@ -1062,6 +1089,14 @@ function NewTourInner() {
                 className="rounded border border-ink-500 px-3 py-1.5 text-xs hover:bg-ink-600 disabled:opacity-50"
               >
                 {suggesting ? "Working it out…" : "Suggest a layout"}
+              </button>
+              <button
+                onClick={fitLayout}
+                disabled={layoutPlan.rooms.length === 0 || !evidence.footprint}
+                data-testid="fit-layout"
+                className="rounded border border-ink-500 px-3 py-1.5 text-xs hover:bg-ink-600 disabled:opacity-40"
+              >
+                Fit the rooms to the building
               </button>
               <span className="text-xs text-mist-400">
                 {evidence.rooms.length} rooms to place
@@ -1106,7 +1141,7 @@ function NewTourInner() {
                 {layoutPlan.rooms.length === 0
                   ? "Place a room to begin, or ask for a suggestion."
                   : layoutCheck && !layoutCheck.ok
-                    ? layoutCheck.why
+                    ? `${layoutCheck.why} Drag them together, or press “Fit the rooms to the building”.`
                     : `${layoutPlan.rooms.length} rooms, ${layoutPlan.openings.length} doorways.`}
               </span>
             </div>

@@ -214,6 +214,10 @@ export async function gatherEvidence<T extends BuildPhoto>(
         // be divided by the storeys standing on it.
         input.facts?.sqft ? input.facts.sqft / storeys : undefined,
         groundRooms,
+        // A traced ring is a guess and the stated floor area is a fact, so the
+        // area is allowed to correct it much harder than it may correct a
+        // surveyed outline.
+        shapeFrom === "map" ? "measured" : "traced",
       )
     : null;
 
@@ -228,6 +232,11 @@ export async function gatherEvidence<T extends BuildPhoto>(
     notes.push(
       `Shaped to the building as seen from above (${Math.round(footprint.areaSqft)} sqft ground floor). ${GOOGLE_ATTRIBUTION}.`,
     );
+    if (tracedConfidence === "low") {
+      notes.push(
+        "The satellite trace was not confident about this building — check the outline against the roof before building.",
+      );
+    }
   }
 
   const evidence: BuildEvidence = {

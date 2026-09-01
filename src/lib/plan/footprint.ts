@@ -323,6 +323,20 @@ export function prepareFootprint(
   ring: Array<[number, number]>,
   targetGroundSqft?: number,
   roomCount?: number,
+  /**
+   * How much the ring itself is worth believing.
+   *
+   * A surveyed outline is a measurement and the listing's floor area is a
+   * rounded marketing number, so the outline wins and the area only nudges it.
+   * A traced outline is neither: it is a vision model following a roof edge in
+   * an aerial photograph, and it is generous - a patio, a deck and a pool
+   * surround read as one continuous surface with the roof from above. Against
+   * that, a stated floor area is the harder fact, and the correction has to be
+   * allowed to be large enough to matter. A trace 60% over is not unusual and
+   * is entirely invisible until somebody notices the kitchen is 1,356 square
+   * feet.
+   */
+  trust: "measured" | "traced" = "measured",
 ): Footprint {
   const centre = {
     lat: ring.reduce((sum, p) => sum + p[0], 0) / ring.length,
@@ -368,10 +382,13 @@ export function prepareFootprint(
     const current = polygonArea(outline) / (M_PER_FT * M_PER_FT);
     if (current > 50) {
       const factor = Math.sqrt(targetGroundSqft / current);
-      // Only nudge. A factor far from one means the footprint and the listing
-      // disagree about which building this is, and trusting either blindly
-      // would produce a house that matches neither.
-      if (factor > 0.6 && factor < 1.7) {
+      // A measured outline is only nudged: a factor far from one means the
+      // footprint and the listing disagree about which building this is, and
+      // trusting either blindly produces a house that matches neither. A traced
+      // one is given far more rope, because the disagreement is much more
+      // likely to be the trace being wrong than the listing being wrong.
+      const [low, high] = trust === "traced" ? [0.45, 2.2] : [0.6, 1.7];
+      if (factor > low && factor < high) {
         outline = outline.map(([x, y]) => [x * factor, y * factor] as Vec2);
         scale = factor;
       }

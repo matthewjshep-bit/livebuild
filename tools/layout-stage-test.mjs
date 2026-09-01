@@ -131,6 +131,21 @@ if (await deleteButton.count()) {
   check("and the house cannot be built through it", !holed.canBuild);
   check("the room it lost is offered back", holed.unplaced > 0, `${holed.unplaced}`);
 
+  // Fitting is the way out of a gate that dragging cannot satisfy: keep the
+  // arrangement, give up the sizes, let the packer produce the exact tiling.
+  await page.getByTestId("fit-layout").click();
+  await page.waitForTimeout(1200);
+  const fitted = await page.evaluate(() => ({
+    faults: document.querySelectorAll('[data-testid="layout-fault"]').length,
+    canBuild: !document.querySelector('[data-testid="build-from-layout"]')?.disabled,
+    summary: document.body.innerText.match(/(\d+) rooms, (\d+) doorways\./)?.[0] ?? null,
+  }));
+  check("fitting clears the fault in one press", fitted.faults === 0, JSON.stringify(fitted));
+  check("and the house can be built", fitted.canBuild);
+  check("with doorways between the rooms", /[1-9]\d* doorways/.test(fitted.summary ?? ""),
+    `${fitted.summary}`);
+  await page.screenshot({ path: "shots/L3b-fitted.png" });
+
   // Undo restores it, and the gate clears.
   await page.getByRole("button", { name: "Undo" }).click();
   await page.waitForTimeout(800);
@@ -138,8 +153,8 @@ if (await deleteButton.count()) {
     faults: document.querySelectorAll('[data-testid="layout-fault"]').length,
     canBuild: !document.querySelector('[data-testid="build-from-layout"]')?.disabled,
   }));
-  check("mending it clears the fault", mended.faults === 0);
-  check("and the house can be built again", mended.canBuild);
+  check("undo leaves a buildable plan", mended.faults === 0 && mended.canBuild,
+    JSON.stringify(mended));
 }
 
 // --- a drawing survives the tab being reloaded ---

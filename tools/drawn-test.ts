@@ -8,8 +8,8 @@
  * the tour and hits a dead end. Every case below is a shape somebody will
  * actually draw.
  */
-import { checkDrawn, drawableBoundary } from "../src/lib/plan/drawn";
-import { decompose } from "../src/lib/plan/footprint";
+import { checkDrawn, drawableBoundary, fitToBuilding } from "../src/lib/plan/drawn";
+import { decompose, prepareFootprint } from "../src/lib/plan/footprint";
 import { signedArea } from "../src/lib/plan/geometry";
 import { rectangle } from "../src/lib/plan/autolayout";
 import type { Room, Vec2 } from "../src/lib/schema";
@@ -206,6 +206,61 @@ const RECT: Vec2[] = [[0, 0], [10, 0], [10, 6], [0, 6]];
     vertices: { raw: 4, simplified: 4 },
   });
   check("an unbuildable footprint is refused", !boundary.ok);
+}
+
+// --- a mess of a drawing can be fitted to the building in one go ---
+//
+// The gate refuses a drawing that leaves a hole, and it is right to. But
+// dragging rectangles until they exactly tile an irregular outline is not
+// something a person can do - every nudge opens a gap on one side while closing
+// another. A gate nobody can satisfy is a trap, so this is the way out: keep
+// the arrangement, throw away the sizes, let the packer do what it has always
+// done.
+{
+  const m = 1 / 111_320;
+  const ring: Array<[number, number]> = [
+    [0, 0], [0, 18 * m], [11 * m, 18 * m], [11 * m, 0],
+  ].map(([a, b]) => [37 + a, -122 + b] as [number, number]);
+  const fp = prepareFootprint(ring, undefined, 6);
+
+  // Deliberately awful: overlapping, gapped, and one room off the building.
+  const drawn = [
+    room("a", 0, 0, 7, 5),
+    room("b", 6, 0, 6, 4),
+    room("c", 1, 6, 5, 5),
+    room("d", 40, 40, 3, 3),
+  ];
+  const before = checkDrawn(drawn, fp.outline, 0);
+  check("the mess is refused first", !before.ok);
+
+  const fitted = fitToBuilding(drawn, fp, 0);
+  check("but it can be fitted", fitted.ok, fitted.ok ? "" : fitted.why);
+  if (fitted.ok) {
+    const after = checkDrawn(fitted.rooms, fp.outline, 0);
+    check("and the result passes the gate", after.ok, after.ok ? "" : after.why);
+    check("every room survives", fitted.rooms.length === drawn.length,
+      `${fitted.rooms.length} of ${drawn.length}`);
+    check("with its own label", new Set(fitted.rooms.map((r) => r.label)).size === 4);
+    // Ids are carried across, so photographs and grades keyed by room id live.
+    check("and its own id", drawn.every((d) => fitted.rooms.some((r) => r.id === d.id)),
+      fitted.rooms.map((r) => r.id).join(","));
+    // The arrangement is kept: whatever was drawn topmost is still topmost.
+    const topDrawn = [...drawn].sort((x, z) => x.polygon[0][1] - z.polygon[0][1])[0].id;
+    const topFitted = [...fitted.rooms].sort((x, z) => x.polygon[0][1] - z.polygon[0][1])[0].id;
+    check("and the arrangement is recognisably the one drawn", topDrawn === topFitted,
+      `${topDrawn} vs ${topFitted}`);
+  }
+}
+
+// --- fitting refuses rather than inventing rooms it was not given ---
+{
+  const m = 1 / 111_320;
+  const ring: Array<[number, number]> = [
+    [0, 0], [0, 18 * m], [11 * m, 18 * m], [11 * m, 0],
+  ].map(([a, b]) => [37 + a, -122 + b] as [number, number]);
+  const fp = prepareFootprint(ring, undefined, 6);
+  const fitted = fitToBuilding([], fp, 0);
+  check("an empty floor cannot be fitted", !fitted.ok);
 }
 
 if (failures > 0) {

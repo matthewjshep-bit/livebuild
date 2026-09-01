@@ -1,6 +1,14 @@
-import { type Footprint, type Rect, decompose } from "@/lib/plan/footprint";
+import {
+  type Footprint,
+  type PackPlan,
+  type Rect,
+  decompose,
+  packIntoFootprint,
+  validatePackPlan,
+} from "@/lib/plan/footprint";
 import { pointInPolygon } from "@/lib/plan/geometry";
 import { outlineOf } from "@/lib/plan/outline";
+import { boundsOf } from "@/lib/plan/autolayout";
 import type { Room, Vec2 } from "@/lib/schema";
 import { M_PER_FT } from "@/lib/units";
 
@@ -288,5 +296,149 @@ export function checkDrawn(drawn: Room[], outline: Vec2[], level: number): Drawn
     gaps: merge(gaps),
     overlaps: merge(overlaps),
     overhangs: merge(overhangs),
+  };
+}
+
+
+/** The smallest a room may be, mirrored from the packer's own limit. */
+const MIN_ROOM_M = 2.1;
+
+/**
+ * Make an arrangement fill the building exactly, keeping where things are.
+ *
+ * `checkDrawn` refuses a drawing that leaves a hole, and it is right to - a
+ * piece of a house belonging to no room is a room with no doorways into it. But
+ * refusing is only half an answer. Dragging rectangles until they exactly tile
+ * an irregular outline is not a thing a person can do: every nudge opens a gap
+ * on one side while closing another, and a nine-room house has more edges to
+ * get simultaneously right than anybody will manage. A gate nobody can satisfy
+ * is a trap, however correct its reasoning.
+ *
+ * So this takes the arrangement the user has drawn - which room is where,
+ * relative to the others - and throws away only the sizes, handing both to the
+ * packer that has always produced an exact tiling. What comes back is their
+ * layout, snapped to the building.
+ *
+ * The arrangement is expressed as the packer's own `PackPlan`: rooms grouped
+ * into the rectangle they were drawn in, then into rows by where they sit. That
+ * contract already exists, is already validated, and is already the thing
+ * `/api/layout` returns - so nothing here can produce a partition the packer
+ * would not have produced itself.
+ */
+export function fitToBuilding(
+  drawn: Room[],
+  footprint: Footprint,
+  level: number,
+): { ok: true; rooms: Room[] } | { ok: false; why: string } {
+  const onLevel = drawn.filter((room) => room.level === level);
+  if (onLevel.length === 0) return { ok: false, why: "Nothing is drawn on this floor yet." };
+  if (footprint.rects.length === 0) {
+    return { ok: false, why: "The building outline has no space big enough for a room." };
+  }
+  if (onLevel.length < footprint.rects.length) {
+    // Every rectangle must get a room or there is a hole in the middle of the
+    // house. Saying so beats silently inventing rooms nobody asked for.
+    return {
+      ok: false,
+      why: `This building needs at least ${footprint.rects.length} rooms on this floor to fill it; ${onLevel.length} ${onLevel.length === 1 ? "is" : "are"} drawn.`,
+    };
+  }
+
+  const centre = (room: Room) => {
+    const b = boundsOf(room.polygon);
+    return { x: (b.x0 + b.x1) / 2, y: (b.y0 + b.y1) / 2 };
+  };
+
+  /** Which rectangle a room was drawn in, or the nearest if it was drawn outside. */
+  const rectFor = (room: Room): number => {
+    const c = centre(room);
+    const inside = footprint.rects.findIndex(
+      (r) => c.x >= r.x0 && c.x <= r.x1 && c.y >= r.y0 && c.y <= r.y1,
+    );
+    if (inside >= 0) return inside;
+    let best = 0;
+    let bestDistance = Infinity;
+    footprint.rects.forEach((r, i) => {
+      const dx = Math.max(r.x0 - c.x, 0, c.x - r.x1);
+      const dy = Math.max(r.y0 - c.y, 0, c.y - r.y1);
+      const distance = Math.hypot(dx, dy);
+      if (distance < bestDistance) {
+        bestDistance = distance;
+        best = i;
+      }
+    });
+    return best;
+  };
+
+  const buckets: number[][] = footprint.rects.map(() => []);
+  onLevel.forEach((room, index) => buckets[rectFor(room)].push(index));
+
+  // A rectangle nobody was drawn in still has to hold somebody. Taken from
+  // whichever bucket can most afford it, so the arrangement moves as little as
+  // possible.
+  for (let r = 0; r < buckets.length; r++) {
+    if (buckets[r].length > 0) continue;
+    const donor = buckets.reduce((best, b, i) => (b.length > buckets[best].length ? i : best), 0);
+    if (buckets[donor].length < 2) return { ok: false, why: "There are not enough rooms to fill the building." };
+    buckets[r].push(buckets[donor].pop()!);
+  }
+
+  const rows: number[][][] = buckets.map((indices, r) => {
+    const rect = footprint.rects[r];
+    const maxRows = Math.max(1, Math.floor((rect.y1 - rect.y0) / MIN_ROOM_M));
+    const maxPerRow = Math.max(1, Math.floor((rect.x1 - rect.x0) / MIN_ROOM_M));
+
+    // Rows come from where things were drawn: sorted down the page, then cut
+    // wherever the next room starts below the last one's middle. That is what
+    // keeps a layout recognisably the one somebody drew.
+    const sorted = [...indices].sort((a, z) => centre(onLevel[a]).y - centre(onLevel[z]).y);
+    const grouped: number[][] = [];
+    for (const index of sorted) {
+      const last = grouped[grouped.length - 1];
+      const b = boundsOf(onLevel[index].polygon);
+      const startsBelow =
+        last !== undefined &&
+        b.y0 >= centre(onLevel[last[last.length - 1]]).y &&
+        grouped.length < maxRows;
+      if (!last || startsBelow) grouped.push([index]);
+      else last.push(index);
+    }
+
+    // Too many rooms across for the space they have to share is a row of
+    // corridors. Split it rather than let `distribute` degrade to equal shares.
+    const capped: number[][] = [];
+    for (const row of grouped) {
+      const ordered = [...row].sort((a, z) => centre(onLevel[a]).x - centre(onLevel[z]).x);
+      for (let i = 0; i < ordered.length; i += maxPerRow) {
+        capped.push(ordered.slice(i, i + maxPerRow));
+      }
+    }
+    while (capped.length > maxRows) {
+      // Fold the shortest row into its neighbour rather than drop anybody.
+      const shortest = capped.reduce((best, row, i) => (row.length < capped[best].length ? i : best), 0);
+      const into = shortest === 0 ? 1 : shortest - 1;
+      capped[into] = [...capped[into], ...capped[shortest]];
+      capped.splice(shortest, 1);
+    }
+    return capped.length > 0 ? capped : [indices];
+  });
+
+  const plan: PackPlan = { rows };
+  const labels = onLevel.map((room) => room.label);
+  if (!validatePackPlan(plan, labels, footprint.rects)) {
+    return { ok: false, why: "That arrangement cannot be fitted to this building." };
+  }
+
+  // The packer computes every polygon, so the exact fill is its guarantee and
+  // not a new one. Ids are carried back across so photographs, grades and
+  // anything else keyed by room id survive the fitting.
+  const packed = packIntoFootprint(labels, footprint, level, plan);
+  return {
+    ok: true,
+    rooms: packed.map((room, index) => ({
+      ...room,
+      id: onLevel[index]?.id ?? room.id,
+      ceilingHeight: onLevel[index]?.ceilingHeight ?? room.ceilingHeight,
+    })),
   };
 }

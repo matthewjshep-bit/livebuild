@@ -2,7 +2,9 @@
 
 import { DOC_STORE, del, entries, get, put } from "@/lib/storage/db";
 import { mediaRef, putMedia, resolveMediaUrl } from "@/lib/media-store";
+import type { BuildEvidence } from "@/lib/build/gather";
 import type { ListingFacts, ListingFootprint } from "@/lib/listing/types";
+import type { Plan } from "@/lib/schema";
 
 /**
  * An import in progress, one record per tour.
@@ -47,6 +49,26 @@ export type Intake = {
   facts?: ListingFacts | null;
   footprint?: ListingFootprint | null;
   site?: { lat: number; lon: number } | null;
+  /**
+   * What the evidence pass found, so resuming does not pay for it twice.
+   *
+   * Optional, and absent from every record written before the layout stage
+   * existed, which read back as `undefined` and resume on the photos screen
+   * exactly as they always did. No migration.
+   */
+  evidence?: BuildEvidence | null;
+  /**
+   * The layout as drawn so far.
+   *
+   * The single most valuable thing on this record. Everything else here can be
+   * recovered by asking again - the photographs are already in the media store,
+   * the listing can be re-scraped, the classifier can be re-run. A hand-drawn
+   * ten-room house cannot be recovered from anything, and losing it to a
+   * refreshed tab would be the worst failure this feature has.
+   */
+  layout?: Plan | null;
+  /** Where the wizard was. Absent means "photos", which every old record was. */
+  stage?: "photos" | "layout";
   updatedAt: number;
 };
 

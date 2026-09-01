@@ -142,6 +142,42 @@ if (await deleteButton.count()) {
   check("and the house can be built again", mended.canBuild);
 }
 
+// --- a drawing survives the tab being reloaded ---
+//
+// The one thing on the import record that cannot be recovered by asking again.
+// The photographs are in the media store, the listing can be re-scraped, the
+// classifier can be re-run; a hand-drawn house cannot be got back from
+// anything, so losing it to a refresh would be the worst failure here.
+const before = await page.evaluate(() => {
+  const index = JSON.parse(localStorage.getItem("livebuild:index") ?? "[]");
+  return {
+    id: index[index.length - 1],
+    summary: document.body.innerText.match(/(\d+) rooms, (\d+) doorways\./)?.[0] ?? null,
+  };
+});
+check("there is a property to resume", Boolean(before.id));
+
+if (before.id) {
+  await page.goto(`${base}/new?id=${before.id}`, { waitUntil: "domcontentloaded" });
+  let back = false;
+  for (let i = 0; i < 30 && !back; i++) {
+    await page.waitForTimeout(1000);
+    back = (await page.getByTestId("build-from-layout").count()) > 0;
+  }
+  check("a reload comes back to the drawing, not to the start", back);
+  await page.screenshot({ path: "shots/L4-reloaded.png" });
+
+  const after = await page.evaluate(() => ({
+    summary: document.body.innerText.match(/(\d+) rooms, (\d+) doorways\./)?.[0] ?? null,
+    canBuild: !document.querySelector('[data-testid="build-from-layout"]')?.disabled,
+    boundaries: document.querySelectorAll("svg polygon").length,
+  }));
+  check("with the same layout intact", after.summary === before.summary,
+    `${before.summary} -> ${after.summary}`);
+  check("and the measured outline still there", after.boundaries >= 1);
+  check("and still buildable", after.canBuild);
+}
+
 // --- and it builds what was drawn ---
 const drawnRooms = await page.evaluate(
   () => document.body.innerText.match(/(\d+) rooms, (\d+) doorways\./)?.[1] ?? null,

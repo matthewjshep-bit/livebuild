@@ -231,6 +231,23 @@ function NewTourInner() {
               guessed: photo.guessed,
             })),
           );
+
+          /**
+           * Come back to the drawing, not to the start.
+           *
+           * Only when both halves are there. Evidence without a layout would
+           * put someone on an empty canvas having paid for the classify pass
+           * and lost the drawing; a layout without evidence cannot be built
+           * from, because construction needs the footprint and the room list.
+           * Either alone is a corrupt record and the photos screen is the safe
+           * place to restart from.
+           */
+          if (intake.stage === "layout" && intake.evidence && intake.layout) {
+            setEvidence(intake.evidence);
+            setLayoutPlan(intake.layout);
+            adjacencyRef.current = intake.evidence.adjacency;
+            setStage("layout");
+          }
         } else {
           // No import record, but the photographs may still be there - a crash
           // between writing a blob and writing the record leaves exactly that.
@@ -384,7 +401,10 @@ function NewTourInner() {
     // Never write an untouched blank one. Bouncing off `/new` would otherwise
     // leave an empty tour on the home page every single time - the rule the
     // editor already states for the same reason.
-    if (restoring || stage !== "photos" || !anythingWorthKeeping) return;
+    // The layout stage saves too. A drawing is the one thing on this record
+    // that cannot be recovered by asking again, so it is the thing most worth
+    // writing down.
+    if (restoring || (stage !== "photos" && stage !== "layout") || !anythingWorthKeeping) return;
 
     const timer = setTimeout(() => {
       // The document first, so a crash leaves a tour that is merely empty
@@ -420,6 +440,9 @@ function NewTourInner() {
           roomLabel: p.roomLabel,
           guessed: p.guessed,
         })),
+        evidence,
+        layout: layoutPlan,
+        stage: stage === "layout" ? "layout" : "photos",
         updatedAt: Date.now(),
       });
     }, 400);
@@ -436,6 +459,8 @@ function NewTourInner() {
     propertyId,
     restoring,
     anythingWorthKeeping,
+    evidence,
+    layoutPlan,
   ]);
 
   /**

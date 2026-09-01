@@ -60,6 +60,42 @@ export function syncBlocker(): "unconfigured" | "no-key" | null {
   return null;
 }
 
+export type PublishedTour = {
+  slug: string;
+  label: string;
+  photo_count: number;
+  bytes: number;
+  created_at: string;
+  updated_at: string;
+};
+
+/**
+ * Every tour published from this project, whichever machine published it.
+ *
+ * The counterpart to a share model built on unguessable links: the slug is the
+ * access control, so nothing lists them, so a house published from a laptop
+ * that has since been wiped is unreachable by anybody - including whoever made
+ * it. Reads through the same passphrase that authorises publishing.
+ *
+ * Returns null when the passphrase is missing or refused, so a browser that has
+ * never published simply shows nothing rather than an error it cannot act on.
+ */
+export async function listPublished(): Promise<PublishedTour[] | null> {
+  if (!isCloudConfigured() || adminKey().length === 0) return null;
+  try {
+    const response = await fetch("/api/publish/list", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ adminKey: adminKey() }),
+    });
+    if (!response.ok) return null;
+    const body = (await response.json()) as { tours?: PublishedTour[] };
+    return body.tours ?? [];
+  } catch {
+    return null;
+  }
+}
+
 /** Remember the passphrase for this browser, so this is asked once. */
 export function rememberAdminKey(key: string): void {
   try {

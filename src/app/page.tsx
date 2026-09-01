@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 
 import { listPropertyIds, loadProperty } from "@/lib/property-store";
+import { type PublishedTour, listPublished } from "@/lib/cloud/sync";
 import { listIntakes } from "@/lib/storage/intake";
 
 type Entry = {
@@ -21,6 +22,22 @@ const BUNDLED = ["demo-house", "two-storey"];
 
 export default function Home() {
   const [entries, setEntries] = useState<Entry[]>([]);
+  /**
+   * Tours that have been published, from wherever they were published.
+   *
+   * The list above is this browser's local storage, which is the right home for
+   * work in progress and the wrong one for anything shared: a house built on a
+   * laptop is invisible on the phone, and a published tour was invisible
+   * everywhere, because the unguessable slug that makes a link safe to send
+   * also makes it impossible to find again. Null until the answer is known, so
+   * a browser with no passphrase shows nothing rather than an empty state that
+   * would read as "you have published nothing".
+   */
+  const [published, setPublished] = useState<PublishedTour[] | null>(null);
+
+  useEffect(() => {
+    void listPublished().then(setPublished);
+  }, []);
 
   useEffect(() => {
     const saved = listPropertyIds().map((id) => {
@@ -165,6 +182,55 @@ export default function Home() {
           </p>
         )}
       </div>
+
+      {published && published.length > 0 && (
+        <>
+          <h2 className="mt-10 mb-1 text-xs uppercase tracking-wide text-mist-400">
+            Published
+          </h2>
+          <p className="mb-3 text-xs leading-relaxed text-mist-400">
+            Live on the web at an unguessable link, from any machine that published
+            one. Anybody with the link can open it; nobody can find it without.
+          </p>
+          <div className="space-y-2">
+            {published.map((tour) => (
+              <div
+                key={tour.slug}
+                className="flex items-center justify-between rounded border border-ink-600 bg-ink-800 px-4 py-3"
+              >
+                <div className="min-w-0">
+                  <div className="truncate text-sm font-medium">
+                    {tour.label || "Untitled"}
+                  </div>
+                  <div className="text-xs text-mist-400">
+                    {tour.photo_count} photo{tour.photo_count === 1 ? "" : "s"} &middot;{" "}
+                    {new Date(tour.updated_at).toLocaleDateString()} &middot;{" "}
+                    <span className="font-mono">/t/{tour.slug}</span>
+                  </div>
+                </div>
+                <div className="flex shrink-0 gap-2">
+                  <a
+                    href={`/t/${tour.slug}`}
+                    className="rounded bg-accent px-3 py-1.5 text-xs font-medium text-ink-900"
+                  >
+                    Open
+                  </a>
+                  <button
+                    onClick={() => {
+                      void navigator.clipboard?.writeText(
+                        `${window.location.origin}/t/${tour.slug}`,
+                      );
+                    }}
+                    className="rounded border border-ink-500 px-3 py-1.5 text-xs"
+                  >
+                    Copy link
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </>
+      )}
 
       <div className="mt-6 flex gap-4 text-xs text-mist-400">
         <a href="/storage" className="underline underline-offset-4 hover:text-mist-200">

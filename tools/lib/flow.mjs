@@ -14,9 +14,27 @@
  * with no id is always a new tour - so this is a navigation, kept as a helper
  * because six suites call it and the guarantee it makes is still worth naming.
  */
-export async function freshStart(page, base) {
+export async function freshStart(page, base, mode = "house") {
   await page.goto(`${base}/new`, { waitUntil: "networkidle" });
   await page.waitForTimeout(800);
+  await chooseMode(page, mode);
+}
+
+/**
+ * Answer the first question, which is new.
+ *
+ * The wizard used to open on the photo screen. It opens on a choice now - a
+ * room or a whole house - because everything went through the same
+ * house-shaped pipeline before, whatever you actually wanted. Every suite that
+ * drives the wizard has to answer it, so it is answered here rather than in
+ * each of them.
+ */
+export async function chooseMode(page, mode = "house") {
+  const card = page.getByTestId(mode === "room" ? "mode-room" : "mode-house");
+  if ((await card.count()) === 0) return false;
+  await card.click();
+  await page.waitForTimeout(400);
+  return true;
 }
 
 export async function addPhotos(page, files) {
@@ -25,15 +43,35 @@ export async function addPhotos(page, files) {
   await page.waitForTimeout(400 + files.length * 300);
 }
 
-/** Optional: open the collapsed description and let it be read. */
-export async function describe(page, text) {
-  const summary = page.locator("summary", { hasText: "Describe the house" });
+/**
+ * Say what is in the house.
+ *
+ * This drove a `<textarea>` and a "Read it" button. Both are gone: the house is
+ * described by pressing things now, so what a test needs to say is "three
+ * bedrooms and two bathrooms" rather than a sentence about them.
+ *
+ * Returns false when there is no sheet on screen, the way the old helper did
+ * when there was no description box, so a caller that only wants a house built
+ * does not have to care.
+ */
+export async function describe(page, { beds, baths, floors } = {}) {
+  const summary = page.getByTestId("sheet-summary");
   if ((await summary.count()) === 0) return false;
-  await summary.click();
-  await page.waitForTimeout(300);
-  await page.locator("textarea").fill(text);
-  await page.getByRole("button", { name: "Read it" }).click();
-  await page.waitForTimeout(9000);
+
+  const press = async (label, times) => {
+    const button = page.getByRole("button", { name: `One ${times > 0 ? "more" : "fewer"} ${label}` });
+    for (let i = 0; i < Math.abs(times); i++) {
+      await button.click();
+      await page.waitForTimeout(60);
+    }
+  };
+
+  // The steppers start at three bedrooms and two bathrooms, which is what the
+  // sheet assumes for a house nobody has said anything about yet.
+  if (typeof beds === "number") await press("bedrooms", beds - 3);
+  if (typeof baths === "number") await press("bathrooms", (baths - 2) * 2);
+  if (typeof floors === "number") await press("floors", floors - 1);
+  await page.waitForTimeout(200);
   return true;
 }
 
@@ -85,8 +123,19 @@ export async function finishLayout(page, { timeoutMs = 200_000 } = {}) {
  * Generous, because this really does run classification, layout, pose
  * estimation and the interior read end to end.
  */
-export async function build(page, { timeoutMs = 200_000 } = {}) {
-  await page.getByRole("button", { name: "Build my tour" }).click();
+export async function build(page, { timeoutMs = 200_000, house } = {}) {
+  // The photo screen now leads to the house sheet rather than straight to a
+  // build, because the bedroom count is worth asking for before building.
+  const onwards = page.getByTestId("continue-from-photos");
+  if ((await onwards.count()) > 0) await onwards.click();
+  else await page.getByRole("button", { name: "Build my tour" }).click();
+  await page.waitForTimeout(600);
+
+  const sheet = page.getByTestId("build-from-sheet");
+  if ((await sheet.count()) > 0) {
+    if (house) await describe(page, house);
+    await sheet.click();
+  }
   return drawLayout(page, { timeoutMs });
 }
 

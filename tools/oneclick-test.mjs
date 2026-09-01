@@ -10,7 +10,7 @@
 import { chromium } from "playwright";
 import { readdirSync } from "node:fs";
 import { join } from "node:path";
-import { drawLayout } from "./lib/flow.mjs";
+import { drawLayout, chooseMode } from "./lib/flow.mjs";
 
 const base = process.env.BASE_URL ?? "http://localhost:3000";
 const dir = "public/properties/demo-house/photos";
@@ -24,6 +24,10 @@ const errors = [];
 page.on("pageerror", (e) => errors.push(e.message));
 
 await page.goto(`${base}/new`, { waitUntil: "networkidle" });
+await page.waitForTimeout(900);
+// The wizard opens on a choice now - a room or a whole house - so every suite
+// that drives it has to answer that before it reaches the photo screen.
+await chooseMode(page);
 await page.waitForTimeout(800);
 if (await page.getByRole("button", { name: "Start over" }).count()) {
   await page.getByRole("button", { name: "Start over" }).click();

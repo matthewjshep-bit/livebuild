@@ -16,7 +16,7 @@ import { chromium } from "playwright";
 import { readdirSync } from "node:fs";
 import { join } from "node:path";
 
-import { addPhotos, build, freshStart, savedProperty } from "./lib/flow.mjs";
+import { addPhotos, build, freshStart, savedProperty, chooseMode } from "./lib/flow.mjs";
 
 const BASE = process.env.BASE_URL ?? "http://localhost:3000";
 const dir = "public/properties/demo-house/photos";
@@ -90,6 +90,10 @@ check("the built tour has viewpoints", (built?.nodes.length ?? 0) > 0, `${built?
 const blobsAfterBuild = await blobsFor(firstId);
 
 await page.goto(`${BASE}/new`, { waitUntil: "networkidle" });
+await page.waitForTimeout(900);
+// The wizard opens on a choice now - a room or a whole house - so every suite
+// that drives it has to answer that before it reaches the photo screen.
+await chooseMode(page);
 await page.waitForTimeout(1200);
 
 // The regression that started this.

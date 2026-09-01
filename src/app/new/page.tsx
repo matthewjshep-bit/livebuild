@@ -3,7 +3,15 @@
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 
-import { DescribeHouse } from "@/components/wizard/DescribeHouse";
+import { HouseSheet } from "@/components/wizard/HouseSheet";
+import { type BuildMode, ModeChoice } from "@/components/wizard/ModeChoice";
+import {
+  EMPTY_SHEET,
+  type HouseSheet as Sheet,
+  factsWorthUsing,
+  sheetFromFacts,
+  sheetToSpec,
+} from "@/lib/plan/house-sheet";
 import { DriveImport } from "@/components/wizard/DriveImport";
 import { PhotoDrop, type ImportedPhoto } from "@/components/wizard/PhotoDrop";
 import { PropertyStart } from "@/components/wizard/PropertyStart";
@@ -67,7 +75,22 @@ import { M_PER_FT, sqftToM2 } from "@/lib/units";
  * house, the second is constructing it, and the layout stage sits between them
  * because that is where the decision belongs.
  */
-type Stage = "photos" | "gathering" | "layout" | "building" | "review";
+/**
+ * The wizard's screens.
+ *
+ * "choose" is new and comes first: everything used to be reached through one
+ * screen, so somebody with photographs of a single kitchen got the same
+ * house-shaped pipeline as somebody building a whole house. "house-sheet"
+ * replaces a `<textarea>` behind a disclosure triangle.
+ */
+type Stage =
+  | "choose"
+  | "photos"
+  | "house-sheet"
+  | "gathering"
+  | "layout"
+  | "building"
+  | "review";
 
 /**
  * A readable id that cannot collide.
@@ -113,12 +136,23 @@ function NewTourInner() {
   const params = useSearchParams();
   const resumeId = params.get("id");
 
-  const [stage, setStage] = useState<Stage>("photos");
+  const [stage, setStage] = useState<Stage>("choose");
+  /** A room on its own, or a whole house. Chosen first, and everything keys off it. */
+  const [mode, setMode] = useState<BuildMode>("house");
   const [photos, setPhotos] = useState<ImportedPhoto[]>([]);
   const [propertyId] = useState(() => resumeId ?? newPropertyId());
   const [label, setLabel] = useState("");
   const [description, setDescription] = useState("");
   const [spec, setSpec] = useState<HouseSpec | null>(null);
+  /**
+   * The house in numbers, which is what the room list is derived from now.
+   *
+   * `spec` is still the thing everything downstream reads - it is the
+   * classifier's vocabulary and the layout's inventory - and it is derived from
+   * this rather than from a sentence.
+   */
+  const [sheet, setSheet] = useState<Sheet>(EMPTY_SHEET);
+  const [sheetPrefilled, setSheetPrefilled] = useState(false);
   const [facts, setFacts] = useState<ListingFacts | null>(null);
   // The building's real outline, when OpenStreetMap had one for the address.
   const [footprint, setFootprint] = useState<ListingFootprint | null>(null);
@@ -322,6 +356,22 @@ function NewTourInner() {
         const storeys =
           listing.exterior?.storeys ??
           Math.max(listing.footprint?.storeys ?? 1, Math.round(listing.facts.stories ?? 1));
+        /**
+         * The sheet arrives already filled in.
+         *
+         * This used to assemble the facts into an English sentence and push it
+         * back through the same regex the user's typing went through - numbers
+         * turned into prose so they could be turned into numbers again. They go
+         * straight onto the controls now, where they are visible and can be
+         * corrected without composing a sentence about it.
+         *
+         * The sentence is still kept, because `remarks` is where a listing
+         * actually names its rooms and the parser is still the thing that reads
+         * prose. It seeds `spec` for the room mode, which has no sheet.
+         */
+        setSheet(sheetFromFacts(listing.facts, storeys));
+        setSheetPrefilled(factsWorthUsing(listing.facts));
+
         const sentence = factsToDescription(
           { ...listing.facts, stories: storeys > 1 ? storeys : listing.facts.stories },
           listing.remarks,
@@ -891,10 +941,22 @@ function NewTourInner() {
     setStage("gathering");
     setFailed(null);
     try {
+      // Derived here rather than held in step with the sheet, so what is built
+      // is always what the sheet currently says.
+      const fromSheet = mode === "house" ? sheetToSpec(sheet) : spec;
+      /**
+       * And kept, because the review screen offers it back.
+       *
+       * `spec` is what `PhotoReview` builds its room pickers from. Building
+       * from the sheet without storing it left those pickers offering the room
+       * names of whatever the listing sentence had parsed to - so a house built
+       * with four bedrooms offered three to tag photographs against.
+       */
+      if (fromSheet) setSpec(fromSheet);
       const { evidence: found, photos: labelled } = await gatherEvidence(
         {
           photos,
-          spec,
+          spec: fromSheet,
           facts,
           footprint,
           site: listingSite,
@@ -932,7 +994,7 @@ function NewTourInner() {
       setStep(null);
       setStage("photos");
     }
-  }, [photos, spec, facts, footprint, listingSite, exterior]);
+  }, [photos, spec, sheet, mode, facts, footprint, listingSite, exterior]);
 
 
   if (restoring) {
@@ -946,6 +1008,36 @@ function NewTourInner() {
   return (
     <main className="min-h-screen px-6 py-10">
       <div className="mx-auto max-w-5xl">
+        {stage === "choose" && (
+          <ModeChoice
+            onChoose={(next) => {
+              setMode(next);
+              setStage("photos");
+            }}
+          />
+        )}
+
+        {stage === "house-sheet" && (
+          <div className="mx-auto max-w-3xl">
+            <HouseSheet sheet={sheet} onChange={setSheet} prefilled={sheetPrefilled} />
+            <div className="mt-6 flex flex-wrap items-center justify-center gap-3">
+              <button
+                onClick={() => setStage("photos")}
+                className="rounded-lg border border-ink-500 px-4 py-2.5 text-sm text-mist-200 transition hover:bg-ink-600"
+              >
+                Back
+              </button>
+              <button
+                onClick={() => void build()}
+                data-testid="build-from-sheet"
+                className="rounded-lg bg-accent px-8 py-3 text-sm font-semibold text-ink-900 transition hover:brightness-110"
+              >
+                Build the house
+              </button>
+            </div>
+          </div>
+        )}
+
         {stage === "photos" && (
           <>
             <div className="mx-auto mb-6 max-w-3xl text-center">
@@ -1019,34 +1111,19 @@ function NewTourInner() {
 
             {canBuild && (
               <>
-                <details className="mx-auto mt-4 max-w-2xl rounded-lg border border-ink-600 bg-ink-800">
-                  <summary className="cursor-pointer px-4 py-3 text-sm text-mist-200">
-                    Describe the house{" "}
-                    <span className="text-mist-400">
-                      &mdash;{" "}
-                      {facts?.beds
-                        ? "read from the listing; correct it if it is wrong"
-                        : "optional, but it is how it knows the bedroom count"}
-                    </span>
-                  </summary>
-                  <div className="border-t border-ink-600 p-4">
-                    <DescribeHouse
-                      text={description}
-                      spec={spec}
-                      onChange={(next, nextSpec) => {
-                        setDescription(next);
-                        setSpec(nextSpec);
-                      }}
-                    />
-                  </div>
-                </details>
-
                 <div className="mx-auto mt-6 flex max-w-2xl justify-center">
                   <button
-                    onClick={() => void build()}
+                    onClick={() => {
+                      // A house is described before it is built; a room is not,
+                      // because there is nothing to say about it that the
+                      // photographs do not already show.
+                      if (mode === "house") setStage("house-sheet");
+                      else void build();
+                    }}
+                    data-testid="continue-from-photos"
                     className="rounded-lg bg-accent px-8 py-3 text-sm font-semibold text-ink-900 transition hover:brightness-110"
                   >
-                    {photos.length > 0 ? "Build my tour" : "Build the house"}
+                    {mode === "house" ? "Next: what is in it" : "Build this room"}
                   </button>
                 </div>
               </>

@@ -14,7 +14,7 @@ import { chromium } from "playwright";
 import { readdirSync } from "node:fs";
 import { join } from "node:path";
 
-import { addPhotos, build, describe, freshStart, savedProperty } from "./lib/flow.mjs";
+import { addPhotos, build, freshStart, savedProperty } from "./lib/flow.mjs";
 
 const base = process.env.BASE_URL ?? "http://localhost:3000";
 const dir = "public/properties/demo-house/photos";
@@ -32,8 +32,10 @@ page.on("pageerror", (e) => errors.push(e.message));
 
 await freshStart(page, base);
 await addPhotos(page, files);
-await describe(page, "3 bed 2 bath single storey with a kitchen, living room and a hallway");
-const arrived = await build(page);
+// The vocabulary the classifier is offered comes from the house sheet now
+// rather than from a sentence, and the sheet is a screen of its own - so it is
+// filled in on the way past rather than before setting off.
+const arrived = await build(page, { house: { beds: 3, baths: 2 } });
 
 // Read the finished property, not the draft: a successful build clears the
 // draft, so looking there reports zero labels for a run that worked perfectly.

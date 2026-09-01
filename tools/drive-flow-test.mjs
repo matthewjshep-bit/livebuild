@@ -17,6 +17,7 @@
  * half it covered.
  */
 import { chromium } from "playwright";
+import { chooseMode } from "./lib/flow.mjs";
 
 const BASE = process.env.BASE_URL ?? "http://localhost:3000";
 const FOLDER = process.env.DRIVE_TEST_FOLDER ?? "";
@@ -82,6 +83,8 @@ const errors = [];
 page.on("pageerror", (e) => errors.push(String(e)));
 
 await page.goto(`${BASE}/new`, { waitUntil: "networkidle" });
+    await page.waitForTimeout(900);
+    await chooseMode(page);
 await page.waitForTimeout(1200);
 await page.locator("summary").first().click();
 await page.waitForTimeout(500);
@@ -115,6 +118,8 @@ if (FOLDER) {
 
   if (listed.status === 200 && (listed.body.files ?? []).length > 0) {
     await page.goto(`${BASE}/new`, { waitUntil: "networkidle" });
+    await page.waitForTimeout(900);
+    await chooseMode(page);
     await page.waitForTimeout(1000);
     await page.locator("summary").first().click();
     await page.waitForTimeout(400);

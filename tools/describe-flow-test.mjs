@@ -9,7 +9,7 @@ import { chromium } from "playwright";
 import { readdirSync } from "node:fs";
 import { join } from "node:path";
 
-import { addPhotos, build, describe, freshStart } from "./lib/flow.mjs";
+import { addPhotos, build, describe, drawLayout, freshStart } from "./lib/flow.mjs";
 
 const base = process.env.BASE_URL ?? "http://localhost:3000";
 const dir = "public/properties/demo-house/photos";
@@ -29,23 +29,32 @@ page.on("pageerror", (e) => errors.push(e.message));
 await freshStart(page, base);
 await addPhotos(page, files);
 
-// The description is optional and collapsed; opening it is the whole point here.
-const opened = await describe(page, DESCRIPTION);
+// The house is described by pressing things now. This used to type a sentence
+// into a box behind a disclosure triangle and wait for a model to read it; the
+// sheet is a screen of its own, and what it produces is asserted below against
+// the same rooms the parser used to give.
+await page.getByTestId("continue-from-photos").click();
+await page.waitForTimeout(700);
+await describe(page, { beds: 4, baths: 2.5, floors: 2 });
 await page.screenshot({ path: "shots/70-described.png" });
 
 const understood = await page.evaluate(() => {
-  const text = document.body.innerText;
+  const panel = document.querySelector('[data-testid="sheet-summary"]');
+  const text = panel?.textContent ?? "";
   return {
     roomCount: Number(text.match(/(\d+) rooms/)?.[1] ?? 0),
     floors: Number(text.match(/across (\d+) floors/)?.[1] ?? 1),
-    readBy: /read by Claude/.test(text) ? "ai" : /read locally/.test(text) ? "local" : "none",
-    chips: [...document.querySelectorAll("span")]
+    readBy: "sheet",
+    chips: [...(panel?.querySelectorAll("span") ?? [])]
       .map((s) => s.textContent?.trim() ?? "")
       .filter((t) => /^(Primary|Bedroom|Powder|Stairs|Garage)/.test(t)),
   };
 });
 
-const arrived = await build(page);
+// Already on the sheet, so this only has to accept it and get through the
+// layout stage.
+await page.getByTestId("build-from-sheet").click();
+const arrived = await drawLayout(page, { timeoutMs: 200_000 });
 await page.screenshot({ path: "shots/72-described-layout.png" });
 
 const layout = await page.evaluate(() => {
@@ -78,7 +87,6 @@ console.log(
       layout,
       errors: errors.slice(0, 3),
       arrived,
-      opened,
       verdict:
         optionsGood && layout.floorTabs.length >= 2 && layout.stairs > 0 && !layout.stranded
           ? `DESCRIBE FLOW WORKS - ${understood.readBy} read ${understood.roomCount} rooms over ${understood.floors} floors; tag options are per-bedroom; layout has ${layout.floorTabs.length} storeys joined by stairs`

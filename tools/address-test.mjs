@@ -19,7 +19,7 @@
  * real address, and they stay assertions.
  */
 import { chromium } from "playwright";
-import { drawLayout } from "./lib/flow.mjs";
+import { drawLayout, chooseMode } from "./lib/flow.mjs";
 
 const BASE = process.env.BASE_URL ?? "http://localhost:3000";
 const ADDRESS = "902 23rd Avenue East, Seattle, WA 98112";
@@ -40,6 +40,10 @@ const check = (name, ok, detail = "") => {
 };
 
 await page.goto(`${BASE}/new`, { waitUntil: "networkidle" });
+await page.waitForTimeout(900);
+// The wizard opens on a choice now - a room or a whole house - so every suite
+// that drives it has to answer that before it reaches the photo screen.
+await chooseMode(page);
 await page.waitForTimeout(800);
 if (await page.getByRole("button", { name: "Start over" }).count()) {
   await page.getByRole("button", { name: "Start over" }).click();
@@ -116,8 +120,11 @@ console.log(`  lookup took ${Math.round((Date.now() - startedAt) / 1000)}s`);
 // while every address scraped and a scrape nearly always returned beds and
 // baths. Once an address did the map half alone, a building nobody has drawn
 // left a located property with no way to build it.
-const buildButton = page.getByRole("button", { name: "Build the house" });
-check("the build button is offered with no photos", await buildButton.count() === 1);
+// The photo screen leads to the house sheet now rather than straight to a
+// build, so what is offered here is the way onwards rather than the build
+// itself. The guarantee is the same: an address alone is enough to proceed.
+const buildButton = page.getByTestId("continue-from-photos");
+check("the way onwards is offered with no photos", (await buildButton.count()) === 1);
 
 // The same guarantee, stated where it can fail for the right reason: an address
 // that resolved is buildable, outline or no outline.
@@ -128,9 +135,12 @@ check("a located address is buildable whatever the map holds",
 
 if (await buildButton.count()) {
   await buildButton.click();
-  // The build stops to be drawn now. An address with no photographs still has
-  // to produce a whole house, so the suggested layout is accepted here - the
-  // point of this test is that a bare address is buildable at all.
+  await page.waitForTimeout(900);
+  // Through the house sheet, accepting what it assumed - the point of this test
+  // is that a bare address is buildable at all, not what is in the house.
+  await page.getByTestId("build-from-sheet").click();
+  // The build stops to be drawn. The suggested layout is accepted here for the
+  // same reason.
   const built = await drawLayout(page, { timeoutMs: 200_000 });
   check("a house was built from the address alone", built);
 

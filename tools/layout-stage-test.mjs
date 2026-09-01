@@ -14,6 +14,7 @@
  * inside it.
  */
 import { chromium } from "playwright";
+import { chooseMode } from "./lib/flow.mjs";
 
 const base = process.env.BASE_URL ?? "http://localhost:3000";
 const ADDRESS = "902 23rd Avenue East, Seattle, WA 98112";
@@ -32,6 +33,10 @@ const errors = [];
 page.on("pageerror", (e) => errors.push(String(e)));
 
 await page.goto(`${base}/new`, { waitUntil: "domcontentloaded" });
+await page.waitForTimeout(900);
+// The wizard opens on a choice now - a room or a whole house - so every suite
+// that drives it has to answer that before it reaches the photo screen.
+await chooseMode(page);
 await page.waitForTimeout(1200);
 if (await page.getByRole("button", { name: "Start over" }).count()) {
   await page.getByRole("button", { name: "Start over" }).click();

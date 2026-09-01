@@ -137,6 +137,22 @@ function verifiablePaths(spec: RoomSpec): string[] {
   return paths.filter(isVerifiable);
 }
 
+/**
+ * What a field's number actually means, spelled out for the comparison.
+ *
+ * `lengthM` and `alongM` are fractions of the wall they sit on, not metres -
+ * the names are historical and the schema clamps them to 0..1. Sent bare, a run
+ * covering most of a four-metre wall arrives as "0.85", and a model asked how
+ * long it is would reasonably answer "3.5" and turn an 85% run into a
+ * full-wall one, every time, in the pass whose entire job is making the room
+ * more exact. Saying which unit a number is in costs nine characters.
+ */
+function unitOf(path: string): string {
+  if (path.endsWith("lengthM") || path.endsWith("alongM")) return " (fraction of the wall, 0-1)";
+  if (path.endsWith("M") || path.endsWith("heightM")) return " m";
+  return "";
+}
+
 /** Joinery is addressed by id, so a path has to be resolved to an index. */
 function resolve(spec: RoomSpec, path: string): string {
   if (!path.startsWith("joinery.")) return path;
@@ -179,7 +195,7 @@ export async function verifyRoom(
     const current: Record<string, string> = {};
     for (const path of paths) {
       const value = valueAt(spec, resolve(spec, path));
-      if (value !== null) current[path] = value;
+      if (value !== null) current[path] = value + unitOf(path);
     }
 
     let result: {

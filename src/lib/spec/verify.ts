@@ -95,6 +95,23 @@ export const CONVERGED = 0.82;
 /** At most this many corrections a round, so a fallen score can be attributed. */
 export const MAX_PER_ROUND = 2;
 
+/**
+ * Fields whose value is a fraction, and the range one has to stay inside.
+ *
+ * Belt as well as braces. The prompt is told what these mean, and a correction
+ * is still written straight into the spec without going back through Zod - so a
+ * confident "3.5" for a 3.5-metre run would otherwise be stored, and every
+ * consumer downstream would clamp it to the whole wall silently.
+ */
+export const FRACTIONS = ["lengthM", "alongM"];
+
+/** Whether a proposed value can be stored at this path at all. */
+export function inRange(path: string, proposed: string): boolean {
+  if (!FRACTIONS.some((f) => path.endsWith(f))) return true;
+  const value = Number(proposed);
+  return Number.isFinite(value) && value >= 0 && value <= 1;
+}
+
 export type Filtered = {
   apply: Discrepancy[];
   /** Everything refused, and why, for the editor to show. */
@@ -137,6 +154,10 @@ export function admissible(
     }
     if ((loop.seen[d.path] ?? []).includes(d.proposed)) {
       refused.push({ path: d.path, reason: "it has proposed this value before" });
+      return false;
+    }
+    if (!inRange(d.path, d.proposed)) {
+      refused.push({ path: d.path, reason: "out of range for this field" });
       return false;
     }
     if (d.confidence === "low" && d.severity !== "wrong") {

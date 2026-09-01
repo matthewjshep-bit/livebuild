@@ -32,6 +32,7 @@ import { type PackPlan, layoutFromFootprint, prepareFootprint } from "@/lib/plan
 import { arrangeRooms } from "@/lib/plan/layout-client";
 import { roomKind } from "@/lib/plan/room-kind";
 import { type HouseSpec, describeToSpec } from "@/lib/plan/describe";
+import { reconcileInventory } from "@/lib/plan/inventory";
 import { buildBom } from "@/lib/bom/build";
 import { type GradeProgress, gradeProperty } from "@/lib/bom/grade-client";
 import { canSync, rememberAdminKey, syncBlocker, syncProperty } from "@/lib/cloud/sync";
@@ -658,6 +659,30 @@ function NewTourInner() {
       gathered.push("No room details were available, so this is a typical three-bedroom plan — correct it below.");
     }
 
+    /**
+     * The house has to have the rooms the listing says it has.
+     *
+     * Everything above this line counts rooms that were *mentioned* - in a
+     * description if there was one, in the photographs otherwise. Neither is a
+     * census. A photographer shoots what sells the house, so the third bedroom
+     * and the hall bath are routinely missing from twenty photographs of a
+     * four-bed, and a house built from those photographs alone came out a
+     * four-bed with two bedrooms in it. Nothing noticed, because nothing had
+     * ever compared the two.
+     *
+     * The bed and bath count is the one fact every listing carries and the one
+     * it is never wrong about. So it is treated as a floor: whatever the
+     * photographs found, the house ends up with at least this many. Only ever
+     * added to - a room somebody photographed exists whether or not the listing
+     * admits it, and a listing that undercounts is usually a converted garage.
+     */
+    const inventory = reconcileInventory(rooms, {
+      beds: facts?.beds ?? null,
+      baths: facts?.baths ?? null,
+    });
+    rooms = inventory.rooms;
+    gathered.push(...inventory.notes);
+
     const adjacency = adjacencyRef.current;
     // Trust the count derived from the two areas over the number of levels the
     // room list happens to use - a description that never mentioned an upstairs
@@ -834,7 +859,7 @@ function NewTourInner() {
     saveProperty(assembled);
     if (posed.refined > 0) {
       gathered.push(
-        `Aimed ${posed.refined} camera${posed.refined === 1 ? "" : "s"} from what the photo${posed.refined === 1 ? " shows" : "s show"}.`,
+        `Worked out which wall ${posed.refined} photo${posed.refined === 1 ? "" : "s"} ${posed.refined === 1 ? "is" : "are"} looking at.`,
       );
     }
 
@@ -1027,7 +1052,8 @@ function NewTourInner() {
               />
             </div>
             <p className="mt-4 text-[11px] leading-relaxed text-mist-400">
-              Reading the rooms, working out how they fit together, and aiming each camera.
+              Reading the rooms, working out how they fit together, and matching each photo to
+              the wall it shows.
               Usually under a minute.
             </p>
           </div>

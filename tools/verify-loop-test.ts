@@ -69,6 +69,31 @@ check("a field you set by hand is never touched", humanHeld.apply.length === 0);
 check("and the reason says so", humanHeld.refused[0]?.reason.includes("hand") === true);
 
 const cosmetic = admissible([diff({ severity: "cosmetic" })], spec(), emptyLoop());
+
+/**
+ * A run's length is a fraction of its wall, whatever the field is called.
+ *
+ * The single most likely wrong answer this loop can receive: asked how long a
+ * cabinet run is, a model answers in metres, because `lengthM` says metres.
+ * Stored, it clamps downstream to the entire wall - so the pass that exists to
+ * make a kitchen exact would reliably stretch every run it looked at.
+ */
+const metresForFraction = admissible(
+  [diff({ path: "joinery.run.lengthM", proposed: "3.5" })],
+  spec(),
+  emptyLoop(),
+);
+check("a metres answer for a fraction field is refused", metresForFraction.apply.length === 0,
+  JSON.stringify(metresForFraction.apply));
+check("and says why", metresForFraction.refused[0]?.reason === "out of range for this field",
+  JSON.stringify(metresForFraction.refused));
+
+const properFraction = admissible(
+  [diff({ path: "joinery.run.lengthM", proposed: "0.62" })],
+  spec(),
+  emptyLoop(),
+);
+check("a real fraction still gets through", properFraction.apply.length === 1);
 check("a cosmetic difference is only noted", cosmetic.apply.length === 0);
 
 const unsure = admissible(

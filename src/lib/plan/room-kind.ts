@@ -70,7 +70,67 @@ function normalise(label: string): string {
   return label.toLowerCase().replace(/[^a-z]/g, "");
 }
 
+/**
+ * When a label names two rooms, which one the model should build.
+ *
+ * Open plan is normal and labels say so: "Kitchen/Living Room", "Dining +
+ * Kitchen", "Great Room and Kitchen". The longest-match rule below has no
+ * opinion about these and picks whichever word happens to be longer, which for
+ * "Kitchen/Living Room" is "livingroom" - so the room came out as a lounge,
+ * with a wood floor, no units, no worktop and nothing else that makes a kitchen
+ * recognisable. An empty room where the photographs show a fitted kitchen.
+ *
+ * Ordered by how much of a room is *built in*. A kitchen with a sofa in it is a
+ * small error; a living room where the kitchen should be is a missing kitchen.
+ * So whichever named kind carries the most joinery wins, and the rest of the
+ * label is remembered by `roomKinds` for anything that wants to furnish both.
+ */
+const COMPOUND_PRECEDENCE: RoomKind[] = [
+  "kitchen",
+  "bathroom",
+  "powder",
+  "laundry",
+  "garage",
+  "closet",
+  "stairs",
+  "dining",
+  "office",
+  "primary-bedroom",
+  "bedroom",
+  "entry",
+  "living",
+  "hallway",
+  "basement",
+  "outside",
+  "other",
+];
+
+/** The separators a listing uses to name two rooms as one space. */
+const COMPOUND = /\s*(?:\/|\+|&|\band\b)\s*/i;
+
+/**
+ * Every kind a label names, most significant first.
+ *
+ * One entry for an ordinary room. Two for an open-plan one, which is what lets
+ * a kitchen/living room be given its units *and* its sofa rather than having to
+ * choose.
+ */
+export function roomKinds(label: string): RoomKind[] {
+  const parts = label.split(COMPOUND).map((p) => p.trim()).filter(Boolean);
+  if (parts.length < 2) return [singleKind(label)];
+
+  const kinds = [...new Set(parts.map(singleKind))].filter((k) => k !== "other");
+  if (kinds.length === 0) return ["other"];
+  return kinds.sort(
+    (a, z) => COMPOUND_PRECEDENCE.indexOf(a) - COMPOUND_PRECEDENCE.indexOf(z),
+  );
+}
+
 export function roomKind(label: string): RoomKind {
+  return roomKinds(label)[0];
+}
+
+function singleKind(label: string): RoomKind {
   const key = normalise(label);
   if (!key) return "other";
 

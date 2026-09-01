@@ -121,7 +121,7 @@ export function roomHints(spec: HouseSpec | null): string[] {
  *
  * `existing` is what makes this usable twice. Standing spots are handed out
  * from a fixed list, so a second pass over a room that already has viewpoints
- * would put a new camera exactly on top of an old one; telling it what is
+ * would put a new viewpoint exactly on top of an old one; telling it what is
  * already there is what keeps a later addition from landing on the first build.
  */
 export function placePhotos<T extends BuildPhoto>(
@@ -160,13 +160,27 @@ export function placePhotos<T extends BuildPhoto>(
   return { nodes, unplaced: remaining.length };
 }
 
-/** Aim each camera from what its photograph actually shows. */
+/**
+ * Work out which wall each photograph is looking at.
+ *
+ * There is no camera in the finished tour - nobody stands on a photograph's
+ * spot and looks out of it any more, because the photographs are not in the
+ * model at all. What survives is the *direction*, and it is worth more now than
+ * it was when it aimed a viewer: knowing a photograph faces the north wall is
+ * what puts the kitchen units on the north wall rather than on whichever one
+ * happens to be longest. It is also what lets the verify pass render the room
+ * from the same view the photograph was taken from, which is the only way two
+ * images can be compared at all.
+ *
+ * So this still runs, and it is still the same arithmetic. Only the reason has
+ * changed, and with it what it should be called while it works.
+ */
 export async function posePhotos(
   plan: Plan,
   nodes: TourNode[],
   onProgress?: (step: BuildStep) => void,
 ): Promise<{ nodes: TourNode[]; refined: number }> {
-  const label = "Placing the cameras";
+  const label = "Working out which wall each photo shows";
   onProgress?.({ label, done: 0, total: nodes.length });
   try {
     const result = await refinePoses(plan, nodes, (done, total) =>

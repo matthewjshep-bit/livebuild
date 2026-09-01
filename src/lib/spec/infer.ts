@@ -8,7 +8,7 @@ import {
 } from "@/lib/spec/schema";
 import { roomAdjacency } from "@/lib/plan/geometry";
 import { boundsOf } from "@/lib/plan/autolayout";
-import { type RoomKind, roomKind } from "@/lib/plan/room-kind";
+import { type RoomKind, roomKind, roomKinds } from "@/lib/plan/room-kind";
 import type { Plan, Room, Vec2 } from "@/lib/schema";
 
 /**
@@ -327,14 +327,25 @@ export function inferHouse(plan: Plan, existing: HouseSpec): InferenceReport {
   const settled = new Set(rooms.filter((r) => observed(r, "floor.material")).map((r) => r.id));
 
   for (const room of rooms) {
-    const kind = roomKind(room.label);
+    const kinds = roomKinds(room.label);
+    /**
+     * The floor follows the *least* fitted of a room's kinds.
+     *
+     * A room named for two is one space, and one space has one floor. Which
+     * one it is follows from how open-plan rooms are actually built: the
+     * living room's boards run through into the kitchen far more often than
+     * the kitchen's tile runs out into the living room. So the joinery comes
+     * from the fitted kind and the floor from the other, and a plain kitchen -
+     * which names only itself - is unaffected.
+     */
+    const floorKind = kinds[kinds.length - 1];
     if (settled.has(room.id)) continue;
 
-    // (a) A wet room is tiled whatever is next door. Water is a stronger
-    //     argument than continuity, and a carpeted bathroom inferred from the
-    //     carpeted bedroom it opens off is the single most obviously wrong
-    //     thing this could produce.
-    if (WET.includes(kind)) {
+    // (a) A wet room is tiled whatever is next door, and whatever else it is
+    //     also called. Water is a stronger argument than continuity, and a
+    //     carpeted bathroom inferred from the carpeted bedroom it opens off is
+    //     the single most obviously wrong thing this could produce.
+    if (kinds.some((k) => WET.includes(k))) {
       fill(specOf(room), "floor.material", "tile", `${room.label} is a wet room, so it is tiled.`);
       continue;
     }
@@ -360,7 +371,7 @@ export function inferHouse(plan: Plan, existing: HouseSpec): InferenceReport {
     // (c) Circulation takes whatever most of the rooms it serves are floored
     //     with. A hall is not a destination; it is the thing every other room
     //     is entered from, and it almost always matches them.
-    if (CIRCULATION.includes(kind)) {
+    if (kinds.some((k) => CIRCULATION.includes(k))) {
       const served = [...(adjacency.get(room.id) ?? [])]
         .map((id) => byId.get(id))
         .filter((other): other is Room => Boolean(other))
@@ -383,8 +394,8 @@ export function inferHouse(plan: Plan, existing: HouseSpec): InferenceReport {
     fill(
       specOf(room),
       "floor.material",
-      KIND_FLOOR[kind],
-      `Nothing was seen of this room; a ${room.label.toLowerCase()} is usually ${KIND_FLOOR[kind]}.`,
+      KIND_FLOOR[floorKind],
+      `Nothing was seen of this room; a ${room.label.toLowerCase()} is usually ${KIND_FLOOR[floorKind]}.`,
     );
   }
 

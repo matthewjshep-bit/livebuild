@@ -1,4 +1,4 @@
-import { boundsOf } from "@/lib/plan/autolayout";
+import { orientedFrameOf } from "@/lib/plan/geometry";
 import type { Box, Piece } from "@/lib/model/furniture";
 import type { Joinery, RoomSpec, Side } from "@/lib/spec/schema";
 import type { Room } from "@/lib/schema";
@@ -209,9 +209,10 @@ function baseRun(p: Placement, item: Joinery, boxes: Box[]): void {
 export function joineryFor(room: Room, spec: RoomSpec | undefined): Piece[] {
   if (!spec?.joinery?.length) return [];
 
-  const b = boundsOf(room.polygon);
-  const width = b.x1 - b.x0;
-  const depth = b.y1 - b.y0;
+  // The room's own frame, so a run of units follows the wall it was put on
+  // rather than the nearest world axis.
+  const frame = orientedFrameOf(room.polygon);
+  const { width, depth } = frame;
   if (width < 1 || depth < 1) return [];
 
   const pieces: Piece[] = [];
@@ -288,5 +289,5 @@ export function joineryFor(room: Room, spec: RoomSpec | undefined): Piece[] {
     if (boxes.length > 0) pieces.push({ kind: "cabinet", boxes });
   }
 
-  return pieces.filter((piece) => piece.boxes.length > 0);
+  return pieces.filter((piece) => piece.boxes.length > 0).map((piece) => ({ ...piece, frame }));
 }

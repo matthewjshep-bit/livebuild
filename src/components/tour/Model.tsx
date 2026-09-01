@@ -38,6 +38,7 @@ import {
   centroid,
   levelBase,
   levelsOf,
+  fromFrame,
   signedArea,
   wallSegmentsForRoom,
 } from "@/lib/plan/geometry";
@@ -555,15 +556,26 @@ function LevelModel({
           // Staging - a bed, a sofa - has no line item behind it, so it picks
           // its room rather than inventing an element it does not represent.
           const element = elementForPiece(piece.kind);
+          /**
+           * Placed in the room's own frame when it has one.
+           *
+           * A piece is built in room-local metres, and for a room square to the
+           * world that is the bounding box's corner with world axes - which is
+           * what the fallback below still does. For a room at an angle the
+           * frame turns the position and the box together, so a run of units
+           * sits along the wall it was put on rather than across it.
+           */
+          const frame = piece.frame;
+          const turn = frame ? (-frame.rotationDeg * Math.PI) / 180 : 0;
           for (const box of piece.boxes) {
+            const at: [number, number] = frame
+              ? fromFrame(frame, [box.center[0], box.center[2]])
+              : [b.x0 + box.center[0], b.y0 + box.center[2]];
             addSurface(
               room.id,
               element ?? "floor",
               recolour(box.colour, scheme),
-              solid(
-                [b.x0 + box.center[0], baseY + box.center[1], b.y0 + box.center[2]],
-                box.size,
-              ),
+              solid([at[0], baseY + box.center[1], at[1]], box.size, turn),
               true,
             );
           }

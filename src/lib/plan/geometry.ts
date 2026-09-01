@@ -1,3 +1,4 @@
+import { ringAngle } from "@/lib/plan/angles";
 import type { Opening, Plan, Room, Vec2 } from "@/lib/schema";
 
 /**
@@ -193,6 +194,68 @@ export function roomById(plan: Plan, id: string): Room | undefined {
 }
 
 /** Plan bounds in metres, for framing the camera and fitting the editor canvas. */
+/**
+ * A room's own frame: which way it faces, and where its near corner is.
+ *
+ * Everything that places a thing *in* a room - a bed against a wall, a run of
+ * units along one, a stair - works in room-local metres with the origin at the
+ * corner of the room's bounding box and the axes aligned to the world. That is
+ * exactly right while rooms are axis-aligned rectangles and increasingly wrong
+ * as they turn: the box round a room at thirty degrees is half as big again as
+ * the room, so a bed placed "against the north wall" floats in space with the
+ * wall running past it diagonally.
+ *
+ * So a room gets a frame of its own. The angle comes from the same estimator the
+ * footprint uses to square a building up - total edge length per direction,
+ * folded into a quarter turn - so a rectangular room at any rotation yields
+ * exactly its own rotation, and the origin is the corner of the bounding box
+ * measured in that turned frame. For an axis-aligned room the angle is zero and
+ * the origin is the bounding box's min corner, which is what every generator
+ * already assumes: nothing changes for the rooms that exist today.
+ */
+export function orientedFrameOf(polygon: Vec2[]): {
+  origin: Vec2;
+  rotationDeg: number;
+  width: number;
+  depth: number;
+} {
+  const rotationDeg = ringAngle(polygon);
+  const r = (-rotationDeg * Math.PI) / 180;
+  const cos = Math.cos(r);
+  const sin = Math.sin(r);
+  const turned = polygon.map(([x, y]) => [x * cos - y * sin, x * sin + y * cos] as Vec2);
+
+  const x0 = Math.min(...turned.map((p) => p[0]));
+  const y0 = Math.min(...turned.map((p) => p[1]));
+  const x1 = Math.max(...turned.map((p) => p[0]));
+  const y1 = Math.max(...turned.map((p) => p[1]));
+
+  // Back out of the turned frame, so the origin is a point in the plan.
+  const back = (rotationDeg * Math.PI) / 180;
+  const bc = Math.cos(back);
+  const bs = Math.sin(back);
+  return {
+    origin: [x0 * bc - y0 * bs, x0 * bs + y0 * bc],
+    rotationDeg,
+    width: x1 - x0,
+    depth: y1 - y0,
+  };
+}
+
+/** A point in a room's frame, put back into the plan. */
+export function fromFrame(
+  frame: { origin: Vec2; rotationDeg: number },
+  local: Vec2,
+): Vec2 {
+  const r = (frame.rotationDeg * Math.PI) / 180;
+  const cos = Math.cos(r);
+  const sin = Math.sin(r);
+  return [
+    frame.origin[0] + local[0] * cos - local[1] * sin,
+    frame.origin[1] + local[0] * sin + local[1] * cos,
+  ];
+}
+
 export function planBounds(plan: Plan): { min: Vec2; max: Vec2 } {
   const pts = plan.rooms.flatMap((r) => r.polygon);
   if (pts.length === 0) return { min: [0, 0], max: [1, 1] };

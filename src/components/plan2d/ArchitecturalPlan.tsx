@@ -10,7 +10,7 @@ import { runsAtLevel, stairSymbol } from "@/lib/model/stairs";
 import { wallsForLevel } from "@/lib/model/walls";
 import { windowsForLevel } from "@/lib/model/windows";
 import { boundsOf } from "@/lib/plan/autolayout";
-import { area, centroid, levelName } from "@/lib/plan/geometry";
+import { area, centroid, fromFrame, levelName } from "@/lib/plan/geometry";
 import { planFromBearing } from "@/lib/model/sun";
 import type { Plan, Site, Vec2 } from "@/lib/schema";
 import { formatArea } from "@/lib/units";
@@ -253,19 +253,29 @@ export function ArchitecturalPlan({
         {rooms.map((room) => {
           const b = boundsOf(room.polygon);
           return piecesFor(plan, room, furnished, spec?.rooms[room.id]).flatMap((piece, pi) =>
-            piece.boxes.map((box, bi) => (
+            piece.boxes.map((box, bi) => {
+              // The same frame the model uses, so the drawing and the house
+              // agree about where the furniture is.
+              const at: Vec2 = piece.frame
+                ? fromFrame(piece.frame, [box.center[0], box.center[2]])
+                : [b.x0 + box.center[0], b.y0 + box.center[2]];
+              return (
               <rect
                 key={`f${room.id}-${pi}-${bi}`}
-                x={b.x0 + box.center[0] - box.size[0] / 2}
-                y={b.y0 + box.center[2] - box.size[2] / 2}
+                x={at[0] - box.size[0] / 2}
+                y={at[1] - box.size[2] / 2}
                 width={box.size[0]}
                 height={box.size[2]}
+                transform={
+                  piece.frame ? `rotate(${piece.frame.rotationDeg} ${at[0]} ${at[1]})` : undefined
+                }
                 fill="none"
                 stroke={INK.furniture}
                 strokeWidth={WEIGHT.furniture}
                 pointerEvents="none"
               />
-            )),
+              );
+            }),
           );
         })}
 

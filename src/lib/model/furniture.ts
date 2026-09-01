@@ -1,5 +1,5 @@
 import { FURNITURE_COLOURS } from "@/lib/model/materials";
-import { boundsOf } from "@/lib/plan/autolayout";
+import { orientedFrameOf } from "@/lib/plan/geometry";
 import { type RoomKind, roomKind } from "@/lib/plan/room-kind";
 import type { Opening, Plan, Room, Vec2 } from "@/lib/schema";
 
@@ -22,7 +22,23 @@ export type Box = {
   colour: string;
 };
 
-export type Piece = { kind: string; boxes: Box[] };
+export type Piece = {
+  kind: string;
+  boxes: Box[];
+  /**
+   * The room's own frame, when it is not square to the world.
+   *
+   * Boxes are in room-local metres, and until now "room-local" meant the corner
+   * of the room's bounding box with the axes pointing the way the world's do.
+   * That is exactly right for a rectangular room and increasingly wrong as one
+   * turns: the box round a room at thirty degrees is half as big again as the
+   * room, so a bed placed against a wall floats in space with the wall running
+   * past it diagonally.
+   *
+   * Absent means what it always meant, so nothing that ignores this changes.
+   */
+  frame?: { origin: Vec2; rotationDeg: number };
+};
 
 /** How much clear floor a doorway needs. Nothing may be placed inside this. */
 const DOOR_CLEARANCE = 0.75;
@@ -75,12 +91,19 @@ function blocksDoor(place: Placement, doors: Vec2[]): boolean {
   return false;
 }
 
-/** Doorway positions in room-local coordinates. */
+/** Doorway positions in the room's own frame. */
 function doorsOf(plan: Plan, room: Room): Vec2[] {
-  const b = boundsOf(room.polygon);
+  const frame = orientedFrameOf(room.polygon);
+  const r = (-frame.rotationDeg * Math.PI) / 180;
+  const cos = Math.cos(r);
+  const sin = Math.sin(r);
   return plan.openings
     .filter((o: Opening) => o.kind !== "stairs" && o.between.includes(room.id))
-    .map((o) => [o.at[0] - b.x0, o.at[1] - b.y0] as Vec2);
+    .map((o) => {
+      const dx = o.at[0] - frame.origin[0];
+      const dy = o.at[1] - frame.origin[1];
+      return [dx * cos - dy * sin, dx * sin + dy * cos] as Vec2;
+    });
 }
 
 const C = FURNITURE_COLOURS;
@@ -374,14 +397,17 @@ function garage(width: number, depth: number, doors: Vec2[]): Piece[] {
  * and generated rooms are sometimes genuinely too small.
  */
 export function furnishRoom(plan: Plan, room: Room): Piece[] {
-  const b = boundsOf(room.polygon);
-  const width = b.x1 - b.x0;
-  const depth = b.y1 - b.y0;
+  // Measured in the room's own frame, so an angled room is furnished to its own
+  // walls rather than to the larger box the world would draw round it.
+  const frame = orientedFrameOf(room.polygon);
+  const { width, depth } = frame;
   if (width < 1.2 || depth < 1.2) return [];
 
   const builder = BUILDERS[roomKind(room.label)];
   if (!builder) return [];
 
   const doors = doorsOf(plan, room);
-  return builder(width, depth, doors).filter((piece) => piece.boxes.length > 0);
+  return builder(width, depth, doors)
+    .filter((piece) => piece.boxes.length > 0)
+    .map((piece) => ({ ...piece, frame }));
 }

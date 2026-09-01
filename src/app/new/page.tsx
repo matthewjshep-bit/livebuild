@@ -9,12 +9,11 @@ import { PhotoDrop, type ImportedPhoto } from "@/components/wizard/PhotoDrop";
 import { PropertyStart } from "@/components/wizard/PropertyStart";
 import { PhotoReview } from "@/components/wizard/PhotoReview";
 import { PlanBuilder } from "@/components/wizard/PlanBuilder";
+import { type BuildEvidence, gatherEvidence } from "@/lib/build/gather";
 import {
   type BuildStep,
-  labelPhotos,
   placePhotos,
   posePhotos,
-  roomHints,
 } from "@/lib/build/pipeline";
 import {
   factsToDescription,
@@ -23,16 +22,11 @@ import {
   type ListingResult,
 } from "@/lib/listing/types";
 import { deleteMedia, mediaKeys, mediaRef, refToKey, resolveMediaUrl } from "@/lib/media-store";
-import { readExterior } from "@/lib/site/client";
-import { syntheticRing } from "@/lib/site/trace";
-import { GOOGLE_ATTRIBUTION } from "@/lib/site/geo";
-import { mergeExterior } from "@/lib/site/osm";
 import { layoutFromSpec } from "@/lib/plan/autolayout";
-import { type PackPlan, layoutFromFootprint, prepareFootprint } from "@/lib/plan/footprint";
+import { type PackPlan, layoutFromFootprint } from "@/lib/plan/footprint";
 import { arrangeRooms } from "@/lib/plan/layout-client";
 import { roomKind } from "@/lib/plan/room-kind";
 import { type HouseSpec, describeToSpec } from "@/lib/plan/describe";
-import { reconcileInventory } from "@/lib/plan/inventory";
 import { buildBom } from "@/lib/bom/build";
 import { type GradeProgress, gradeProperty } from "@/lib/bom/grade-client";
 import { canSync, rememberAdminKey, syncBlocker, syncProperty } from "@/lib/cloud/sync";
@@ -42,7 +36,6 @@ import { type ReadProgress, readRooms } from "@/lib/spec/read-client";
 // Aliased: `HouseSpec` is already taken here by the room-list type that
 // `describe` produces, which is a different thing entirely.
 import { HouseSpec as RoomSpecDoc } from "@/lib/spec/schema";
-import type { HouseCondition } from "@/lib/bom/condition";
 import type { Exterior, Plan, Property } from "@/lib/schema";
 import { requestPersistence } from "@/lib/storage/db";
 import {
@@ -559,340 +552,192 @@ function NewTourInner() {
     }
   }, []);
 
+  /**
+   * Build the house from evidence, and from a layout if one was drawn.
+   *
+   * The second half of what used to be one function. It takes a finished
+   * `BuildEvidence` rather than gathering its own, which is what makes it
+   * possible to stop between the two and let somebody draw - you cannot pause
+   * halfway through a function to ask a question.
+   *
+   * `drawn` is that question's answer. Null means nobody was asked, and the
+   * arrangement is worked out the way it always has been: the packer's own
+   * shelf packing, improved by a model that decides only which room goes where.
+   * That is still the path every build takes today; the layout stage is the
+   * thing that will start passing a plan in.
+   */
+  const construct = useCallback(
+    async (evidence: BuildEvidence, drawn: Plan | null) => {
+      const gathered = [...evidence.notes];
+      const { footprint: prepared, adjacency, rooms } = evidence;
+      const labelled = evidence.photos;
+      const outside = evidence.outside;
+      const houseCondition = evidence.houseCondition;
+
+      /**
+       * Where the rooms go, asked rather than shelf-packed.
+       *
+       * Skipped entirely when a layout was drawn - there is nothing to arrange
+       * once somebody has said where the walls are, and asking anyway would be
+       * spending a request to be overruled.
+       */
+      const plans = new Map<number, PackPlan>();
+      if (!drawn && prepared) {
+        setStep({ label: "Arranging the rooms", done: 0, total: 1 });
+        const groundLabels = rooms
+          .filter((r) => r.level === 0 && roomKind(r.label) !== "outside")
+          .map((r) => r.label);
+        const arranged = await arrangeRooms(prepared, groundLabels, adjacency, {
+          frontDoorBearing: outside?.frontDoorBearing ?? null,
+          garageBearing: outside?.garage?.bearing ?? null,
+          planXBearing: 90 + prepared.rotationDeg,
+        });
+        if (arranged) {
+          plans.set(0, arranged.plan);
+          if (arranged.reasoning) gathered.push(arranged.reasoning);
+        }
+      }
+
+      const nextPlan: Plan =
+        drawn ??
+        (() => {
+          const built = prepared
+            ? layoutFromFootprint({ rooms }, prepared, adjacency, plans)
+            : layoutFromSpec(
+                { rooms },
+                facts?.sqft ? sqftToM2(facts.sqft) : undefined,
+                adjacency,
+              );
+          return {
+            scaleRef: { px: 1, meters: M_PER_FT },
+            rooms: built.rooms,
+            openings: built.openings,
+          };
+        })();
+      setPlan(nextPlan);
+      gathered.push(
+        `${nextPlan.rooms.length} rooms, ${nextPlan.openings.length} doorways.`,
+      );
+
+      // --- 4. Put the photos in the rooms, and work out what they are made of ---
+      const placed = placePhotos(nextPlan, labelled);
+
+      /**
+       * What every room is made of, reasoned rather than defaulted.
+       *
+       * Nothing has read a photograph for finishes yet, so at this point the
+       * inference is working purely from the plan - which rooms these are, which
+       * of them open into one another, and what a house of this shape usually
+       * does. That is already worth a great deal: it is the difference between a
+       * hallway floored to match the rooms it serves and a hallway floored from a
+       * lookup table, and it means a house built from an address alone still
+       * comes out looking like one house.
+       *
+       * Stored rather than derived at render time, because the point is that it
+       * can be corrected. Every value carries where it came from, so a later
+       * reading of the photographs - or a person disagreeing with it - overwrites
+       * only what is still a guess.
+       */
+      const inference = inferHouse(nextPlan, RoomSpecDoc.parse({}));
+      gathered.push(...inference.conventions);
+
+      let assembled: Property = {
+        id: propertyId,
+        label: label || "My home",
+        displayUnits: "ft",
+        plan: nextPlan,
+        nodes: placed.nodes,
+        splats: [],
+        // Filled in once someone grades the property; the BOM treats an empty
+        // map as 'nothing seen yet' rather than 'nothing needed'.
+        condition: {},
+        houseCondition,
+        rates: {},
+        // Where the house is, so the daylight can be its own rather than a
+        // studio light. The bearing follows from the rotation the footprint
+        // needed to square it up: the outline is projected with +x east, so
+        // turning it by that angle puts plan +x that many degrees round from
+        // east.
+        site:
+          listingSite && prepared
+            ? { ...listingSite, planXBearing: 90 + prepared.rotationDeg }
+            : listingSite
+              ? { ...listingSite, planXBearing: 90 }
+              : null,
+        // Survey data about the outside. Optional everywhere it is read, so a
+        // house with none behaves exactly as it always has.
+        exterior: outside,
+        spec: inference.spec,
+      };
+      if (placed.unplaced > 0) {
+        gathered.push(
+          `${placed.unplaced} photo${placed.unplaced === 1 ? "" : "s"} had no matching room and ${placed.unplaced === 1 ? "was" : "were"} left out.`,
+        );
+      }
+      saveProperty(assembled);
+
+      // --- 5. Where was each photo taken from? ---
+      const posed = await posePhotos(nextPlan, assembled.nodes, setStep);
+      assembled = { ...assembled, nodes: posed.nodes };
+      saveProperty(assembled);
+      if (posed.refined > 0) {
+        gathered.push(
+          `Worked out which wall ${posed.refined} photo${posed.refined === 1 ? "" : "s"} ${posed.refined === 1 ? "is" : "are"} looking at.`,
+        );
+      }
+
+      setProperty(assembled);
+      setNotes(gathered);
+      setStep(null);
+      setStage("review");
+      // The import is finished with, but its photographs are not - they are the
+      // tour's now, under the same keys. Only the working state goes.
+      await clearIntake(propertyId);
+
+      // --- 6. The condition scan, while they look around ---
+      //
+      // After the review screen is up: the house should appear as fast as it
+      // always did, and grading does not change what it looks like. The scan is
+      // what makes a new tour arrive with a price on it rather than $0 until
+      // somebody finds the button.
+      //
+      // This slot used to be shared with the depth pass, which ran concurrently
+      // and wrote to the same document. Nothing renders a depth map now, so the
+      // interior read has it: what a room is made of and what condition it is in
+      // are two questions about the same photographs, and both are worth waiting
+      // for a house that is already on screen.
+      const scanning = scanCondition(assembled);
+      const readingInterior = readInterior(assembled);
+
+      // --- 7. Off this machine ---
+      //
+      // Waits for the scan, because the point is to send up the finished tour
+      // rather than a half-graded one. Re-read rather than reusing `assembled`,
+      // which by now is several passes out of date.
+      await Promise.all([scanning, readingInterior]);
+      await syncUp(propertyId);
+    },
+    [facts, listingSite, propertyId, label, syncUp, scanCondition, readInterior],
+  );
+
   const build = useCallback(async () => {
     setStage("building");
     setFailed(null);
-    const gathered: string[] = [];
     try {
-
-    // --- 1. What room is each photo? ---
-    const read = await labelPhotos(photos, roomHints(spec), setStep);
-    const labelled = read.photos;
-    if (read.labelled > 0) setPhotos(labelled);
-    if (read.adjacency.length > 0) {
-      adjacencyRef.current = read.adjacency;
-      gathered.push(
-        `Spotted ${read.adjacency.length} connection${read.adjacency.length === 1 ? "" : "s"} between rooms in the photos.`,
+      const { evidence, photos: labelled } = await gatherEvidence(
+        {
+          photos,
+          spec,
+          facts,
+          footprint,
+          site: listingSite,
+          exterior,
+        },
+        setStep,
       );
-    }
-
-    const roomLabels: string[] = [];
-    for (const photo of labelled) {
-      if (photo.roomLabel && !roomLabels.includes(photo.roomLabel)) roomLabels.push(photo.roomLabel);
-    }
-
-    // --- 2. What does the house look like from outside? ---
-    //
-    // After the layout because the outline is what makes the reading useful:
-    // one out - and, when the map has no building at all, to trace one.
-    //
-    // This runs BEFORE the layout, which is the whole point. It used to run
-    // after, so nothing it saw could reach the floor plan: a ranch was read
-    // correctly as a single-storey hip-roofed house and then packed into a
-    // rectangle invented from a table of typical room sizes. Skipped entirely
-    // without a site, and failing quietly - a house down a private track has
-    // no street view, and that is not an error.
-    let outside = exterior;
-    // The building's own outline, when the map had none and the satellite
-    // could see one. Dropped by the route unless it was both confident and
-    // plausible, so anything that arrives here is worth building on.
-    let tracedRing: Array<[number, number]> | null = null;
-    let tracedConfidence: "high" | "low" | null = null;
-    // What the same look at the house says about its condition. The roof is
-    // usually the largest single number in a rehab and no listing photograph
-    // shows it, so this is the only evidence there is for it.
-    let houseCondition: HouseCondition = {};
-    if (listingSite) {
-      setStep({ label: "Looking at the outside", done: 0, total: 1 });
-      const read = await readExterior({
-        lat: listingSite.lat,
-        lon: listingSite.lon,
-        outline: footprint?.outline ?? [],
-        storeys: exterior?.storeys ?? null,
-      });
-      outside = mergeExterior(exterior, read?.exterior ?? null);
-      houseCondition = read?.condition ?? {};
-      tracedRing = read?.tracedRing ?? null;
-      tracedConfidence = read?.tracedConfidence ?? null;
-
-      const seen = read?.exterior;
-      if (seen) {
-        const said = [
-          seen.storeys ? `${seen.storeys} storeys` : null,
-          seen.roof?.shape ? `a ${seen.roof.shape} roof` : null,
-          seen.walls?.material ?? null,
-        ].filter(Boolean);
-        if (said.length > 0) {
-          gathered.push(`Looked at the house from the street and the air: ${said.join(", ")}.`);
-        }
-      }
-      const needing = Object.entries(houseCondition).filter(
-        ([, grade]) => grade === "dated" || grade === "poor",
-      );
-      if (needing.length > 0) {
-        gathered.push(
-          `Graded the outside from that: ${needing.map(([element, grade]) => `${element} ${grade}`).join(", ")}.`,
-        );
-      }
-    }
-
-    // --- 3. What shape is the house? ---
-    setStep({ label: "Working out the layout", done: 0, total: 1 });
-    const described = spec?.rooms ?? [];
-    const describedLabels = new Set(described.map((r) => r.label));
-    const extras = roomLabels
-      .filter((l) => !describedLabels.has(l))
-      .map((l) => ({ label: l, level: 0 }));
-    const source = [...described, ...extras];
-    let rooms = source.length > 0 ? source : roomLabels.map((l) => ({ label: l, level: 0 }));
-
-    // An address with no photographs, no listing facts and no description still
-    // has to produce a house. A plain three-bed is the most common home in the
-    // country and is a far better starting point than an empty outline - the
-    // shape is right, and the rooms inside it are the part the user can fix in
-    // the builder in seconds.
-    if (rooms.length === 0) {
-      rooms = [
-        "Living Room", "Kitchen", "Dining Room", "Primary Bedroom",
-        "Bedroom 2", "Bedroom 3", "Bathroom", "Bathroom 2", "Hallway",
-      ].map((label) => ({ label, level: 0 }));
-      gathered.push("No room details were available, so this is a typical three-bedroom plan — correct it below.");
-    }
-
-    /**
-     * The house has to have the rooms the listing says it has.
-     *
-     * Everything above this line counts rooms that were *mentioned* - in a
-     * description if there was one, in the photographs otherwise. Neither is a
-     * census. A photographer shoots what sells the house, so the third bedroom
-     * and the hall bath are routinely missing from twenty photographs of a
-     * four-bed, and a house built from those photographs alone came out a
-     * four-bed with two bedrooms in it. Nothing noticed, because nothing had
-     * ever compared the two.
-     *
-     * The bed and bath count is the one fact every listing carries and the one
-     * it is never wrong about. So it is treated as a floor: whatever the
-     * photographs found, the house ends up with at least this many. Only ever
-     * added to - a room somebody photographed exists whether or not the listing
-     * admits it, and a listing that undercounts is usually a converted garage.
-     */
-    const inventory = reconcileInventory(rooms, {
-      beds: facts?.beds ?? null,
-      baths: facts?.baths ?? null,
-    });
-    rooms = inventory.rooms;
-    gathered.push(...inventory.notes);
-
-    const adjacency = adjacencyRef.current;
-    // Trust the count derived from the two areas over the number of levels the
-    // room list happens to use - a description that never mentioned an upstairs
-    // would otherwise squash a two-storey house onto one floor.
-    const storeys = Math.max(
-      footprint?.storeys ?? 1,
-      new Set(rooms.map((r) => r.level)).size,
-    );
-
-    /**
-     * A shape to pack into, whatever the map had.
-     *
-     * The map first, because it is measured. Then the satellite trace, because
-     * a shape read off a photograph of the actual building beats a rectangle
-     * invented from a table of typical room sizes. Then, failing both, that
-     * rectangle - but with a house's proportions rather than a square, which is
-     * the difference between a ranch and a block of flats.
-     *
-     * Three sources, one pipeline: each produces a `[lat, lon]` ring, so
-     * `prepareFootprint` and everything after it cannot tell them apart and
-     * every house gets the same exact-fill guarantee.
-     */
-    let ring = footprint?.ring ?? null;
-    let shapeFrom: "map" | "traced" | "invented" = "map";
-
-    if (!ring && tracedRing) {
-      ring = tracedRing;
-      shapeFrom = "traced";
-      gathered.push(
-        tracedConfidence === "low"
-          ? "No building is drawn on the map here, so the outline was read off the satellite image — parts of it were obscured, so check the shape below."
-          : "No building is drawn on the map here, so the outline was read off the satellite image.",
-      );
-    }
-    if (!ring && listingSite) {
-      ring = syntheticRing(listingSite, facts?.sqft ? facts.sqft / storeys : 1600);
-      shapeFrom = "invented";
-      gathered.push(
-        "Neither the map nor the satellite gave a usable outline, so this is a typical single-storey shape — drag it about below.",
-      );
-    }
-    // Prepared once and kept, because the angle it had to turn the building
-    // through to square it up is also what tells the sun which way the house
-    // faces. Preparing it twice would be cheap; forgetting the rotation is how
-    // a traced house ends up lit from the wrong side.
-    const groundRooms = Math.max(1, rooms.filter((r) => r.level === 0).length);
-    const prepared = ring
-      ? prepareFootprint(
-          ring,
-          // The outline is the ground floor, so the listing's total area has to
-          // be divided by the storeys standing on it.
-          facts?.sqft ? facts.sqft / storeys : undefined,
-          groundRooms,
-        )
-      : null;
-
-    /**
-     * Where the rooms go, asked rather than shelf-packed.
-     *
-     * Only the ground floor, and only when there is something to arrange. It is
-     * one more call on a build that already makes several, and it is the one
-     * that decides whether the plan looks like a house - the packer's own
-     * answer fills the outline correctly and arranges it like a spreadsheet.
-     *
-     * Ground-floor labels are taken here in the same order `layoutFromFootprint`
-     * will see them, because the indices that come back mean nothing otherwise.
-     */
-    const plans = new Map<number, PackPlan>();
-    if (prepared) {
-      setStep({ label: "Arranging the rooms", done: 0, total: 1 });
-      const groundLabels = rooms
-        .filter((r) => r.level === 0 && roomKind(r.label) !== "outside")
-        .map((r) => r.label);
-      const arranged = await arrangeRooms(prepared, groundLabels, adjacency, {
-        frontDoorBearing: outside?.frontDoorBearing ?? null,
-        garageBearing: outside?.garage?.bearing ?? null,
-        planXBearing: 90 + prepared.rotationDeg,
-      });
-      if (arranged) {
-        plans.set(0, arranged.plan);
-        if (arranged.reasoning) gathered.push(arranged.reasoning);
-      }
-    }
-
-    const built = prepared
-      ? layoutFromFootprint({ rooms }, prepared, adjacency, plans)
-      : layoutFromSpec(
-          { rooms },
-          facts?.sqft ? sqftToM2(facts.sqft) : undefined,
-          adjacency,
-        );
-    const nextPlan: Plan = {
-      scaleRef: { px: 1, meters: M_PER_FT },
-      rooms: built.rooms,
-      openings: built.openings,
-    };
-    setPlan(nextPlan);
-    gathered.push(
-      `${built.rooms.length} rooms, ${built.openings.length} doorways.`,
-    );
-    // Worth saying out loud, and saying *which* - a surveyed outline and one
-    // read off a photograph are not the same claim, and each carries a licence
-    // that requires crediting wherever it is shown.
-    if (footprint && shapeFrom === "map") {
-      gathered.push(
-        `Shaped to the real building outline from the map (${Math.round(footprint.areaSqft)} sqft ground floor). ${footprint.attribution}.`,
-      );
-    } else if (prepared && shapeFrom === "traced") {
-      gathered.push(
-        `Shaped to the building as seen from above (${Math.round(prepared.areaSqft)} sqft ground floor). ${GOOGLE_ATTRIBUTION}.`,
-      );
-    }
-
-    // --- 4. Put the photos in the rooms, and work out what they are made of ---
-    const placed = placePhotos(nextPlan, labelled);
-
-    /**
-     * What every room is made of, reasoned rather than defaulted.
-     *
-     * Nothing has read a photograph for finishes yet, so at this point the
-     * inference is working purely from the plan - which rooms these are, which
-     * of them open into one another, and what a house of this shape usually
-     * does. That is already worth a great deal: it is the difference between a
-     * hallway floored to match the rooms it serves and a hallway floored from a
-     * lookup table, and it means a house built from an address alone still
-     * comes out looking like one house.
-     *
-     * Stored rather than derived at render time, because the point is that it
-     * can be corrected. Every value carries where it came from, so a later
-     * reading of the photographs - or a person disagreeing with it - overwrites
-     * only what is still a guess.
-     */
-    const inference = inferHouse(nextPlan, RoomSpecDoc.parse({}));
-    gathered.push(...inference.conventions);
-
-    let assembled: Property = {
-      id: propertyId,
-      label: label || "My home",
-      displayUnits: "ft",
-      plan: nextPlan,
-      nodes: placed.nodes,
-      splats: [],
-      // Filled in once someone grades the property; the BOM treats an empty
-      // map as 'nothing seen yet' rather than 'nothing needed'.
-      condition: {},
-      houseCondition,
-      rates: {},
-      // Where the house is, so the daylight can be its own rather than a
-      // studio light. The bearing follows from the rotation the footprint
-      // needed to square it up: the outline is projected with +x east, so
-      // turning it by that angle puts plan +x that many degrees round from
-      // east.
-      site:
-        listingSite && prepared
-          ? { ...listingSite, planXBearing: 90 + prepared.rotationDeg }
-          : listingSite
-            ? { ...listingSite, planXBearing: 90 }
-            : null,
-      // Survey data about the outside. Optional everywhere it is read, so a
-      // house with none behaves exactly as it always has.
-      exterior: outside,
-      spec: inference.spec,
-    };
-    if (placed.unplaced > 0) {
-      gathered.push(
-        `${placed.unplaced} photo${placed.unplaced === 1 ? "" : "s"} had no matching room and ${placed.unplaced === 1 ? "was" : "were"} left out.`,
-      );
-    }
-    saveProperty(assembled);
-
-    // --- 5. Where was each photo taken from? ---
-    const posed = await posePhotos(nextPlan, assembled.nodes, setStep);
-    assembled = { ...assembled, nodes: posed.nodes };
-    saveProperty(assembled);
-    if (posed.refined > 0) {
-      gathered.push(
-        `Worked out which wall ${posed.refined} photo${posed.refined === 1 ? "" : "s"} ${posed.refined === 1 ? "is" : "are"} looking at.`,
-      );
-    }
-
-    setProperty(assembled);
-    setNotes(gathered);
-    setStep(null);
-    setStage("review");
-    // The import is finished with, but its photographs are not - they are the
-    // tour's now, under the same keys. Only the working state goes.
-    await clearIntake(propertyId);
-
-    // --- 6. The condition scan, while they look around ---
-    //
-    // After the review screen is up: the house should appear as fast as it
-    // always did, and grading does not change what it looks like. The scan is
-    // what makes a new tour arrive with a price on it rather than $0 until
-    // somebody finds the button.
-    //
-    // This slot used to be shared with the depth pass, which ran concurrently
-    // and wrote to the same document. Nothing renders a depth map now, so the
-    // interior read has it: what a room is made of and what condition it is in
-    // are two questions about the same photographs, and both are worth waiting
-    // for a house that is already on screen.
-    const scanning = scanCondition(assembled);
-    const readingInterior = readInterior(assembled);
-
-    // --- 7. Off this machine ---
-    //
-    // Waits for the scan, because the point is to send up the finished tour
-    // rather than a half-graded one. Re-read rather than reusing `assembled`,
-    // which by now is several passes out of date.
-    await Promise.all([scanning, readingInterior]);
-    await syncUp(propertyId);
+      if (labelled.some((p) => p.roomLabel)) setPhotos(labelled);
+      adjacencyRef.current = evidence.adjacency;
+      await construct(evidence, null);
     } catch (error) {
       // Most of the pipeline already fails soft - a classify batch, a pose
       // batch and the exterior read all swallow their own errors. What is left
@@ -904,19 +749,8 @@ function NewTourInner() {
       setStep(null);
       setStage("photos");
     }
-  }, [
-    photos,
-    spec,
-    facts,
-    footprint,
-    listingSite,
-    exterior,
-    propertyId,
-    label,
-    syncUp,
-    scanCondition,
-    readInterior,
-  ]);
+  }, [photos, spec, facts, footprint, listingSite, exterior, construct]);
+
 
   if (restoring) {
     return (

@@ -25,7 +25,7 @@ removed with no replacement, and nothing anywhere honoured
 `prefers-reduced-motion`.
 
 The **`--design-system` generator is aimed at greenfield marketing pages** and
-should be ignored for this project. Asked about MatterMatt it proposed a
+should be ignored for this project. Asked about Livebuild.ai it proposed a
 hero-centric glassmorphism landing page, a light teal palette and Cinzel — for a
 dark full-bleed tool whose main screens are a plan editor and a 3D walkthrough.
 It is answering a different question than the one this codebase asks. Use the

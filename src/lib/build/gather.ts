@@ -1,0 +1,253 @@
+import { type BuildPhoto, type BuildStep, labelPhotos, roomHints } from "@/lib/build/pipeline";
+import type { HouseCondition } from "@/lib/bom/condition";
+import type { ListingFacts, ListingFootprint } from "@/lib/listing/types";
+import type { HouseSpec } from "@/lib/plan/describe";
+import { type Footprint, prepareFootprint } from "@/lib/plan/footprint";
+import { type RoomEntry, reconcileInventory } from "@/lib/plan/inventory";
+import { readExterior } from "@/lib/site/client";
+import { GOOGLE_ATTRIBUTION } from "@/lib/site/geo";
+import { mergeExterior } from "@/lib/site/osm";
+import { syntheticRing } from "@/lib/site/trace";
+import type { Exterior } from "@/lib/schema";
+
+/**
+ * Everything known about a house before anything is built.
+ *
+ * The build used to be one function: find out about the house, decide where the
+ * rooms go, and construct it, in one pass with no seam. That was right while
+ * the layout was a guess - nobody was going to interrupt a guess - and it is
+ * wrong now that the layout is something a person draws. You cannot stop
+ * halfway through a function to ask a question.
+ *
+ * So this is the first half, and the seam is deliberately a plain value: no
+ * React state, no callbacks kept, nothing that needs a browser. It is a
+ * complete description of what the evidence says, which is what lets it be
+ * written to the intake record and read back after a reload - the difference
+ * between closing a tab and losing an afternoon, and between correcting a
+ * layout and paying for every classify call a second time.
+ *
+ * What it deliberately does *not* do is arrange the rooms. That was the last
+ * thing in this half and is now the first thing in the next one, because
+ * arranging is the decision the user is being handed.
+ */
+
+export type BuildEvidence = {
+  /** Bumped if the shape changes, so a stale saved brief is ignored not misread. */
+  version: 1;
+  /** The photographs, now knowing which room each one is of. */
+  photos: BuildPhoto[];
+  /** Room pairs seen through an opening. The strongest layout evidence there is. */
+  adjacency: Array<[string, string]>;
+  /** Every room the house should contain, after the listing's bed/bath count. */
+  rooms: RoomEntry[];
+  /** Rooms the listing implied that no photograph showed. */
+  addedByInventory: string[];
+  outside: Exterior | null;
+  houseCondition: HouseCondition;
+  /** Prepared once. Null when nothing measured or invented a shape. */
+  footprint: Footprint | null;
+  shapeFrom: "map" | "traced" | "invented" | "none";
+  storeys: number;
+  /** What it worked out and why, in the order it worked it out. */
+  notes: string[];
+};
+
+export type GatherInput<T extends BuildPhoto> = {
+  photos: T[];
+  /** The described room list, when the house was described. */
+  spec: HouseSpec | null;
+  facts: ListingFacts | null;
+  footprint: ListingFootprint | null;
+  site: { lat: number; lon: number } | null;
+  exterior: Exterior | null;
+};
+
+export type GatherResult<T extends BuildPhoto> = {
+  evidence: BuildEvidence;
+  /**
+   * The caller's own photo objects, now labelled.
+   *
+   * Returned separately from `evidence.photos` rather than folded into it,
+   * because they are not the same thing. `ImportedPhoto` carries a `File`
+   * handle, which does not survive being written to disk and does not survive a
+   * reload; the evidence has to. So the evidence keeps the four fields that
+   * describe a photograph and these keep everything the page still needs in
+   * memory.
+   */
+  photos: T[];
+};
+
+export async function gatherEvidence<T extends BuildPhoto>(
+  input: GatherInput<T>,
+  onStep?: (step: BuildStep | null) => void,
+): Promise<GatherResult<T>> {
+  const notes: string[] = [];
+
+  // --- 1. What room is each photo? ---
+  const read = await labelPhotos(input.photos, roomHints(input.spec), onStep);
+  const labelled = read.photos;
+  if (read.adjacency.length > 0) {
+    notes.push(
+      `Spotted ${read.adjacency.length} connection${read.adjacency.length === 1 ? "" : "s"} between rooms in the photos.`,
+    );
+  }
+
+  const roomLabels: string[] = [];
+  for (const photo of labelled) {
+    if (photo.roomLabel && !roomLabels.includes(photo.roomLabel)) roomLabels.push(photo.roomLabel);
+  }
+
+  // --- 2. What does the house look like from outside? ---
+  //
+  // Before the layout, which is the whole point: a ranch read correctly as a
+  // single-storey hip-roofed house used to be packed into a rectangle invented
+  // from a table of typical room sizes, because this ran afterwards. Skipped
+  // without a site, and failing quietly - a house down a private track has no
+  // street view, and that is not an error.
+  let outside = input.exterior;
+  let tracedRing: Array<[number, number]> | null = null;
+  let tracedConfidence: "high" | "low" | null = null;
+  let houseCondition: HouseCondition = {};
+
+  if (input.site) {
+    onStep?.({ label: "Looking at the outside", done: 0, total: 1 });
+    const seen = await readExterior({
+      lat: input.site.lat,
+      lon: input.site.lon,
+      outline: input.footprint?.outline ?? [],
+      storeys: input.exterior?.storeys ?? null,
+    });
+    outside = mergeExterior(input.exterior, seen?.exterior ?? null);
+    houseCondition = seen?.condition ?? {};
+    tracedRing = seen?.tracedRing ?? null;
+    tracedConfidence = seen?.tracedConfidence ?? null;
+
+    const said = [
+      seen?.exterior?.storeys ? `${seen.exterior.storeys} storeys` : null,
+      seen?.exterior?.roof?.shape ? `a ${seen.exterior.roof.shape} roof` : null,
+      seen?.exterior?.walls?.material ?? null,
+    ].filter(Boolean);
+    if (said.length > 0) {
+      notes.push(`Looked at the house from the street and the air: ${said.join(", ")}.`);
+    }
+    const needing = Object.entries(houseCondition).filter(
+      ([, grade]) => grade === "dated" || grade === "poor",
+    );
+    if (needing.length > 0) {
+      notes.push(
+        `Graded the outside from that: ${needing.map(([element, grade]) => `${element} ${grade}`).join(", ")}.`,
+      );
+    }
+  }
+
+  // --- 3. Which rooms does the house have? ---
+  const described = input.spec?.rooms ?? [];
+  const describedLabels = new Set(described.map((r) => r.label));
+  const extras = roomLabels
+    .filter((l) => !describedLabels.has(l))
+    .map((l) => ({ label: l, level: 0 }));
+  const source = [...described, ...extras];
+  let rooms: RoomEntry[] =
+    source.length > 0 ? source : roomLabels.map((l) => ({ label: l, level: 0 }));
+
+  if (rooms.length === 0) {
+    rooms = [
+      "Living Room", "Kitchen", "Dining Room", "Primary Bedroom",
+      "Bedroom 2", "Bedroom 3", "Bathroom", "Bathroom 2", "Hallway",
+    ].map((label) => ({ label, level: 0 }));
+    notes.push(
+      "No room details were available, so this is a typical three-bedroom plan — correct it below.",
+    );
+  }
+
+  const inventory = reconcileInventory(rooms, {
+    beds: input.facts?.beds ?? null,
+    baths: input.facts?.baths ?? null,
+  });
+  rooms = inventory.rooms;
+  notes.push(...inventory.notes);
+
+  // Trust the count derived from the two areas over the number of levels the
+  // room list happens to use - a description that never mentioned an upstairs
+  // would otherwise squash a two-storey house onto one floor.
+  const storeys = Math.max(
+    input.footprint?.storeys ?? 1,
+    new Set(rooms.map((r) => r.level)).size,
+  );
+
+  // --- 4. What shape is the building? ---
+  //
+  // The map first, because it is measured. Then the satellite trace, because a
+  // shape read off a photograph of the actual building beats a rectangle
+  // invented from a table of typical room sizes. Then, failing both, that
+  // rectangle - but with a house's proportions rather than a square, which is
+  // the difference between a ranch and a block of flats.
+  let ring = input.footprint?.ring ?? null;
+  let shapeFrom: BuildEvidence["shapeFrom"] = ring ? "map" : "none";
+
+  if (!ring && tracedRing) {
+    ring = tracedRing;
+    shapeFrom = "traced";
+    notes.push(
+      tracedConfidence === "low"
+        ? "No building is drawn on the map here, so the outline was read off the satellite image — parts of it were obscured, so check the shape below."
+        : "No building is drawn on the map here, so the outline was read off the satellite image.",
+    );
+  }
+  if (!ring && input.site) {
+    ring = syntheticRing(input.site, input.facts?.sqft ? input.facts.sqft / storeys : 1600);
+    shapeFrom = "invented";
+    notes.push(
+      "Neither the map nor the satellite gave a usable outline, so this is a typical single-storey shape — drag it about below.",
+    );
+  }
+
+  // Prepared once and kept, because the angle it had to turn the building
+  // through to square it up is also what tells the sun which way the house
+  // faces. Preparing it twice would be cheap; forgetting the rotation is how a
+  // traced house ends up lit from the wrong side.
+  const groundRooms = Math.max(1, rooms.filter((r) => r.level === 0).length);
+  const footprint = ring
+    ? prepareFootprint(
+        ring,
+        // The outline is the ground floor, so the listing's total area has to
+        // be divided by the storeys standing on it.
+        input.facts?.sqft ? input.facts.sqft / storeys : undefined,
+        groundRooms,
+      )
+    : null;
+
+  // Worth saying out loud, and saying *which* - a surveyed outline and one read
+  // off a photograph are not the same claim, and each carries a licence that
+  // requires crediting wherever it is shown.
+  if (input.footprint && shapeFrom === "map") {
+    notes.push(
+      `Shaped to the real building outline from the map (${Math.round(input.footprint.areaSqft)} sqft ground floor). ${input.footprint.attribution}.`,
+    );
+  } else if (footprint && shapeFrom === "traced") {
+    notes.push(
+      `Shaped to the building as seen from above (${Math.round(footprint.areaSqft)} sqft ground floor). ${GOOGLE_ATTRIBUTION}.`,
+    );
+  }
+
+  const evidence: BuildEvidence = {
+    version: 1,
+    photos: labelled.map((p) => ({
+      id: p.id,
+      ref: p.ref,
+      roomLabel: p.roomLabel,
+      guessed: p.guessed,
+    })),
+    adjacency: read.adjacency,
+    rooms,
+    addedByInventory: inventory.added.map((r) => r.label),
+    outside,
+    houseCondition,
+    footprint,
+    shapeFrom,
+    storeys,
+    notes,
+  };
+
+  return { evidence, photos: labelled };
+}

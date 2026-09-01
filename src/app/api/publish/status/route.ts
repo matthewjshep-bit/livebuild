@@ -22,7 +22,7 @@ export async function GET() {
   const missing = [
     ["NEXT_PUBLIC_SUPABASE_URL", Boolean(SUPABASE_URL)],
     ["SUPABASE_SERVICE_ROLE_KEY", Boolean(process.env.SUPABASE_SERVICE_ROLE_KEY)],
-    ["MATTERMATT_ADMIN_KEY", Boolean(process.env.MATTERMATT_ADMIN_KEY)],
+    ["LIVEBUILD_ADMIN_KEY", Boolean(process.env.LIVEBUILD_ADMIN_KEY)],
   ]
     .filter(([, present]) => !present)
     .map(([name]) => name);

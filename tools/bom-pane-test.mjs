@@ -25,9 +25,9 @@ const seed = async (page) => {
     };
     const condition = {};
     for (const r of doc.plan.rooms) if (by[r.label]) condition[r.id] = by[r.label];
-    localStorage.setItem("mattermatt:property:demo-house",
+    localStorage.setItem("livebuild:property:demo-house",
       JSON.stringify({ ...doc, condition, houseCondition: {}, rates: {} }));
-    localStorage.setItem("mattermatt:index", JSON.stringify(["demo-house"]));
+    localStorage.setItem("livebuild:index", JSON.stringify(["demo-house"]));
   });
 };
 
@@ -99,7 +99,7 @@ if (clicked) {
 
 // --- 3. Walking into a room shows that room, unasked ---
 const firstRoom = await page.evaluate(() => {
-  const doc = JSON.parse(localStorage.getItem("mattermatt:property:demo-house"));
+  const doc = JSON.parse(localStorage.getItem("livebuild:property:demo-house"));
   // The room a photograph was taken in, so the pane has something to say about
   // it. `?room=` walks you in, which is the only way inside now.
   return doc.nodes[0].roomId;

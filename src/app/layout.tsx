@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "MatterMatt",
+  title: "Livebuild.ai",
   description: "Property tours built from listing photos and a hand-drawn floor plan",
 };
 

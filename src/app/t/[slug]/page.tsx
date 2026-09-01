@@ -50,7 +50,7 @@ export async function generateMetadata({
 
   const rooms = tour.property.plan.rooms.length;
   return {
-    title: `${tour.label} — MatterMatt`,
+    title: `${tour.label} — Livebuild.ai`,
     description: `Walk through ${tour.label}: ${rooms} rooms, ${tour.property.nodes.length} viewpoints.`,
     openGraph: {
       title: tour.label,

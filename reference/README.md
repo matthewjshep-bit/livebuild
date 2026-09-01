@@ -25,5 +25,5 @@ maintaining someone else's pricing model to gain nothing — and it would have
 gone stale immediately, since the source repo keeps `shared/` as its single
 source of truth and syncs vendored copies from it.
 
-If MatterMatt ever needs rehab estimates, call that repo's endpoint rather than
+If Livebuild.ai ever needs rehab estimates, call that repo's endpoint rather than
 forking its catalog.

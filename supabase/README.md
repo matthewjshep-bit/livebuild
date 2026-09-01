@@ -26,7 +26,7 @@ Ten minutes, once.
    appear in client code or in any `NEXT_PUBLIC_*` variable. In this app it is
    read only inside `src/app/api/publish/*`, which runs server-side.
 
-5. **Set an admin passphrase** — `MATTERMATT_ADMIN_KEY`. Publishing asks for it
+5. **Set an admin passphrase** — `LIVEBUILD_ADMIN_KEY`. Publishing asks for it
    once and remembers it in your browser. This is a publish gate for a single
    person, not user accounts: it stops strangers filling your storage. If this
    ever becomes multi-agent, replace it with Supabase Auth and per-user rows.

@@ -12,8 +12,59 @@ import { Property, parseProperty } from "@/lib/schema";
  * be handed to the Python pipeline and back without any server in the loop.
  */
 
-const KEY_PREFIX = "mattermatt:property:";
-const INDEX_KEY = "mattermatt:index";
+const KEY_PREFIX = "livebuild:property:";
+const INDEX_KEY = "livebuild:index";
+
+/**
+ * The keys these used to be written under, before the product was renamed.
+ *
+ * Prefix rather than an explicit list, because the old scheme covered the
+ * documents, the index and the publish passphrase alike, and a browser that
+ * built a house last week has all three.
+ */
+const LEGACY_PREFIX = "mattermatt:";
+
+let migrated = false;
+
+/**
+ * Carry anything written under the old name forward, once per page load.
+ *
+ * A rename that changes a storage key is a rename that loses the user's work:
+ * the documents would still be sitting in localStorage, and nothing would ever
+ * look for them again. So the old keys are read across before the first read
+ * of the new ones.
+ *
+ * Copy, verify, then delete - in that order. If the write fails (quota, private
+ * mode) the original is still there to be found on the next load, which is why
+ * the removal is guarded by a read-back rather than assumed to have worked.
+ * An already-migrated key is left alone rather than overwritten, so a stale old
+ * copy can never clobber newer work.
+ */
+function migrateLegacyKeys(): void {
+  if (migrated || !canUseStorage()) return;
+  migrated = true;
+  try {
+    const legacy: string[] = [];
+    for (let i = 0; i < window.localStorage.length; i++) {
+      const key = window.localStorage.key(i);
+      if (key?.startsWith(LEGACY_PREFIX)) legacy.push(key);
+    }
+    // Collected first, then rewritten: mutating localStorage while iterating it
+    // by index shifts the keys still to come and would skip half of them.
+    for (const key of legacy) {
+      const renamed = `livebuild:${key.slice(LEGACY_PREFIX.length)}`;
+      const value = window.localStorage.getItem(key);
+      if (value === null) continue;
+      if (window.localStorage.getItem(renamed) === null) {
+        window.localStorage.setItem(renamed, value);
+        if (window.localStorage.getItem(renamed) !== value) continue;
+      }
+      window.localStorage.removeItem(key);
+    }
+  } catch {
+    // Nothing is lost by giving up here: the old keys are untouched.
+  }
+}
 
 function canUseStorage(): boolean {
   // Storage throws outright in some privacy modes rather than returning null,
@@ -52,7 +103,7 @@ function scanPropertyIds(): string[] {
       if (!key || !key.startsWith(KEY_PREFIX)) continue;
       const id = key.slice(KEY_PREFIX.length);
       // An id is a single path segment. Anything else is a key from some
-      // future scheme - `mattermatt:property:foo:meta` - and reading it as a
+      // future scheme - `livebuild:property:foo:meta` - and reading it as a
       // property named `foo:meta` would put a phantom on the home page.
       if (id && !id.includes(":") && !id.includes("/")) found.push(id);
     }
@@ -77,6 +128,7 @@ function scanPropertyIds(): string[] {
  */
 export function listPropertyIds(): string[] {
   if (!canUseStorage()) return [];
+  migrateLegacyKeys();
 
   let indexed: string[] = [];
   try {
@@ -118,6 +170,7 @@ export function saveProperty(property: Property): void {
 
 export function loadProperty(id: string): Property | null {
   if (!canUseStorage()) return null;
+  migrateLegacyKeys();
   try {
     const raw = window.localStorage.getItem(KEY_PREFIX + id);
     return raw ? withWalkGraph(parseProperty(JSON.parse(raw))) : null;

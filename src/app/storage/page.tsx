@@ -96,7 +96,7 @@ export default function StoragePanel() {
       saveProperty(property);
       await refresh();
     } catch {
-      alert("That does not look like a MatterMatt tour file.");
+      alert("That does not look like a Livebuild.ai tour file.");
     }
   };
 

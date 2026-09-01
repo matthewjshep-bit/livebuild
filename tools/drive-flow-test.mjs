@@ -135,7 +135,7 @@ if (FOLDER) {
       "and the tour is saved with them",
       Boolean(
         await page.evaluate(() =>
-          JSON.parse(localStorage.getItem("mattermatt:index") ?? "[]").length,
+          JSON.parse(localStorage.getItem("livebuild:index") ?? "[]").length,
         ),
       ),
     );

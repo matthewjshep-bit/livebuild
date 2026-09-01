@@ -106,8 +106,8 @@ const seeded = fixture();
 
 await page.goto(BASE);
 await page.evaluate((doc) => {
-  window.localStorage.setItem(`mattermatt:property:${doc.id}`, JSON.stringify(doc));
-  window.localStorage.setItem("mattermatt:index", JSON.stringify([doc.id]));
+  window.localStorage.setItem(`livebuild:property:${doc.id}`, JSON.stringify(doc));
+  window.localStorage.setItem("livebuild:index", JSON.stringify([doc.id]));
 }, seeded);
 
 await page.goto(`${BASE}/editor?id=${ID}`);
@@ -174,7 +174,7 @@ await apply.click();
 await page.waitForTimeout(1500);
 
 const after = await page.evaluate(
-  (id) => JSON.parse(window.localStorage.getItem(`mattermatt:property:${id}`)),
+  (id) => JSON.parse(window.localStorage.getItem(`livebuild:property:${id}`)),
   ID,
 );
 

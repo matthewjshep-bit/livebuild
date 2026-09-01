@@ -80,8 +80,8 @@ const fixture = {
 
 await page.goto(base, { waitUntil: "networkidle" });
 await page.evaluate((doc) => {
-  localStorage.setItem(`mattermatt:property:${doc.id}`, JSON.stringify(doc));
-  localStorage.setItem("mattermatt:index", JSON.stringify([doc.id]));
+  localStorage.setItem(`livebuild:property:${doc.id}`, JSON.stringify(doc));
+  localStorage.setItem("livebuild:index", JSON.stringify([doc.id]));
 }, fixture);
 
 await page.goto(`${base}/tour/${fixture.id}`, { waitUntil: "networkidle" });
@@ -94,7 +94,7 @@ await page.screenshot({ path: "shots/l-shaped.png" });
 
 // The room is an L on the plan the app actually built, not just in the fixture.
 const shape = await page.evaluate(() => {
-  const doc = JSON.parse(localStorage.getItem("mattermatt:property:l-shaped"));
+  const doc = JSON.parse(localStorage.getItem("livebuild:property:l-shaped"));
   return doc.plan.rooms.map((r) => ({ id: r.id, corners: r.polygon.length }));
 });
 

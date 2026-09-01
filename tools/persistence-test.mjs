@@ -42,7 +42,7 @@ await page.waitForTimeout(600);
 // The tour exists the moment there are photographs in it, so it is on the home
 // page before anything has been built.
 const importing = await page.evaluate(() => {
-  const index = JSON.parse(localStorage.getItem("mattermatt:index") ?? "[]");
+  const index = JSON.parse(localStorage.getItem("livebuild:index") ?? "[]");
   return index[index.length - 1] ?? null;
 });
 
@@ -78,8 +78,8 @@ await page.goto(`${base}/tour/${saved?._id}`, { waitUntil: "networkidle" });
 await page.waitForTimeout(3000);
 
 const rescue = await page.evaluate(() => {
-  const index = JSON.parse(localStorage.getItem("mattermatt:index") ?? "[]");
-  const doc = JSON.parse(localStorage.getItem("mattermatt:property:" + index.pop()) ?? "null");
+  const index = JSON.parse(localStorage.getItem("livebuild:index") ?? "[]");
+  const doc = JSON.parse(localStorage.getItem("livebuild:property:" + index.pop()) ?? "null");
   return {
     rooms: doc?.plan.rooms.length ?? 0,
     photos: doc?.nodes.length ?? 0,

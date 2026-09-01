@@ -49,9 +49,9 @@ await page.mouse.click(650, 400);
 await page.waitForTimeout(900);
 
 const summary = await page.evaluate(() => {
-  const index = JSON.parse(localStorage.getItem("mattermatt:index") ?? "[]");
+  const index = JSON.parse(localStorage.getItem("livebuild:index") ?? "[]");
   const id = index[index.length - 1];
-  const doc = JSON.parse(localStorage.getItem("mattermatt:property:" + id) ?? "null");
+  const doc = JSON.parse(localStorage.getItem("livebuild:property:" + id) ?? "null");
   return doc && {
     id,
     rooms: doc.plan.rooms.length,

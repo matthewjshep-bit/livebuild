@@ -1,4 +1,4 @@
--- MatterMatt — Supabase schema
+-- Livebuild.ai — Supabase schema
 --
 -- Run once in the Supabase SQL editor (Dashboard → SQL Editor → New query).
 --

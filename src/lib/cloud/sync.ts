@@ -24,7 +24,7 @@ import type { Property } from "@/lib/schema";
  * kept on the document rather than derived again each time.
  */
 
-const KEY_STORAGE = "mattermatt:admin-key";
+const KEY_STORAGE = "livebuild:admin-key";
 
 function adminKey(): string {
   try {

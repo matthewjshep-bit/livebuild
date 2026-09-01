@@ -1,6 +1,6 @@
 # pipeline
 
-Python side of MatterMatt. Deliberately separate from the Next.js app: nothing
+Python side of Livebuild.ai. Deliberately separate from the Next.js app: nothing
 here runs at request time, and nothing in `src/` imports from it. The two meet
 only at the property JSON described in `src/lib/schema.ts`.
 

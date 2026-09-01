@@ -41,6 +41,31 @@ const property = (id: string, label = id): Property => ({
   rates: {},
 });
 
+// --- The rename: work saved under the old key scheme is carried forward ---
+//
+// First on purpose. The migration is a once-per-load pass, so there is exactly
+// one chance to observe it; a legacy document seeded after the store had been
+// touched would simply sit there for ever, which is the bug this guards.
+storage.setItem("mattermatt:property:old-house", JSON.stringify(property("old-house", "Old House")));
+storage.setItem("mattermatt:index", JSON.stringify(["old-house"]));
+storage.setItem("mattermatt:admin-key", "passphrase");
+
+check("a house saved under the old name is still listed", listPropertyIds().join(",") === "old-house", listPropertyIds().join(","));
+check("and still opens", loadProperty("old-house")?.label === "Old House");
+check(
+  "the old keys are not left behind",
+  storage.getItem("mattermatt:property:old-house") === null && storage.getItem("mattermatt:index") === null,
+);
+// The passphrase lives under the same prefix but is read by the publish panel,
+// not by this module - so the migration has to move keys it knows nothing about.
+check(
+  "keys this module never reads move too",
+  storage.getItem("livebuild:admin-key") === "passphrase" && storage.getItem("mattermatt:admin-key") === null,
+);
+
+// Cleared, so the ordering checks below start from an empty store.
+storage.clear();
+
 // --- Ordinary saving ---
 saveProperty(property("home-a"));
 saveProperty(property("home-b"));
@@ -53,7 +78,7 @@ check("and each one loads", ["home-a", "home-b", "home-c"].every((id) => loadPro
 check("the newest is last", listPropertyIds()[listPropertyIds().length - 1] === "home-c");
 
 // --- The cascade: a corrupt index must not orphan anything ---
-storage.setItem("mattermatt:index", "{not json at all");
+storage.setItem("livebuild:index", "{not json at all");
 check(
   "a corrupt index still finds every property",
   listPropertyIds().sort().join(",") === "home-a,home-b,home-c",
@@ -68,7 +93,7 @@ check(
 );
 
 // --- An index that simply lost an entry ---
-storage.setItem("mattermatt:index", JSON.stringify(["home-a"]));
+storage.setItem("livebuild:index", JSON.stringify(["home-a"]));
 check(
   "a property missing from the index is recovered",
   listPropertyIds().includes("home-c"),
@@ -77,7 +102,7 @@ check(
 check("and the index's own order is respected first", listPropertyIds()[0] === "home-a");
 
 // --- An index naming something that is not there ---
-storage.setItem("mattermatt:index", JSON.stringify(["ghost", "home-a"]));
+storage.setItem("livebuild:index", JSON.stringify(["ghost", "home-a"]));
 check(
   "an index entry with no document behind it is dropped",
   !listPropertyIds().includes("ghost"),
@@ -85,8 +110,8 @@ check(
 );
 
 // --- Nothing that is not a property may be mistaken for one ---
-storage.setItem("mattermatt:admin-key", "hunter2");
-storage.setItem("mattermatt:property:odd:meta", "{}");
+storage.setItem("livebuild:admin-key", "hunter2");
+storage.setItem("livebuild:property:odd:meta", "{}");
 const listed = listPropertyIds();
 check("the publish passphrase is not a tour", !listed.includes("admin-key"), listed.join(","));
 check("nor is any key that is not a plain id", !listed.some((id) => id.includes(":")), listed.join(","));

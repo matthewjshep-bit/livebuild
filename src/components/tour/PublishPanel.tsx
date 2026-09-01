@@ -15,7 +15,7 @@ import type { Property } from "@/lib/schema";
  * stops people publishing.
  */
 
-const KEY_STORAGE = "mattermatt:admin-key";
+const KEY_STORAGE = "livebuild:admin-key";
 
 function formatBytes(bytes: number): string {
   if (bytes < 1024 ** 2) return `${(bytes / 1024).toFixed(0)} KB`;

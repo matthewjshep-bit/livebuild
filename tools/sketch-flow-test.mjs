@@ -80,8 +80,8 @@ await page.waitForTimeout(1500);
 await page.screenshot({ path: "shots/A2-sketch-built.png" });
 
 const built = await page.evaluate(() => {
-  const index = JSON.parse(localStorage.getItem("mattermatt:index") ?? "[]");
-  const doc = JSON.parse(localStorage.getItem("mattermatt:property:" + index.pop()) ?? "null");
+  const index = JSON.parse(localStorage.getItem("livebuild:index") ?? "[]");
+  const doc = JSON.parse(localStorage.getItem("livebuild:property:" + index.pop()) ?? "null");
   return {
     rebuilt: true,
     rooms: doc?.plan.rooms.map((r) => r.label) ?? [],

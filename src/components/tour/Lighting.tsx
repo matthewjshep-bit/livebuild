@@ -10,6 +10,7 @@ import { levelBase, levelsOf, planToWorld } from "@/lib/plan/geometry";
 import { sunState } from "@/lib/model/sun";
 import { EnvRig } from "@/components/tour/EnvRig";
 import { boundsOf } from "@/lib/plan/autolayout";
+import { interiorPoint } from "@/lib/model/tessellate";
 import { roomKind } from "@/lib/plan/room-kind";
 import { SHADOW_SIZE, type Quality } from "@/lib/render/quality";
 import type { Plan, Site } from "@/lib/schema";
@@ -338,14 +339,18 @@ function Lamps({ plan, explode }: { plan: Plan; explode: number }) {
         })
         .map((room) => {
           const b = boundsOf(room.polygon);
+          // Hung at the room's own centre rather than the centre of the box
+          // round it - in an L-shaped room those are different places, and the
+          // second one is in the notch, lighting whatever is next door.
+          const inside = interiorPoint(room.polygon);
           // A lamp left behind would light the gap the room came out of.
           const [dx, dy] = explodeOffset(plan, room, explode);
           return {
             id: room.id,
             position: [
-              (b.x0 + b.x1) / 2 + dx,
+              inside[0] + dx,
               levelBase(plan, room.level) + room.ceilingHeight - 0.25 + explodeLift(room.level, explode),
-              (b.y0 + b.y1) / 2 + dy,
+              inside[1] + dy,
             ] as [number, number, number],
             // Bigger rooms get a longer reach, so a hallway is not as bright as
             // a living room lit by the same fitting.

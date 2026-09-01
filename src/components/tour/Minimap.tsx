@@ -2,7 +2,6 @@
 
 import { useEffect, useMemo, useState } from "react";
 
-import { boundsOf } from "@/lib/plan/autolayout";
 import { levelName, levelsOf } from "@/lib/plan/geometry";
 import type { Property } from "@/lib/schema";
 
@@ -117,15 +116,14 @@ export function Minimap({
         style={{ aspectRatio: `${view.width} / ${view.height}` }}
       >
         {roomsHere.map((room) => {
-          const b = boundsOf(room.polygon);
           const isHere = room.id === activeRoomId;
           return (
-            <rect
+            // The room's own shape. A rectangle here draws an L-shaped room
+            // over its own neighbour, which on a map you are using to find your
+            // way is worse than on a drawing you are only reading.
+            <polygon
               key={room.id}
-              x={b.x0}
-              y={b.y0}
-              width={b.x1 - b.x0}
-              height={b.y1 - b.y0}
+              points={room.polygon.map((p) => `${p[0]},${p[1]}`).join(" ")}
               fill={isHere ? "#2a6f9e88" : "#262d37cc"}
               stroke={isHere ? "#4bb3fd" : "#4a5566"}
               strokeWidth={view.width / 300}
@@ -134,7 +132,7 @@ export function Minimap({
               onClick={() => onSelectRoom(room.id)}
             >
               <title>{room.label}</title>
-            </rect>
+            </polygon>
           );
         })}
 

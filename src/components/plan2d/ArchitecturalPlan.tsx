@@ -92,18 +92,28 @@ export function ArchitecturalPlan({
   const solidWalls = walls.filter((w) => !w.header);
   const doorways = walls.filter((w) => w.header);
 
-  const rectOf = (w: (typeof walls)[number]) => {
-    const alongX = Math.abs(w.angleDeg) < 45;
-    const halfW = (alongX ? w.length : w.thickness) / 2;
-    const halfD = (alongX ? w.thickness : w.length) / 2;
-    return {
-      x: w.center[0] - halfW,
-      y: w.center[1] - halfD,
-      w: halfW * 2,
-      h: halfD * 2,
-      alongX,
-    };
-  };
+  /**
+   * A wall as a rectangle drawn about its own centre, turned to match it.
+   *
+   * This used to build an axis-aligned box from `length` and `thickness`,
+   * choosing which was which by whether the wall was nearer horizontal than
+   * vertical. That is exact at 0 and 90 degrees and increasingly wrong
+   * everywhere between: a four-metre wall at 45 degrees came out as a three-
+   * metre square, so a house with any angle in it was drawn as a pile of
+   * crosses. Emitting the rectangle unrotated and letting SVG turn it keeps the
+   * numbers simple and is correct at every angle.
+   *
+   * The turn is negated because `angleDeg` is measured against a renderer whose
+   * y runs the other way from SVG's.
+   */
+  const rectOf = (w: (typeof walls)[number]) => ({
+    x: w.center[0] - w.length / 2,
+    y: w.center[1] - w.thickness / 2,
+    w: w.length,
+    h: w.thickness,
+    transform: `rotate(${-w.angleDeg} ${w.center[0]} ${w.center[1]})`,
+    alongX: Math.abs(w.angleDeg) < 45,
+  });
 
   const north = site ? planFromBearing(site, 0) : null;
 
@@ -128,17 +138,20 @@ export function ArchitecturalPlan({
           dragging.current = false;
         }}
       >
-        {/* Floors first, so everything else sits on them. */}
+        {/* Floors first, so everything else sits on them.
+
+            Drawn as the room's own outline rather than the box round it. A
+            rectangle is right for a rectangular room and wrong twice over for
+            anything else: an L-shaped room fills in its own notch, covering
+            whatever is there, and an angled room is drawn square while being
+            built at an angle - so the drawing and the model disagree about the
+            house. */}
         {rooms.map((room) => {
-          const b = boundsOf(room.polygon);
           const selected = pick?.roomId === room.id;
           return (
-            <rect
+            <polygon
               key={room.id}
-              x={b.x0}
-              y={b.y0}
-              width={b.x1 - b.x0}
-              height={b.y1 - b.y0}
+              points={room.polygon.map((p) => `${p[0]},${p[1]}`).join(" ")}
               fill={selected ? "#1d3346" : hover === room.id ? "#1b2430" : "#161b22"}
               onClick={() => onPick?.({ roomId: room.id, element: null })}
               onPointerEnter={() => setHover(room.id)}
@@ -158,6 +171,7 @@ export function ArchitecturalPlan({
               y={r.y}
               width={r.w}
               height={r.h}
+              transform={r.transform}
               fill={INK.poche}
               stroke={INK.pocheEdge}
               strokeWidth={WEIGHT.wall / 3}
@@ -168,12 +182,22 @@ export function ArchitecturalPlan({
         {/* Doors, drawn from the pieces above them: a leaf and its swing. */}
         {doorways.map((w, i) => {
           const r = rectOf(w);
-          const width = r.alongX ? r.w : r.h;
-          const hinge: Vec2 = r.alongX ? [r.x, r.y + r.h / 2] : [r.x + r.w / 2, r.y];
-          const leaf: Vec2 = r.alongX ? [r.x, r.y + r.h / 2 - width] : [r.x + r.w / 2 + width, r.y];
-          const openTo: Vec2 = r.alongX ? [r.x + width, r.y + r.h / 2] : [r.x + r.w / 2, r.y + width];
+          // Drawn in the wall's own frame - along its length, across its
+          // thickness - and the whole group is then turned with it. The leaf and
+          // its swing were built from the axis-aligned box before, so at any
+          // angle the door opened in a direction the wall did not have.
+          const width = r.w;
+          const hinge: Vec2 = [r.x, r.y + r.h / 2];
+          const leaf: Vec2 = [r.x, r.y + r.h / 2 - width];
+          const openTo: Vec2 = [r.x + width, r.y + r.h / 2];
           return (
-            <g key={`d${i}`} stroke={INK.door} strokeWidth={WEIGHT.door} fill="none">
+            <g
+              key={`d${i}`}
+              transform={r.transform}
+              stroke={INK.door}
+              strokeWidth={WEIGHT.door}
+              fill="none"
+            >
               {/* The gap itself, cleared through the poché. */}
               <rect
                 x={r.x}
@@ -195,23 +219,31 @@ export function ArchitecturalPlan({
 
         {/* Windows: the conventional pane line across the wall. */}
         {windows.map((win, i) => {
-          const alongX = Math.abs(win.angleDeg) < 45;
+          // Same treatment as the doorways: drawn along the wall's own length
+          // and turned with it, rather than guessed onto whichever axis it was
+          // nearest.
           const half = win.width / 2;
           const t = win.thickness / 2;
           return (
-            <g key={`win${i}`} stroke={INK.window} strokeWidth={WEIGHT.window} fill={INK.paper}>
+            <g
+              key={`win${i}`}
+              transform={`rotate(${-win.angleDeg} ${win.center[0]} ${win.center[1]})`}
+              stroke={INK.window}
+              strokeWidth={WEIGHT.window}
+              fill={INK.paper}
+            >
               <rect
-                x={win.center[0] - (alongX ? half : t)}
-                y={win.center[1] - (alongX ? t : half)}
-                width={alongX ? win.width : win.thickness}
-                height={alongX ? win.thickness : win.width}
+                x={win.center[0] - half}
+                y={win.center[1] - t}
+                width={win.width}
+                height={win.thickness}
                 stroke="none"
               />
               <line
-                x1={win.center[0] - (alongX ? half : 0)}
-                y1={win.center[1] - (alongX ? 0 : half)}
-                x2={win.center[0] + (alongX ? half : 0)}
-                y2={win.center[1] + (alongX ? 0 : half)}
+                x1={win.center[0] - half}
+                y1={win.center[1]}
+                x2={win.center[0] + half}
+                y2={win.center[1]}
               />
             </g>
           );

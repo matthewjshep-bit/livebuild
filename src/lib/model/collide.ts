@@ -4,6 +4,8 @@ import { roomKind } from "@/lib/plan/room-kind";
 import type { Plan, Vec2 } from "@/lib/schema";
 import { heightAt, levelForHeight, runsAtLevel } from "@/lib/model/stairs";
 import { wallsForLevel } from "@/lib/model/walls";
+import { interiorPoint } from "@/lib/model/tessellate";
+import { area } from "@/lib/plan/geometry";
 
 /**
  * What stops you walking through a wall.
@@ -174,11 +176,17 @@ export function startingPoint(plan: Plan, level: number): Vec2 {
   const best = rooms
     .filter((r) => roomKind(r.label) !== "outside" && roomKind(r.label) !== "garage")
     .concat(rooms)
-    .map((room) => {
-      const b = boundsOf(room.polygon);
-      return { room, area: (b.x1 - b.x0) * (b.y1 - b.y0), b };
-    })
-    .sort((a, z) => z.area - a.area)[0];
+    .map((room) => ({ room, size: area(room.polygon) }))
+    .sort((a, z) => z.size - a.size)[0];
 
-  return [(best.b.x0 + best.b.x1) / 2, (best.b.y0 + best.b.y1) / 2];
+  /**
+   * The centre of the room, not the centre of the box round it.
+   *
+   * For an L-shaped room those are different places and the second one is in
+   * the notch, outside the room - so the walker was dropped through a wall into
+   * whatever is next door. Ranking by real area rather than by box area fixes
+   * the same bug one step earlier: an L-shaped living room and a rectangular
+   * bedroom can have identical bounding boxes.
+   */
+  return interiorPoint(best.room.polygon);
 }

@@ -1,4 +1,5 @@
 import { boundsOf } from "@/lib/plan/autolayout";
+import { interiorPoint } from "@/lib/model/tessellate";
 import { levelBase } from "@/lib/plan/geometry";
 import { blocked, collidersFor, startingPoint } from "@/lib/model/collide";
 import { roomCentre } from "@/lib/model/room-shell";
@@ -49,9 +50,12 @@ export function frameRoom(plan: Plan, room: Room): RoomFraming {
   const b = boundsOf(room.polygon);
   const reach = Math.max(b.x1 - b.x0, b.y1 - b.y0, 1);
   const base = levelBase(plan, room.level);
+  const inside = interiorPoint(room.polygon);
 
   return {
-    center: [(b.x0 + b.x1) / 2, base + 0.9, (b.y0 + b.y1) / 2],
+    // The room's own centre. A bounding-box centre sits in an L-shaped room's
+    // notch, so the camera orbits a point in the room next door.
+    center: [inside[0], base + 0.9, inside[1]],
     distance: Math.max(reach * 1.55, MIN_FRAMING_M),
     elevation: 0.67,
   };

@@ -3,6 +3,7 @@
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 
+import { DrawingBoard } from "@/components/wizard/DrawingBoard";
 import { HouseSheet } from "@/components/wizard/HouseSheet";
 import { type BuildMode, ModeChoice } from "@/components/wizard/ModeChoice";
 import {
@@ -940,6 +941,8 @@ function NewTourInner() {
    * arrangement is kept and only the sizes are given up.
    */
   const [fitProblem, setFitProblem] = useState<string | null>(null);
+  /** Whether the pen is out. The drawing surface needs the whole screen. */
+  const [drawingFreehand, setDrawingFreehand] = useState(false);
   const fitLayout = useCallback(() => {
     if (!evidence?.footprint || !layoutPlan) return;
     const fitted = fitToBuilding(layoutPlan.rooms, evidence.footprint, 0);
@@ -1185,7 +1188,51 @@ function NewTourInner() {
           </>
         )}
 
-        {stage === "layout" && layoutPlan && evidence && (
+        {stage === "layout" && layoutPlan && evidence && drawingFreehand && (
+          <div className="mx-auto flex h-[78vh] max-w-5xl flex-col">
+            <div className="mb-3">
+              <h1 className="text-xl font-semibold tracking-tight">Draw the layout</h1>
+              <p className="mt-1 text-sm text-mist-400">
+                One line per wall, roughly is fine &mdash; wobbly lines are straightened and
+                corners that miss each other are closed. Name each room when the walls are
+                round it.
+              </p>
+            </div>
+            <DrawingBoard
+              onCancel={() => setDrawingFreehand(false)}
+              onRooms={(rooms, adjustments) => {
+                /**
+                 * A drawing gives the arrangement; the building gives the size.
+                 *
+                 * The pen has no scale of its own, so when there is a measured
+                 * outline the rooms are fitted into it - which keeps what was
+                 * drawn and gives up only the dimensions, exactly as the
+                 * "fit" button does for a dragged layout. With no outline the
+                 * drawing is the only thing that knows the shape, so it is
+                 * taken as it came.
+                 */
+                const fitted =
+                  evidence.footprint && rooms.length > 0
+                    ? fitToBuilding(rooms, evidence.footprint, 0)
+                    : { ok: true as const, rooms };
+                const next = fitted.ok ? fitted.rooms : rooms;
+                setLayoutPlan({
+                  scaleRef: { px: 1, meters: M_PER_FT },
+                  rooms: next,
+                  openings: autoOpenings(next),
+                });
+                setFitProblem(
+                  fitted.ok
+                    ? adjustments.join(" ")
+                    : `${fitted.why} Using the drawing as it was drawn.`,
+                );
+                setDrawingFreehand(false);
+              }}
+            />
+          </div>
+        )}
+
+        {stage === "layout" && layoutPlan && evidence && !drawingFreehand && (
           <div className="mx-auto max-w-4xl">
             <div className="mb-4">
               <h1 className="text-xl font-semibold tracking-tight">Draw the layout</h1>
@@ -1220,6 +1267,13 @@ function NewTourInner() {
                 className="rounded border border-ink-500 px-3 py-1.5 text-xs hover:bg-ink-600 disabled:opacity-50"
               >
                 {suggesting ? "Working it out…" : "Suggest a layout"}
+              </button>
+              <button
+                onClick={() => setDrawingFreehand(true)}
+                data-testid="draw-freehand"
+                className="rounded border border-ink-500 px-3 py-1.5 text-xs hover:bg-ink-600"
+              >
+                Draw it by hand
               </button>
               <button
                 onClick={fitLayout}

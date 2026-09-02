@@ -12,6 +12,7 @@
  * produced by walking the same steps internally.
  */
 import { prepareFootprint } from "../src/lib/plan/footprint";
+import { type OverpassWay, streetsFrom } from "../src/lib/listing/streets";
 import { latLonToPlan, planToLatLon, tileExtentFor, tilePlacement } from "../src/lib/site/frame";
 import { signedArea } from "../src/lib/plan/geometry";
 import type { Vec2 } from "../src/lib/schema";
@@ -190,10 +191,69 @@ for (const turnDeg of [0, 20, 47, -35]) {
   }
 }
 
+// --- the streets, which are the reason the frame is plumbed through at all ---
+//
+// The drawing pad showed the building's outline and nothing about where it sat,
+// so "which of these walls faces the road" was not a question it could answer.
+// Two things have to hold: only actual named streets survive the fetch, and
+// they land on the plan at their true angle to the building.
+{
+  const ways: OverpassWay[] = [
+    { type: "way", tags: { highway: "residential", name: "Maple Street" },
+      geometry: [{ lat: LAT + 0.0009, lon: LON - 0.002 }, { lat: LAT + 0.0009, lon: LON }] },
+    // The same street, arriving as a second way because it is split at the
+    // junction. It must not be labelled twice.
+    { type: "way", tags: { highway: "residential", name: "Maple Street" },
+      geometry: [{ lat: LAT + 0.0009, lon: LON }, { lat: LAT + 0.0009, lon: LON + 0.002 }] },
+    { type: "way", tags: { highway: "tertiary", name: "Oak Avenue" },
+      geometry: [{ lat: LAT - 0.001, lon: LON + 0.0012 }, { lat: LAT + 0.001, lon: LON + 0.0012 }] },
+    // Everything below is a `highway` and none of it is a street.
+    { type: "way", tags: { highway: "service", name: "Rear Access" },
+      geometry: [{ lat: LAT, lon: LON }, { lat: LAT, lon: LON + 0.0004 }] },
+    { type: "way", tags: { highway: "footway", name: "River Path" },
+      geometry: [{ lat: LAT, lon: LON }, { lat: LAT, lon: LON + 0.0004 }] },
+    { type: "way", tags: { highway: "residential" },
+      geometry: [{ lat: LAT, lon: LON }, { lat: LAT, lon: LON + 0.0004 }] },
+    { type: "way", tags: { highway: "residential", name: "Too Short" },
+      geometry: [{ lat: LAT, lon: LON }] },
+  ];
+
+  const streets = streetsFrom(ways);
+  check("only named roads worth drawing survive", streets.length === 2,
+    streets.map((x) => x.name).join(", "));
+  check("a driveway is not a street", !streets.some((x) => x.name === "Rear Access"));
+  check("nor is a footpath", !streets.some((x) => x.name === "River Path"));
+  const maple = streets.find((x) => x.name === "Maple Street");
+  check("a street split at a junction is one street", maple?.ways.length === 2,
+    `${maple?.ways.length}`);
+
+  // And onto the plan. The house is turned 20 degrees off north and the plan is
+  // squared up on it, so a street running east-west on the map must come out
+  // 20 degrees off the plan's own axis - that angle is the orientation cue.
+  const built = prepareFootprint(houseRing(LAT, LON, 20), undefined, 6);
+  if (built.frame && maple) {
+    const [a, b] = maple.ways[0].map(([lat, lon]) => latLonToPlan(built.frame!, lat, lon));
+    const onPlan = (Math.atan2(b[1] - a[1], b[0] - a[0]) * 180) / Math.PI;
+    const off = Math.abs(((onPlan % 90) + 90) % 90);
+    check("a street lands on the plan at its true angle to the building",
+      Math.min(off, 90 - off) > 15 && Math.min(off, 90 - off) < 25, `${off.toFixed(1)}deg`);
+
+    // North of the house on the map is one side of it on the plan, whichever
+    // side that turns out to be - what must not happen is landing inside.
+    const inside = built.outline;
+    const ys = inside.map((p) => p[1]);
+    check("and outside the building it runs past",
+      a[1] < Math.min(...ys) || a[1] > Math.max(...ys) ||
+        a[0] < Math.min(...inside.map((p) => p[0])) ||
+        a[0] > Math.max(...inside.map((p) => p[0])),
+      `${a.map((v) => v.toFixed(1))}`);
+  }
+}
+
 if (failures > 0) {
   console.error(`\nFRAME: ${failures} failure(s)`);
   process.exit(1);
 }
 console.log(
-  "FRAME OK - map and plan round-trip to under a millimetre, a mapped ring lands on the outline the packer built at every rotation tried, and the tile is placed where the building actually is",
+  "FRAME OK - map and plan round-trip to under a millimetre, a mapped ring lands on the outline the packer built at every rotation tried, the tile is placed where the building actually is, and the streets come through named once each and turned to the building",
 );

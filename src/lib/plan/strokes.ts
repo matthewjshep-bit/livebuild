@@ -1,5 +1,5 @@
 import { type AngleFamily, dominantAngles, snapToFamily } from "@/lib/plan/angles";
-import { area, pointInPolygon, signedArea } from "@/lib/plan/geometry";
+import { area, centroid, pointInPolygon, signedArea } from "@/lib/plan/geometry";
 import { triangulate } from "@/lib/model/tessellate";
 import type { Room, Vec2 } from "@/lib/schema";
 import { sqftToM2 } from "@/lib/units";
@@ -18,12 +18,21 @@ import { sqftToM2 } from "@/lib/units";
  * trusted on its own:
  *
  *   erase → resample → corners → straight lines → snap directions →
- *   join endpoints → split crossings → walk the faces → name them
+ *   weld doubled walls → join endpoints → split crossings → walk the faces →
+ *   drop what is too thin to stand in → name them → fold what has no name
  *
- * The whole thing refuses rather than guesses wherever a wrong answer would be
- * indistinguishable from a right one. A drawing with a gap you meant is not the
- * same as a drawing with a gap you did not, and nothing here can tell them
- * apart - so it says where the gap is and stops.
+ * **It takes the drawing as it comes.** This used to refuse rather than guess
+ * wherever a wrong answer would look like a right one, which sounded principled
+ * and produced a pad that would not build a house somebody had plainly drawn:
+ * going back over a wall, or redrawing a corner, leaves a thin cavity between
+ * two lines, and every cavity came out as a room with no name, and six of them
+ * came out as a paragraph telling you to draw differently. Redrawing is not a
+ * mistake. It is how drawing works.
+ *
+ * So the repairs are real repairs and they are all reported. Two lines along one
+ * wall become one wall; a space too narrow to stand in is wall thickness and is
+ * dropped; a space with no name is folded into the named room it shares the most
+ * wall with. What is left refuses only when there is genuinely nothing there.
  */
 
 export type Stroke = {
@@ -51,17 +60,74 @@ export type StrokeResult =
 /** Points closer together than this along a stroke carry no information. */
 const RESAMPLE_PX = 3;
 
-/** A stroke shorter than this is a tap or a slip of the hand. */
-const MIN_STROKE_PX = 15;
+/**
+ * A stroke shorter than this share of the drawing is a tap or a slip.
+ *
+ * Relative for the same reason the join tolerance is: fifteen paper pixels was
+ * a third of a small drawing's shortest wall and a rounding error on a large
+ * one, so which of somebody's walls survived depended on the zoom.
+ */
+const MIN_STROKE_FRACTION = 0.027;
+
+/** And never less than this, so a tiny drawing is not read as one long line. */
+const MIN_STROKE_FLOOR_PX = 6;
 
 /** How far a corner has to stick out before it is a corner. */
 const CORNER_RATIO = 0.93;
 
-/** How far apart two wall ends can be and still be the same corner. */
-const JOIN_PX = 14;
+/**
+ * How far apart two wall ends can be and still be the same corner.
+ *
+ * A fraction of how big the drawing is, not a number of pixels, and that is the
+ * whole point. It was 14 paper pixels, and paper pixels are screen pixels
+ * divided by the zoom - which the pad clamps to between 0.3 and 4. So zooming
+ * out to fit a house on screen made corner-closing thirteen times stricter than
+ * zooming in, silently, and the same drawing built or refused depending on how
+ * far somebody had scrolled the wheel before they started.
+ *
+ * Against the drawing's own diagonal it is scale-free in both senses: it no
+ * longer cares about the zoom, and it no longer cares whether the house was
+ * drawn small in a corner or large across the whole pad. The number is set so a
+ * drawing of ordinary size behaves as it did before.
+ */
+const JOIN_FRACTION = 0.025;
+
+/** Below this the drawing is too small to take a fraction of; use pixels. */
+const JOIN_FLOOR_PX = 8;
 
 /** A face smaller than this is arithmetic left over from two crossing lines. */
 const SLIVER_FRACTION = 0.0008;
+
+/**
+ * Narrower than this and it is not a room, whatever its area.
+ *
+ * `SLIVER_FRACTION` is measured against the sum of every face, which makes it
+ * useless for exactly the case it gets blamed for: a drawing whose walls were
+ * each drawn twice is mostly cavities, so the cavities *are* the total and none
+ * of them looks small. A cavity is not distinguished by being small. It is
+ * distinguished by being thin.
+ *
+ * Three feet, which is narrower than any room a person stands in and much wider
+ * than any wall anybody draws.
+ */
+const MIN_ROOM_WIDTH_M = 0.9;
+
+/**
+ * Two walls this close and this parallel are one wall drawn twice.
+ *
+ * A fraction of the drawing's diagonal, for the same reason as `JOIN_FRACTION`,
+ * and a little more generous than it: a doubled wall is drawn deliberately
+ * apart, at whatever a person thinks a wall looks like, where a missed corner
+ * is only ever a slip.
+ *
+ * The headroom above is what stops it eating a real room. A four-foot hallway
+ * in a forty-foot house is eight per cent of the diagonal - three times this -
+ * and a hallway is the narrowest thing anybody draws.
+ */
+const DOUBLE_FRACTION = 0.03;
+
+/** And no further apart in angle than this. */
+const DOUBLE_DEG = 8;
 
 const dist = (a: Vec2, b: Vec2) => Math.hypot(b[0] - a[0], b[1] - a[1]);
 
@@ -175,15 +241,189 @@ export type Segment = { a: Vec2; b: Vec2 };
  * ends are on the line by construction, and the wobble between them is about to
  * be snapped to a direction anyway.
  */
-function segmentsOf(points: Vec2[]): Segment[] {
+function segmentsOf(points: Vec2[], shortest: number): Segment[] {
   const cuts = [0, ...corners(points), points.length - 1];
   const out: Segment[] = [];
   for (let i = 0; i < cuts.length - 1; i++) {
     const a = points[cuts[i]];
     const b = points[cuts[i + 1]];
-    if (dist(a, b) >= MIN_STROKE_PX) out.push({ a, b });
+    if (dist(a, b) >= shortest) out.push({ a, b });
   }
   return out;
+}
+
+/** How big the drawing is, from the raw ink - before there are any segments. */
+function spanOfPoints(runs: Vec2[][]): number {
+  let x0 = Infinity;
+  let y0 = Infinity;
+  let x1 = -Infinity;
+  let y1 = -Infinity;
+  for (const run of runs) {
+    for (const [x, y] of run) {
+      if (x < x0) x0 = x;
+      if (y < y0) y0 = y;
+      if (x > x1) x1 = x;
+      if (y > y1) y1 = y;
+    }
+  }
+  if (!Number.isFinite(x0)) return 0;
+  return Math.hypot(x1 - x0, y1 - y0);
+}
+
+/** How big the drawing is, corner to corner. What every tolerance is a fraction of. */
+function spanOf(segments: Segment[]): number {
+  let x0 = Infinity;
+  let y0 = Infinity;
+  let x1 = -Infinity;
+  let y1 = -Infinity;
+  for (const { a, b } of segments) {
+    for (const [x, y] of [a, b]) {
+      if (x < x0) x0 = x;
+      if (y < y0) y0 = y;
+      if (x > x1) x1 = x;
+      if (y > y1) y1 = y;
+    }
+  }
+  if (!Number.isFinite(x0)) return 0;
+  return Math.hypot(x1 - x0, y1 - y0);
+}
+
+/**
+ * The narrowest a shape gets, near enough.
+ *
+ * Twice the area over the perimeter - the radius of the largest circle that
+ * fits, for anything convex, and an over-estimate for anything else. Both of
+ * those are the right way round here: it is being used to say "nobody could
+ * stand in this", and over-estimating the width means erring towards keeping a
+ * space rather than towards silently eating a real room.
+ */
+function minWidth(polygon: Vec2[]): number {
+  let perimeter = 0;
+  for (let i = 0; i < polygon.length; i++) {
+    perimeter += dist(polygon[i], polygon[(i + 1) % polygon.length]);
+  }
+  if (perimeter < 1e-9) return 0;
+  return (2 * area(polygon)) / perimeter;
+}
+
+/** Where a point falls along a segment, and how far off it. */
+function project(p: Vec2, a: Vec2, b: Vec2): { t: number; offset: number } {
+  const dx = b[0] - a[0];
+  const dy = b[1] - a[1];
+  const len2 = dx * dx + dy * dy;
+  if (len2 < 1e-12) return { t: 0, offset: dist(p, a) };
+  const t = ((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / len2;
+  const foot: Vec2 = [a[0] + dx * t, a[1] + dy * t];
+  return { t, offset: dist(p, foot) };
+}
+
+/**
+ * One wall drawn twice is one wall.
+ *
+ * The single most common thing a person does on this pad, and the thing it
+ * handled worst. Going back over a line you already drew, or drawing a wall as
+ * its two faces the way a floor plan is printed, leaves two near-parallel
+ * segments a few pixels apart - and the face walk quite correctly finds the
+ * cavity between them and calls it a room. Six walls drawn twice is six rooms
+ * nobody meant, each with no name, and that was a refusal.
+ *
+ * `weld` half-rescued this by accident: if the two lines' *ends* happened to
+ * land within its tolerance they collapsed onto each other and the cavity never
+ * formed. That made the outcome depend on how tidily the ends lined up, which is
+ * not a property anybody can aim for. This looks at the walls rather than at
+ * their ends: near-parallel, near-touching, and overlapping along their shared
+ * direction means one wall, and the survivor runs the length of both.
+ *
+ * Runs after the directions are snapped, so "parallel" is already mostly
+ * decided, and before `weld`, so the merged wall's ends take part in the corner
+ * clustering like any other.
+ */
+function mergeDoubles(
+  segments: Segment[],
+  gap: number,
+): { segments: Segment[]; merged: number } {
+  const out: Segment[] = [];
+  const taken = new Array(segments.length).fill(false);
+  let merged = 0;
+
+  const cosLimit = Math.cos((DOUBLE_DEG * Math.PI) / 180);
+
+  for (let i = 0; i < segments.length; i++) {
+    if (taken[i]) continue;
+    // The running union: every segment found to be the same wall as this one.
+    const group = [segments[i]];
+    taken[i] = true;
+
+    // Repeat, because A may pair with B and B with C without A reaching C.
+    let grew = true;
+    while (grew) {
+      grew = false;
+      const { a, b } = group[0];
+      const len = dist(a, b);
+      if (len < 1e-9) break;
+
+      for (let j = 0; j < segments.length; j++) {
+        if (taken[j]) continue;
+        const other = segments[j];
+
+        // Parallel, either way round - a wall has no arrowhead.
+        const u = [(b[0] - a[0]) / len, (b[1] - a[1]) / len];
+        const otherLen = dist(other.a, other.b);
+        if (otherLen < 1e-9) continue;
+        const v = [(other.b[0] - other.a[0]) / otherLen, (other.b[1] - other.a[1]) / otherLen];
+        if (Math.abs(u[0] * v[0] + u[1] * v[1]) < cosLimit) continue;
+
+        // Close, measured across the wall rather than along it.
+        const pa = project(other.a, a, b);
+        const pb = project(other.b, a, b);
+        if (pa.offset > gap || pb.offset > gap) continue;
+
+        // And genuinely overlapping, so two walls end to end stay two walls.
+        const lo = Math.min(pa.t, pb.t);
+        const hi = Math.max(pa.t, pb.t);
+        if (hi < 0.05 || lo > 0.95) continue;
+
+        group.push(other);
+        taken[j] = true;
+        merged++;
+        grew = true;
+      }
+    }
+
+    if (group.length === 1) {
+      out.push(group[0]);
+      continue;
+    }
+
+    /**
+     * The survivor: the average line, spanning everything it replaces.
+     *
+     * Taken along the longest member's direction, because that is the one whose
+     * angle the snap pass had the most length to be confident about.
+     */
+    const longest = group.reduce((best, s) => (dist(s.a, s.b) > dist(best.a, best.b) ? s : best));
+    const len = dist(longest.a, longest.b);
+    const u: Vec2 = [(longest.b[0] - longest.a[0]) / len, (longest.b[1] - longest.a[1]) / len];
+
+    const ends = group.flatMap((s) => [s.a, s.b]);
+    const mid: Vec2 = [
+      ends.reduce((sum, p) => sum + p[0], 0) / ends.length,
+      ends.reduce((sum, p) => sum + p[1], 0) / ends.length,
+    ];
+    let lo = Infinity;
+    let hi = -Infinity;
+    for (const p of ends) {
+      const t = (p[0] - mid[0]) * u[0] + (p[1] - mid[1]) * u[1];
+      if (t < lo) lo = t;
+      if (t > hi) hi = t;
+    }
+    out.push({
+      a: [mid[0] + u[0] * lo, mid[1] + u[1] * lo],
+      b: [mid[0] + u[0] * hi, mid[1] + u[1] * hi],
+    });
+  }
+
+  return { segments: out, merged };
 }
 
 /** Join ends that were meant to meet, and split a wall drawn into another. */
@@ -293,6 +533,52 @@ function weld(
   }
 
   return { segments: welded, moved, gaps };
+}
+
+/**
+ * When nothing closes, join the loose ends.
+ *
+ * The last resort, and deliberately the last: a wall that stops a hundred and
+ * sixty pixels short of the next one is not a slip of the hand, and `weld`'s
+ * tolerance has no business reaching that far. But refusing was worse. A person
+ * who drew three walls of a room and wrote "Kitchen" in it has told you where
+ * the fourth wall goes, and the reader is the only party that does not know.
+ *
+ * Safe because it checks its own work. Ends are joined nearest pair first, and
+ * the result is kept only if it produced more rooms than there were before -
+ * so on a drawing that was already fine, this cannot do anything at all.
+ */
+function closeGaps(segments: Segment[]): { segments: Segment[]; closed: number } {
+  const before = faces(planarise(segments)).length;
+
+  // A loose end is one that no other end shares a point with.
+  const ends = segments.flatMap((s) => [s.a, s.b]);
+  const loose = ends.filter((p) => !ends.some((q) => q !== p && dist(p, q) < 1e-6));
+  if (loose.length < 2) return { segments, closed: 0 };
+
+  const pairs: Array<{ a: Vec2; b: Vec2; away: number }> = [];
+  for (let i = 0; i < loose.length; i++) {
+    for (let j = i + 1; j < loose.length; j++) {
+      pairs.push({ a: loose[i], b: loose[j], away: dist(loose[i], loose[j]) });
+    }
+  }
+  pairs.sort((x, y) => x.away - y.away);
+
+  const used = new Set<Vec2>();
+  let working = segments;
+  let closed = 0;
+  for (const pair of pairs) {
+    if (used.has(pair.a) || used.has(pair.b)) continue;
+    used.add(pair.a);
+    used.add(pair.b);
+    working = [...working, { a: pair.a, b: pair.b }];
+    closed++;
+  }
+
+  if (closed === 0) return { segments, closed: 0 };
+  // Only if it helped.
+  if (faces(planarise(working)).length <= before) return { segments, closed: 0 };
+  return { segments: working, closed };
 }
 
 /** Cut every segment where another crosses it. */
@@ -429,10 +715,45 @@ export type StrokeOptions = {
   snapDeg?: number;
 };
 
+/**
+ * Metres per drawing pixel, from the best source there is.
+ *
+ * Three sources in strict order: a real pixel scale from the building outline,
+ * a floor area somebody typed into the house sheet, and failing both, the
+ * assumption that a room is about sixteen square metres.
+ *
+ * Lifted out of the naming pass because the face filter needs it too. Asking
+ * "is this space too narrow for a person" is a question about metres, and it
+ * has to be answered before it is known which faces are rooms - so it is
+ * answered here, against every face, which is if anything the more honest
+ * denominator.
+ */
+function scaleFor(loops: Vec2[][], options: StrokeOptions): number {
+  if (options.metresPerPixel) return options.metresPerPixel;
+  const drawn = Math.max(
+    loops.reduce((sum, l) => sum + area(l), 0),
+    1,
+  );
+  if (options.targetGroundSqft && options.targetGroundSqft > 0) {
+    return Math.sqrt(sqftToM2(options.targetGroundSqft) / drawn);
+  }
+  return Math.sqrt((16 * Math.max(loops.length, 1)) / drawn);
+}
+
 /** What the strokes make, before anything is asked about names or size. */
 export type StrokeRead = {
   /** The closed spaces the walls enclose, in paper coordinates. */
   faces: Vec2[][];
+  /**
+   * The walls those spaces came from, after every repair.
+   *
+   * Carried out so folding a space into its neighbour can delete the wall
+   * between them and walk the faces again. Merging the two polygons instead
+   * would mean a general polygon union - `outlineOf` only takes rectangles, and
+   * a drawn room is not one; the angled sunroom in `strokes-test` is there
+   * precisely to stop rooms being squared up.
+   */
+  segments: Segment[];
   /** What had to be tidied, in words, so a surprise is a told surprise. */
   adjustments: string[];
   /** Wall ends that met nothing. Somewhere to point when a room will not close. */
@@ -455,12 +776,28 @@ export type StrokeRead = {
  */
 export function readStrokes(strokes: Stroke[], options: StrokeOptions = {}): StrokeRead {
   const adjustments: string[] = [];
-  const nothing = (why: string): StrokeRead => ({ faces: [], adjustments, gaps: [], why });
+  const nothing = (why: string): StrokeRead => ({
+    faces: [],
+    segments: [],
+    adjustments,
+    gaps: [],
+    why,
+  });
 
   const inked = applyErasers(strokes);
   if (inked.length === 0) return nothing("Nothing is drawn yet.");
 
-  let segments = inked.flatMap((points) => segmentsOf(resample(points)));
+  /**
+   * How big the drawing is, taken from the ink before anything is done to it.
+   *
+   * Measured here rather than from the segments because the shortest-wall test
+   * happens while the segments are being made - there is nothing else yet to
+   * take a fraction of.
+   */
+  const inkSpan = spanOfPoints(inked);
+  const shortest = Math.max(MIN_STROKE_FLOOR_PX, inkSpan * MIN_STROKE_FRACTION);
+
+  let segments = inked.flatMap((points) => segmentsOf(resample(points), shortest));
   if (segments.length < 3) return nothing("That is not enough wall to make a room.");
 
   // --- straighten, keeping genuine angles ---
@@ -477,8 +814,26 @@ export function readStrokes(strokes: Stroke[], options: StrokeOptions = {}): Str
     );
   }
 
+  /**
+   * Every tolerance from here on is a fraction of how big the drawing is.
+   *
+   * Measured after the segments exist and before anything is welded, so it
+   * describes what was drawn rather than what has been done to it.
+   */
+  const span = spanOf(segments);
+  const join = Math.max(JOIN_FLOOR_PX, span * JOIN_FRACTION);
+
+  // --- one wall drawn twice is one wall ---
+  const doubled = mergeDoubles(segments, Math.max(JOIN_FLOOR_PX, span * DOUBLE_FRACTION));
+  segments = doubled.segments;
+  if (doubled.merged > 0) {
+    adjustments.push(
+      `Welded ${doubled.merged} wall${doubled.merged === 1 ? "" : "s"} that ${doubled.merged === 1 ? "was" : "were"} drawn twice.`,
+    );
+  }
+
   // --- close what was meant to meet ---
-  const joined = weld(segments, JOIN_PX);
+  const joined = weld(segments, join);
   segments = joined.segments;
   if (joined.moved > 0) {
     adjustments.push(`Closed ${joined.moved} corner${joined.moved === 1 ? "" : "s"}.`);
@@ -496,15 +851,44 @@ export function readStrokes(strokes: Stroke[], options: StrokeOptions = {}): Str
    */
   const gaps = joined.gaps;
 
+  // --- a last resort, when the walls as drawn enclose nothing at all ---
+  //
+  // A drawing that already makes rooms is left exactly as it is.
+  if (faces(planarise(segments)).length === 0) {
+    const bridged = closeGaps(segments);
+    if (bridged.closed > 0) {
+      segments = bridged.segments;
+      adjustments.push(
+        `Joined ${bridged.closed} loose wall end${bridged.closed === 1 ? "" : "s"} so the room would close.`,
+      );
+    }
+  }
+
   // --- rooms ---
   const loops = faces(planarise(segments));
 
+  /**
+   * What is left over from the walls, rather than enclosed by them.
+   *
+   * Two tests, because they catch different things. The relative one catches
+   * arithmetic - the triangle where two lines cross - and cannot catch a wall
+   * cavity, because a drawing whose walls were all doubled is *made* of
+   * cavities and they are the total it is measured against. The absolute one
+   * catches the cavity, by asking the only question that distinguishes it from
+   * a room: could a person stand in it.
+   */
   const total = loops.reduce((sum, l) => sum + area(l), 0);
+  const scale = scaleFor(loops, options);
   const kept: Vec2[][] = [];
   let slivers = 0;
+  let thin = 0;
   for (const loop of loops) {
     if (area(loop) < total * SLIVER_FRACTION) {
       slivers++;
+      continue;
+    }
+    if (minWidth(loop) * scale < MIN_ROOM_WIDTH_M) {
+      thin++;
       continue;
     }
     kept.push(loop);
@@ -512,8 +896,126 @@ export function readStrokes(strokes: Stroke[], options: StrokeOptions = {}): Str
   if (slivers > 0) {
     adjustments.push(`Ignored ${slivers} sliver${slivers === 1 ? "" : "s"} where walls crossed.`);
   }
+  if (thin > 0) {
+    adjustments.push(
+      `Took ${thin} space${thin === 1 ? "" : "s"} too narrow to stand in as wall thickness.`,
+    );
+  }
 
-  return { faces: kept, adjustments, gaps, why: null };
+  return { faces: kept, segments, adjustments, gaps, why: null };
+}
+
+/**
+ * The room a label most likely meant, when it is not inside one.
+ *
+ * Only ever a short reach - a label a long way from every room was not written
+ * for any of them, and guessing would put the kitchen wherever somebody had
+ * scribbled. The reach is a fraction of the drawing, so it means the same thing
+ * whatever size the house was drawn at.
+ */
+function nearestRoom(point: Vec2, rooms: Vec2[][], segments: Segment[]): Vec2[] | null {
+  const reach = Math.max(JOIN_FLOOR_PX, spanOf(segments) * JOIN_FRACTION) * 2;
+  let best: { room: Vec2[]; away: number } | null = null;
+
+  for (const room of rooms) {
+    let away = Infinity;
+    for (let i = 0; i < room.length; i++) {
+      const { offset, t } = project(point, room[i], room[(i + 1) % room.length]);
+      // Off the end of a wall, the corner is the nearest part of it.
+      const gap =
+        t < 0 ? dist(point, room[i]) : t > 1 ? dist(point, room[(i + 1) % room.length]) : offset;
+      if (gap < away) away = gap;
+    }
+    if (away <= reach && (!best || away < best.away)) best = { room, away };
+  }
+  return best?.room ?? null;
+}
+
+/** A wall, keyed so the two faces either side of it agree on which one it is. */
+const edgeKey = (a: Vec2, b: Vec2) => {
+  const [p, q] = key(a) < key(b) ? [a, b] : [b, a];
+  return `${key(p)}|${key(q)}`;
+};
+
+/**
+ * Give a space with no name to the room next door.
+ *
+ * The last thing standing between a drawing and a house. A space nobody named
+ * is usually not a space: it is what is left between two lines drawn for one
+ * wall, or in the corner where a redrawn wall missed its old self. The thin
+ * ones are already gone by here. What survives is big enough to be real, and
+ * the honest thing to do with it is to give it to whichever named room it
+ * shares the most wall with - which is almost always the room it was part of
+ * before somebody drew over the line.
+ *
+ * Done by deleting the wall between them and walking the faces again, rather
+ * than by merging two polygons. The faces come from a planar subdivision, so
+ * the wall they share is the *same* wall in both - identical coordinates, no
+ * tolerance, and the result is a real face by construction rather than by
+ * arithmetic that has to be trusted.
+ *
+ * One space per pass, because deleting a wall changes every face around it.
+ */
+function foldUnnamed(
+  segments: Segment[],
+  labels: Label[],
+): { faces: Vec2[][]; folded: number } {
+  /**
+   * Split at every crossing once, up front.
+   *
+   * The faces are walked from the planarised walls, so a face's edge is a
+   * *piece* of a wall rather than the wall somebody drew. Matching those pieces
+   * against the undivided segments finds nothing - which is how the first
+   * version of this silently folded nothing at all while reporting that it had.
+   */
+  let working = planarise(segments);
+  let folded = 0;
+
+  // Each fold removes at least one wall, so this cannot run longer than there
+  // are walls. The cap is here to bound a bug, not the work.
+  for (let pass = 0; pass < working.length + 8; pass++) {
+    const loops = faces(working);
+    const named = loops.filter((loop) =>
+      labels.some((l) => pointInPolygon([l.x, l.y], loop)),
+    );
+    const nameless = loops.filter((loop) => !named.includes(loop));
+    if (nameless.length === 0 || named.length === 0) {
+      return { faces: loops, folded };
+    }
+
+    // The biggest orphan first: it has the most wall to be sure about, and
+    // absorbing it may well take its smaller neighbours with it.
+    const orphan = nameless.reduce((big, l) => (area(l) > area(big) ? l : big));
+    const orphanEdges = new Set<string>();
+    for (let i = 0; i < orphan.length; i++) {
+      orphanEdges.add(edgeKey(orphan[i], orphan[(i + 1) % orphan.length]));
+    }
+
+    // Which named room does it share the most wall with?
+    let best: { shared: Set<string>; length: number } | null = null;
+    for (const room of named) {
+      const shared = new Set<string>();
+      let length = 0;
+      for (let i = 0; i < room.length; i++) {
+        const a = room[i];
+        const b = room[(i + 1) % room.length];
+        const k = edgeKey(a, b);
+        if (!orphanEdges.has(k)) continue;
+        shared.add(k);
+        length += dist(a, b);
+      }
+      if (shared.size > 0 && (!best || length > best.length)) best = { shared, length };
+    }
+
+    // Touching no named room at all. Nothing to give it to; it stays, and gets
+    // a name of its own further down.
+    if (!best) return { faces: loops, folded };
+
+    working = working.filter((wall) => !best!.shared.has(edgeKey(wall.a, wall.b)));
+    folded++;
+  }
+
+  return { faces: faces(working), folded };
 }
 
 export function strokesToRooms(
@@ -525,68 +1027,92 @@ export function strokesToRooms(
   if (read.why) return { ok: false, why: read.why, at: read.gaps };
 
   const adjustments = [...read.adjustments];
-  const rooms = read.faces;
   const dangling = read.gaps;
+
+  /**
+   * Nothing closed, and nothing was written. There is no drawing to read.
+   *
+   * The only refusal left in the naming half, and it survives because it is the
+   * one case where proceeding would invent a house out of nothing at all.
+   */
+  if (read.faces.length === 0 && labels.length === 0) {
+    return { ok: false, why: "Nothing here closes into a room.", at: dangling };
+  }
+
+  // --- fold away the spaces nobody named ---
+  const folding = foldUnnamed(read.segments, labels);
+  const rooms = folding.faces.length > 0 ? folding.faces : read.faces;
+  if (folding.folded > 0) {
+    adjustments.push(
+      `Folded ${folding.folded} unnamed space${folding.folded === 1 ? "" : "s"} into the room next door.`,
+    );
+  }
 
   // --- names ---
   /**
-   * A name with no room round it is the one gap worth refusing on.
+   * A name with no room round it, kept rather than refused.
    *
-   * Checked before anything else about the names, because it is the failure a
-   * person can actually act on: they wrote "Kitchen" in a space they thought
-   * they had enclosed, and one of its walls does not reach. Pointing at the word
-   * they wrote is a better answer than pointing at the loose end, which they
-   * may not be able to see.
+   * This used to stop everything and say "Kitchen is not closed - one of its
+   * walls does not reach the others". Sometimes that is exactly what happened.
+   * Just as often the wall does reach and the word sits a pixel outside it, or
+   * the space it named was folded into a neighbour a moment ago. Refusing on a
+   * point-in-polygon test with no tolerance made the pad's answer depend on
+   * where a label happened to land.
+   *
+   * So it is a repair: the label goes to the nearest room whose centre is
+   * within reach, and is otherwise dropped and reported. Neither outcome stops
+   * the house being built.
    */
-  const homeless = labels.filter(
-    (l) => !rooms.some((polygon) => pointInPolygon([l.x, l.y], polygon)),
-  );
-  if (rooms.length === 0 && labels.length === 0) {
-    return { ok: false, why: "Nothing here closes into a room.", at: dangling };
-  }
-  if (homeless.length > 0) {
-    const names = homeless.map((l) => l.text.trim()).filter(Boolean);
-    return {
-      ok: false,
-      why:
-        names.length === 1
-          ? `${names[0]} is not closed - one of its walls does not reach the others.`
-          : `${names.join(" and ")} are not closed - some of their walls do not reach.`,
-      // Point at the loose ends when there are any, and at the names otherwise.
-      at: dangling.length > 0 ? dangling : homeless.map((l) => [l.x, l.y] as Vec2),
-    };
-  }
-
-  const named: Array<{ polygon: Vec2[]; label: string }> = [];
-  const unnamed: Vec2[] = [];
-  for (const polygon of rooms) {
-    const inside = labels.filter((l) => pointInPolygon([l.x, l.y], polygon));
-    if (inside.length === 0) {
-      unnamed.push(polygon[0]);
+  const placed = new Map<Vec2[], Label[]>();
+  const lost: string[] = [];
+  for (const label of labels) {
+    const home =
+      rooms.find((polygon) => pointInPolygon([label.x, label.y], polygon)) ??
+      nearestRoom([label.x, label.y], rooms, read.segments);
+    if (!home) {
+      const text = label.text.trim();
+      if (text) lost.push(text);
       continue;
     }
-    if (inside.length > 1) {
-      return {
-        ok: false,
-        why: `${inside[0].text} and ${inside[1].text} are in the same space. Is there a wall missing between them?`,
-        at: [[inside[0].x, inside[0].y]],
-      };
-    }
-    named.push({ polygon, label: inside[0].text.trim() });
+    const list = placed.get(home);
+    if (list) list.push(label);
+    else placed.set(home, [label]);
   }
-  if (unnamed.length > 0) {
-    return {
-      ok: false,
-      why:
-        unnamed.length === 1
-          ? "One room has no name. Every room needs one - it is how the rest of the house knows what it is."
-          : // Several unnamed spaces at once usually means the walls were drawn
-            // as pairs of lines, so each cavity between them came out as a room
-            // of its own. Worth saying, because the fix is to draw differently
-            // rather than to write more labels.
-            `${unnamed.length} spaces have no name. If you drew each wall as two lines, draw one line per wall instead.`,
-      at: unnamed,
-    };
+  if (lost.length > 0) {
+    adjustments.push(
+      `Could not find a room for ${lost.join(" or ")} - ${lost.length === 1 ? "its walls do" : "their walls do"} not close.`,
+    );
+  }
+
+  /**
+   * Two names in one space, and the first one wins.
+   *
+   * Still worth saying: it usually does mean a wall is missing between them,
+   * and that is a thing the drawing can be corrected for. It is not worth
+   * stopping for, because the house built from the first name is a house.
+   */
+  const named: Array<{ polygon: Vec2[]; label: string }> = [];
+  let spare = 0;
+  for (const polygon of rooms) {
+    const inside = placed.get(polygon) ?? [];
+    if (inside.length > 1) {
+      adjustments.push(
+        `${inside[0].text} and ${inside[1].text} are in the same space - built as ${inside[0].text}. Is there a wall missing between them?`,
+      );
+    }
+    // Anything still nameless here touched no named room at all, so there was
+    // nothing to fold it into. It is a room; it just has not been told what
+    // kind. Naming it is better than losing it.
+    const label = inside[0]?.text.trim() || `Room ${++spare}`;
+    named.push({ polygon, label });
+  }
+  if (spare > 0) {
+    adjustments.push(
+      `${spare} space${spare === 1 ? "" : "s"} had no name and ${spare === 1 ? "was" : "were"} not beside a room that did, so ${spare === 1 ? "it is" : "they are"} built unnamed.`,
+    );
+  }
+  if (named.length === 0) {
+    return { ok: false, why: "Nothing here closes into a room.", at: dangling };
   }
 
   // --- into metres ---
@@ -594,43 +1120,55 @@ export function strokesToRooms(
   // A drawing has no scale of its own, so one is supplied or assumed. The
   // assumption is deliberately stated in the adjustments rather than hidden: a
   // house of the wrong size is a thing somebody should be told about.
-  let scale = options.metresPerPixel;
-  if (!scale) {
-    const drawn = named.reduce((sum, r) => sum + area(r.polygon), 0);
+  const scale = scaleFor(
+    named.map((r) => r.polygon),
+    options,
+  );
+  if (!options.metresPerPixel) {
     if (options.targetGroundSqft && options.targetGroundSqft > 0) {
       // A floor area somebody typed into the house sheet. Weaker than a real
       // pixel scale and stronger than the guess below, which is the whole point
       // of having it: the sheet already asks for this number.
-      scale = Math.sqrt(sqftToM2(options.targetGroundSqft) / Math.max(drawn, 1));
       adjustments.push(
         `Scaled to the ${Math.round(options.targetGroundSqft)} sq ft you gave for this floor.`,
       );
     } else {
       // A typical room is about 16 square metres, so the whole drawing is about
       // that many times the number of rooms.
-      scale = Math.sqrt((16 * named.length) / Math.max(drawn, 1));
       adjustments.push("No size was given, so this is scaled to rooms of a usual size.");
     }
   }
 
-  const out: Room[] = named.map((r, i) => ({
+  const built: Room[] = named.map((r, i) => ({
     id: `s${i + 1}`,
     label: r.label,
     polygon: (signedArea(r.polygon) >= 0 ? r.polygon : [...r.polygon].reverse()).map(
-      ([x, y]) => [x * scale!, y * scale!] as Vec2,
+      ([x, y]) => [x * scale, y * scale] as Vec2,
     ),
     ceilingHeight: 2.7,
     level: 0,
   }));
 
-  // A room whose outline cannot be triangulated cannot be built, and finding
-  // that out here is much cheaper than finding it out in the renderer.
-  const broken = out.find((room) => triangulate(room.polygon).length === 0);
-  if (broken) {
+  /**
+   * A room whose outline cannot be triangulated cannot be built.
+   *
+   * Worth finding here rather than in the renderer, but not worth losing the
+   * house over: one unbuildable shape used to refuse the whole drawing, so a
+   * single bad corner cost every other room somebody had drawn. Dropped and
+   * reported instead.
+   */
+  const out = built.filter((room) => triangulate(room.polygon).length > 0);
+  const broken = built.filter((room) => !out.includes(room));
+  if (broken.length > 0) {
+    adjustments.push(
+      `Left out ${broken.map((r) => r.label).join(" and ")} - ${broken.length === 1 ? "it came" : "they came"} out as a shape that cannot be built.`,
+    );
+  }
+  if (out.length === 0) {
     return {
       ok: false,
-      why: `${broken.label} came out as a shape that cannot be built. Try drawing it again more simply.`,
-      at: [broken.polygon[0]],
+      why: "Nothing here came out as a shape that can be built. Try drawing it again more simply.",
+      at: built.map((room) => centroid(room.polygon)),
     };
   }
 

@@ -4,7 +4,9 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { type HouseSheet, sheetToSpec } from "@/lib/plan/house-sheet";
 import { isStairs, roomKind } from "@/lib/plan/room-kind";
+import { levelName } from "@/lib/plan/geometry";
 import type { Label, Stroke } from "@/lib/plan/strokes";
+import { latLonToPlan } from "@/lib/site/frame";
 import type { ListingFootprint } from "@/lib/listing/types";
 import type { Room, Vec2 } from "@/lib/schema";
 
@@ -114,7 +116,31 @@ export function useDrawing({
     // A pen stroke is a handful of pixels wide, so the paper has to be big
     // enough that a wall is a line rather than a smudge.
     if (!(span > 1)) return null;
-    return { outline: outline as Vec2[], metresPerPixel: span / 700 };
+
+    /**
+     * The streets, in the same metres the outline is in.
+     *
+     * `latLonToPlan` is the whole of it - projection, rotation, offset and
+     * scale, the four things `prepareFootprint` did to the building, applied to
+     * anything else on the map so it lands in register. It is round-tripped
+     * against its own inverse in `frame-test`, which is the only way to be sure
+     * of arithmetic where being wrong looks plausible.
+     *
+     * Because the outline was squared up on its dominant wall, the streets
+     * arrive at their true angle *to the building* rather than to north - and
+     * that angle is exactly the thing somebody is trying to read off the pad.
+     */
+    const frame = footprint?.frame ?? null;
+    const streets = frame
+      ? (footprint?.streets ?? []).map((street) => ({
+          name: street.name,
+          ways: street.ways.map((way) =>
+            way.map(([lat, lon]) => latLonToPlan(frame, lat, lon)),
+          ),
+        }))
+      : [];
+
+    return { outline: outline as Vec2[], metresPerPixel: span / 700, streets };
   }, [footprint]);
 
   /** The storey still to be drawn after this one, or null when this is the last. */
@@ -191,8 +217,13 @@ export function useDrawing({
        * there, and the only symptom is walking the tour and finding no way up.
        */
       if (levels.length > 1 && !read.some((room) => isStairs(room.label))) {
+        // The one refusal left, and it earns it: a storey with no way up is
+        // not untidy, it is unwalkable, and nothing about the plan shows it -
+        // the rooms are all there and the failure only appears when somebody
+        // walks the tour. Pointing at the chip matters because the chip has
+        // been sitting in the list the whole time.
         setProblem(
-          `This house has ${levels.length} floors, so every floor needs a staircase — otherwise there is no way between them. Name one of these spaces Stairs.`,
+          `This floor needs a staircase — the house has ${levels.length} floors and otherwise there is no way between them. Name a space using the Stairs chip below.`,
         );
         return null;
       }
@@ -203,7 +234,20 @@ export function useDrawing({
       const onLevel = read.map((room) => ({ ...room, level }));
       const all = { ...byLevel, [level]: onLevel };
       setByLevel(all);
-      notesRef.current = adjustments;
+      /**
+       * Every storey's repairs, not the last one's.
+       *
+       * This assigned rather than appended, so a two-storey house reported what
+       * the upstairs had to be tidied for and silently dropped the ground
+       * floor's - which is the floor with most of the rooms on it. Named per
+       * storey, because "closed six corners" twice over reads like a glitch.
+       */
+      notesRef.current = [
+        ...notesRef.current.filter((note) => !note.startsWith(`${levelName(level)}: `)),
+        ...adjustments.map((note) =>
+          levels.length > 1 ? `${levelName(level)}: ${note}` : note,
+        ),
+      ];
 
       const missing = levels.find((other) => !all[other]);
       if (missing !== undefined) {
@@ -226,6 +270,7 @@ export function useDrawing({
 
   /** Adopt a plan that arrived already drawn - a photo of paper, or a listing. */
   const acceptImported = useCallback((read: Room[], adjustments: string[]) => {
+    // One drawing, arriving whole, so it replaces rather than appends.
     notesRef.current = adjustments;
     setRooms(read);
   }, []);

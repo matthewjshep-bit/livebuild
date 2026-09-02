@@ -1329,13 +1329,16 @@ function NewTourInner() {
                   : "Draw the layout"}
               </h1>
               <p className="mt-1 text-sm text-mist-400">
-                One line per wall, roughly is fine &mdash; wobbly lines are straightened and
-                corners that miss each other are closed. A space lights up as soon as its
-                walls close; switch to <span className="text-mist-200">Name a room</span> and
-                click it to say what it is.{" "}
+                Roughly is fine &mdash; wobbly lines are straightened, corners that miss are
+                closed, and a wall you go over twice is taken as one wall. A space lights up
+                as soon as its walls close; switch to{" "}
+                <span className="text-mist-200">Name a room</span> and click it to say what
+                it is. A space you do not name joins the room beside it.{" "}
                 {drawing.guide
                   ? "The dashed shape is this building as the map measured it — draw inside it and the sizes come out right on their own."
                   : "Sizes come from the building later, so draw the arrangement and never mind the proportions."}
+                {(drawing.guide?.streets?.length ?? 0) > 0 &&
+                  " The streets are where they really are, so you can see which way the house faces — use the Turn buttons if your drawing came out facing the wrong way."}
                 {drawing.levels.length > 1 && " One floor at a time — the tabs above are the storeys the house sheet says it has."}
               </p>
             </div>

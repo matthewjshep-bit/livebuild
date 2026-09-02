@@ -1,6 +1,8 @@
 import type { Exterior } from "@/lib/schema";
 
 /** What a listing lookup returns. Shared by the server route and the wizard. */
+import type { Street } from "@/lib/listing/streets";
+
 export type ListingFacts = {
   beds: number | null;
   baths: number | null;
@@ -45,6 +47,23 @@ export type ListingFootprint = {
   storeys: number;
   wayId: number;
   attribution: string;
+  /**
+   * Everything needed to put a point on the map onto the plan.
+   *
+   * `prepareFootprint` has always computed this and the listing route has
+   * always dropped it, which left the drawing pad with an outline and no idea
+   * where on Earth it was - so it could show you the shape of your building and
+   * not which way it faced. With the frame, `latLonToPlan` puts anything at all
+   * into the same squared-up metres the outline is already in.
+   */
+  frame?: {
+    centre: { lat: number; lon: number };
+    rotationDeg: number;
+    offset: [number, number];
+    scale: number;
+  };
+  /** The roads round it, for orienting a drawing. Empty when the map has none. */
+  streets?: Street[];
 };
 
 /**

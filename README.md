@@ -237,15 +237,74 @@ Dragging rectangles into the right arrangement is the worst part of the builder,
 and polish does not fix it: the layout already exists in your head and a mouse
 is a slow way to get it out.
 
-So draw it instead, and draw it *first*. Drag to draw walls, one line per wall.
-Or press **I already have it on paper** if you would rather sketch on a notepad,
-or already have a floor plan from a listing — both go through the same reading
-pipeline.
+So draw it instead, and draw it *first*. Drag to draw walls. Or press **I
+already have it on paper** if you would rather sketch on a notepad, or already
+have a floor plan from a listing — both go through the same reading pipeline.
 
 A box per room with the name in it is all it needs. A house with more than one
 storey is drawn a floor at a time, from tabs above the pad, and each floor needs
 a staircase — a storey with no way up it is refused, because that mistake is
 invisible on the plan and only shows up when somebody walks the tour.
+
+### It takes the drawing as it comes
+
+The reader used to refuse rather than guess wherever a wrong answer would look
+like a right one. That sounded principled and produced a pad that would not
+build a house somebody had plainly drawn.
+
+Going back over a wall, or drawing a wall as its two faces the way a plan is
+printed, leaves a thin cavity between two lines — and every cavity came out as a
+room with no name. Six of them came out as a paragraph telling you to draw
+differently, with no way forward. **Redrawing is not a mistake. It is how
+drawing works.**
+
+So the repairs are real repairs, and all of them are reported:
+
+- **A wall gone over twice is one wall.** Near-parallel, near-touching and
+  overlapping means one wall, and the survivor runs the length of both.
+- **A space too narrow to stand in is wall thickness**, not a room. Being thin
+  is what distinguishes a cavity, not being small — a drawing whose walls were
+  all doubled is *made* of cavities, so they are the total that a
+  relative-to-the-whole test measures against.
+- **A space with no name goes to the room next door** — whichever named room it
+  shares the most wall with, which is almost always the room it was part of
+  before somebody drew over the line. Done by deleting the wall between them and
+  walking the faces again, so the result is a real room by construction.
+- **A wall that stops short is joined up**, but only as a last resort and only
+  if it helps: ends are joined nearest pair first and the result kept only when
+  it produced more rooms than there were before, so a drawing that was already
+  fine cannot be touched.
+
+What is left refuses only when there is genuinely nothing there.
+
+And **the tolerances no longer depend on the zoom.** Every one of them was a
+number of paper pixels, and paper pixels are screen pixels over a zoom the pad
+clamps between 0.3 and 4 — so zooming out to see the whole plan made
+corner-closing thirteen times stricter, and the same drawing built or refused
+depending on how far somebody had scrolled the wheel before they started. They
+are fractions of the drawing's own diagonal now, which is scale-free in both
+senses: the zoom stops mattering, and so does whether the house was drawn small
+in a corner or large across the paper.
+
+### And the streets are on the paper
+
+The pad showed the shape of your building and nothing about where it sat, so
+"which of these walls faces the road" was not a question it could answer — and
+getting it wrong stayed invisible until the plan was on the satellite photograph
+two steps later.
+
+The roads within a block are drawn round the outline with their names, each
+labelled where it passes the house rather than at its own midpoint, which is off
+the paper. Because the outline was squared up on its dominant wall, they arrive
+at their true angle *to the building* — and that angle is the thing worth
+reading. **Turn** rotates your drawing, strokes and names together, for a house
+that came out sideways; the outline and the streets do not move, because they
+are the survey.
+
+Vector, not the `hybrid` map tile that carries the same names burnt into its
+pixels — `imagery.ts` fetches `satellite` precisely so a label cannot end up
+lying across a roof, and undoing that to save a request would put the road names
+back on top of the thing being drawn.
 
 ### The rooms appear as you close them
 
@@ -553,7 +612,8 @@ src/
   lib/
     schema.ts           # the property document - the contract between phases
     units.ts            # metres are canonical; also the grid every wall lands on
-    plan/strokes.ts     # pen strokes to rooms - straighten, weld, walk the faces
+    plan/strokes.ts     # pen strokes to rooms - weld, walk the faces, fold the rest
+    listing/streets.ts  # the roads round a building, for orienting a drawing
     plan/drawn.ts       # check a drawing, and fit its arrangement to a building
     plan/autolayout.ts  # build a plan from room names; derive doorways
     plan/geometry.ts    # extrusion, wall/doorway subtraction, plan<->world
@@ -600,7 +660,7 @@ npx tsx tools/bom-test.ts        # rollups add up; condition drives scope
 npx tsx tools/room-kind-test.ts  # every room name resolves to the right kind
 npx tsx tools/walls-test.ts      # shared walls built once, doorways cut, headers above
 npx tsx tools/furniture-test.ts  # furniture fits its room and never blocks a door
-npx tsx tools/strokes-test.ts    # pen strokes become the rooms they enclose, or a refusal
+npx tsx tools/strokes-test.ts    # pen strokes become rooms; doubled walls, gaps and unnamed spaces are repaired
 npx tsx tools/drawn-test.ts      # a drawing is checked, and fitted to a real building
 npx tsx tools/sketch-test.ts     # a photographed plan becomes a connected, correctly-scaled one
 npx tsx tools/describe-test.ts   # descriptions parse, lay out connected, and scale to sqft
@@ -614,7 +674,7 @@ node tools/floors-walk-test.mjs  # you can actually get upstairs, two ways
 node tools/builder-test.mjs      # add a room, rotate it, type its size, add a storey
 node tools/author-test.mjs       # the advanced editor still works
 node tools/model-test.mjs        # the model renders on both sample plans
-node tools/freehand-test.mjs     # draw a house with a pointer; spaces light up as they close
+node tools/freehand-test.mjs     # draw a house with a pointer; spaces light up, walls weld, the plan turns
 node tools/layout-stage-test.mjs # the drawing arrives fitted, and a hole still refuses to build
 node tools/oneclick-test.mjs     # photos in, walkable tour out
 node tools/persistence-test.mjs  # work survives a reload with its photos attached

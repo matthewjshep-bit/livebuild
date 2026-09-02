@@ -125,7 +125,29 @@ async function drawOneStorey(page, rooms) {
   const names = [...stairs, ...rest].slice(0, Math.min(rooms, wanted.length));
   if (names.length < 2) return false;
 
-  const box = await board.boundingBox();
+  const canvas = await board.boundingBox();
+
+  /**
+   * Draw inside the building, not inside the canvas.
+   *
+   * A person draws within the dashed outline because they can see it. This
+   * drew at fractions of the whole canvas, so how big a house it drew depended
+   * on how the pad happened to be framed - and when the framing changed to make
+   * room for the street names, every suite quietly started drawing a house
+   * twice the size of the building and failing on "outside the building".
+   *
+   * The board publishes where the guide is; with no address there is no guide
+   * and the canvas is all there is, which is also what the pad does.
+   */
+  const guide = await board.getAttribute("data-guide");
+  const box = guide
+    ? (([x, y, w, h]) => ({
+        x: canvas.x + x,
+        y: canvas.y + y,
+        width: w,
+        height: h,
+      }))(guide.split(",").map(Number))
+    : canvas;
   const at = (fx, fy) => [box.x + box.width * fx, box.y + box.height * fy];
 
   /** A line drawn the way a hand draws one: in steps, with a wobble. */

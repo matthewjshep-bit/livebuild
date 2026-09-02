@@ -104,6 +104,8 @@ async function outlineFor(
         storeys: stories,
         wayId: found.wayId,
         attribution: OSM_ATTRIBUTION,
+        frame: prepared.frame,
+        streets: found.streets,
       },
       point: located,
       exterior: exterior

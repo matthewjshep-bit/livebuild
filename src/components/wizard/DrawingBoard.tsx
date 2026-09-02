@@ -44,6 +44,16 @@ const INK = "#c9d1da";
 const GRID = "rgba(120,132,150,0.10)";
 
 /**
+ * The roads, and quieter than everything else on the pad.
+ *
+ * They are there to be glanced at and never to be drawn on, so they sit below
+ * the building outline in weight as the outline sits below the ink. A street
+ * that competes with the wall somebody is drawing has made the pad worse.
+ */
+const ROAD = "rgba(150,162,178,0.30)";
+const ROAD_NAME = "rgba(168,180,196,0.62)";
+
+/**
  * A space with no name yet, a space with one, and the one under the cursor.
  *
  * Strong enough to be read at a glance rather than merely present. The whole
@@ -98,7 +108,12 @@ export function DrawingBoard({
    * so the rooms leave here already in real metres instead of in the "sixteen
    * square metres a room" guess a drawing otherwise has to make.
    */
-  guide?: { outline: Vec2[]; metresPerPixel: number } | null;
+  guide?: {
+    outline: Vec2[];
+    metresPerPixel: number;
+    /** The roads round the building, in the same metres as the outline. */
+    streets?: Array<{ name: string; ways: Vec2[][] }>;
+  } | null;
   /** This floor's area, when somebody typed one. The drawing has no scale. */
   targetGroundSqft?: number;
   /** Take a room off the sheet, for one that turned out not to be drawn. */
@@ -148,6 +163,53 @@ export function DrawingBoard({
     () => new Set(labels.map((l) => l.text.trim().toLowerCase())),
     [labels],
   );
+
+  /**
+   * The roads in paper pixels, beside the outline and in the same units.
+   *
+   * Kept as one polyline per way, because a road is split at every junction and
+   * joining the pieces would draw a line straight across whatever lies between
+   * them. Labelled once per street, on its longest piece, for the same reason
+   * the fetch groups by name: a road that arrives as five ways is one road.
+   */
+  const roadsPaper = useMemo(() => {
+    if (!guide?.streets?.length) return [];
+    const mpp = guide.metresPerPixel;
+
+    // The middle of the building, which is what "near" is measured from.
+    const outline = guide.outline.map(([x, y]) => [x / mpp, y / mpp] as Vec2);
+    const hx = outline.reduce((sum, q) => sum + q[0], 0) / Math.max(outline.length, 1);
+    const hy = outline.reduce((sum, q) => sum + q[1], 0) / Math.max(outline.length, 1);
+
+    return guide.streets.map((street) => {
+      const ways = street.ways.map((way) => way.map(([x, y]) => [x / mpp, y / mpp] as Vec2));
+
+      /**
+       * The name goes where the road passes the house.
+       *
+       * Not at the middle of the road, which was the obvious choice and put
+       * every name off the edge of the paper: a street runs for a block and the
+       * pad shows a house. The point nearest the building is the one somebody
+       * is looking at when they ask which way they are facing, and it is on
+       * screen by construction.
+       */
+      let at: { point: Vec2; along: Vec2; away: number } | null = null;
+      for (const way of ways) {
+        for (let i = 1; i < way.length; i++) {
+          const a = way[i - 1];
+          const b = way[i];
+          const dx = b[0] - a[0];
+          const dy = b[1] - a[1];
+          const len2 = dx * dx + dy * dy;
+          const t = len2 < 1e-9 ? 0 : Math.max(0, Math.min(1, ((hx - a[0]) * dx + (hy - a[1]) * dy) / len2));
+          const point: Vec2 = [a[0] + dx * t, a[1] + dy * t];
+          const away = Math.hypot(point[0] - hx, point[1] - hy);
+          if (!at || away < at.away) at = { point, along: [dx, dy], away };
+        }
+      }
+      return { name: street.name, ways, at };
+    });
+  }, [guide]);
 
   /** The outline in the pad's own pixels, which is what everything is drawn in. */
   const guidePaper = useMemo(
@@ -207,6 +269,47 @@ export function DrawingBoard({
     }
     ctx.stroke();
 
+    /**
+     * The streets, under the building and under everything else.
+     *
+     * The pad showed the shape of the building and nothing about where it sat,
+     * so "which of these walls faces the road" was not a question it could
+     * answer - and getting it wrong stayed invisible until the plan was on the
+     * satellite photograph two steps later. The outline was squared up on its
+     * dominant wall, so these arrive at their true angle *to the building*,
+     * which is the thing worth reading.
+     */
+    for (const road of roadsPaper) {
+      ctx.strokeStyle = ROAD;
+      ctx.lineWidth = 7 / view.scale;
+      ctx.lineCap = "round";
+      ctx.lineJoin = "round";
+      for (const way of road.ways) {
+        if (way.length < 2) continue;
+        ctx.beginPath();
+        way.forEach(([x, y], i) => (i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y)));
+        ctx.stroke();
+      }
+
+      // The name, turned to lie along the road and always the right way up -
+      // a street name read upside down is worse than no street name.
+      if (!road.at) continue;
+      let angle = Math.atan2(road.at.along[1], road.at.along[0]);
+      if (angle > Math.PI / 2 || angle < -Math.PI / 2) angle += Math.PI;
+
+      ctx.save();
+      ctx.translate(road.at.point[0], road.at.point[1]);
+      ctx.rotate(angle);
+      ctx.fillStyle = ROAD_NAME;
+      ctx.font = `600 ${13 / view.scale}px ui-sans-serif, system-ui, sans-serif`;
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillText(road.name, 0, -10 / view.scale);
+      ctx.restore();
+    }
+    ctx.lineCap = "butt";
+    ctx.lineJoin = "miter";
+
     // The building, under everything. A shape to trace, never a thing to hit -
     // it is the constraint rather than part of the drawing.
     if (guidePaper && guidePaper.length > 2) {
@@ -262,7 +365,7 @@ export function DrawingBoard({
         ctx.stroke();
       }
     }
-  }, [strokes, labels, faces, guidePaper, hover, nameOf, view, problem]);
+  }, [strokes, labels, faces, guidePaper, roadsPaper, hover, nameOf, view, problem]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -307,14 +410,28 @@ export function DrawingBoard({
     const h = Math.max(...ys) - Math.min(...ys);
     if (w <= 0 || h <= 0) return;
 
-    const scale = Math.max(0.3, Math.min(4, Math.min(width / w, height / h) * 0.8));
+    /**
+     * Room round the building for the streets, and not a metre more.
+     *
+     * The pad opened framed exactly on the outline, which put every road
+     * comfortably off the edge of the paper - so the streets were fetched,
+     * projected, drawn, and never seen. Framing on the roads instead would fix
+     * that and ruin the thing the pad is for: the building would be a stamp in
+     * the middle of a street map, and walls are drawn on the building.
+     *
+     * So the building still decides the scale and simply keeps less of the
+     * paper. At this margin a house sits large enough to draw on with the road
+     * it faces in view, which is all the orientation anybody needs.
+     */
+    const margin = roadsPaper.length > 0 ? 0.55 : 0.8;
+    const scale = Math.max(0.3, Math.min(4, Math.min(width / w, height / h) * margin));
     framed.current = true;
     setView({
       scale,
       x: width / 2 - ((Math.min(...xs) + w / 2) * scale),
       y: height / 2 - ((Math.min(...ys) + h / 2) * scale),
     });
-  }, [guidePaper, strokes]);
+  }, [guidePaper, roadsPaper, strokes]);
 
   useEffect(() => {
     const down = (e: KeyboardEvent) => {
@@ -354,6 +471,53 @@ export function DrawingBoard({
     onLabels(previous.labels);
     setNaming(null);
     setProblem(null);
+  };
+
+  /**
+   * Turn the whole drawing, strokes and names together.
+   *
+   * The building outline and the streets stay put: those are survey data, and
+   * the thing that might be ninety degrees out is the drawing. Somebody who
+   * starts at the top of the paper and works down has drawn a perfectly good
+   * plan of a house facing the wrong way, and until now the only way to find
+   * out was to reach the satellite step and see it sitting sideways on the map.
+   *
+   * About the drawing's own middle, so it turns where it is rather than
+   * swinging away across the paper. One entry on the undo timeline - it is a
+   * single thing somebody did, and taking it back a wall at a time would be
+   * absurd.
+   */
+  const turn = (degrees: number) => {
+    if (strokes.length === 0 && labels.length === 0) return;
+    const points = [
+      ...strokes.flatMap((stroke) => stroke.points),
+      ...labels.map((l) => [l.x, l.y] as [number, number]),
+    ];
+    const cx = points.reduce((sum, p) => sum + p[0], 0) / points.length;
+    const cy = points.reduce((sum, p) => sum + p[1], 0) / points.length;
+
+    // The same sign convention as `rotate` in `footprint.ts`, which the plan
+    // frame also follows - a disagreement here would turn the drawing the
+    // opposite way to the building it is being lined up with.
+    const r = (-degrees * Math.PI) / 180;
+    const cos = Math.cos(r);
+    const sin = Math.sin(r);
+    const about = ([x, y]: [number, number]): [number, number] => {
+      const dx = x - cx;
+      const dy = y - cy;
+      return [cx + dx * cos - dy * sin, cy + dx * sin + dy * cos];
+    };
+
+    remember();
+    setProblem(null);
+    setNaming(null);
+    onStrokes((all) => all.map((stroke) => ({ ...stroke, points: stroke.points.map(about) })));
+    onLabels((all) =>
+      all.map((label) => {
+        const [x, y] = about([label.x, label.y]);
+        return { ...label, x, y };
+      }),
+    );
   };
 
   /** Which space a paper point is in, or null out in the margins. */
@@ -429,6 +593,14 @@ export function DrawingBoard({
   };
 
   /** Put a name in the space the card is open on, replacing whatever was there. */
+  /**
+   * Any change to the names answers whatever the last read complained about.
+   *
+   * It was cleared when a stroke landed and when the pad was cleared, but not
+   * when a room was named - so "6 spaces have no name" sat there while somebody
+   * named all six, and the only way to find out they had finished was to press
+   * the button again.
+   */
   const nameIt = (text: string) => {
     const trimmed = text.trim();
     if (!naming || !trimmed) {
@@ -437,6 +609,7 @@ export function DrawingBoard({
     }
     const polygon = naming.polygon;
     remember();
+    setProblem(null);
     onLabels((all) => [
       ...all.filter((l) => !pointInPolygon([l.x, l.y], polygon)),
       { x: naming.at[0], y: naming.at[1], text: trimmed },
@@ -448,6 +621,7 @@ export function DrawingBoard({
     if (!naming) return;
     const polygon = naming.polygon;
     remember();
+    setProblem(null);
     onLabels((all) => all.filter((l) => !pointInPolygon([l.x, l.y], polygon)));
     setNaming(null);
   };
@@ -495,6 +669,20 @@ export function DrawingBoard({
   }, [naming, toScreen]);
   const missing = wanted.filter((label) => !taken.has(label.trim().toLowerCase()));
 
+  /** The guide's screen rectangle, recomputed as the view moves. */
+  const guideBox = useMemo(() => {
+    if (!guidePaper || guidePaper.length < 3) return null;
+    const corners = guidePaper.map(toScreen);
+    const xs = corners.map((c) => c[0]);
+    const ys = corners.map((c) => c[1]);
+    return {
+      x: Math.min(...xs),
+      y: Math.min(...ys),
+      w: Math.max(...xs) - Math.min(...xs),
+      h: Math.max(...ys) - Math.min(...ys),
+    };
+  }, [guidePaper, toScreen]);
+
   return (
     <div className="flex h-full min-h-0 flex-col">
       <div className="mb-2 flex flex-wrap items-center gap-2">
@@ -522,6 +710,27 @@ export function DrawingBoard({
           Erase
         </button>
         <span className="mx-1 h-6 w-px bg-ink-600" />
+        {/* Ninety degrees covers a house drawn sideways, which is the whole of
+            the real case. The building outline does not move: it is the survey,
+            and the drawing is the thing being lined up with it. */}
+        <button
+          type="button"
+          onClick={() => turn(-90)}
+          title="Turn the drawing a quarter turn anticlockwise"
+          data-testid="rotate-left"
+          className={button(false)}
+        >
+          ↺ Turn
+        </button>
+        <button
+          type="button"
+          onClick={() => turn(90)}
+          title="Turn the drawing a quarter turn clockwise"
+          data-testid="rotate-right"
+          className={button(false)}
+        >
+          ↻ Turn
+        </button>
         <button type="button" onClick={undo} className={button(false)}>
           Undo
         </button>
@@ -550,6 +759,19 @@ export function DrawingBoard({
         <canvas
           ref={canvasRef}
           data-testid="drawing-board"
+          /**
+           * Where the building sits on screen, in canvas pixels.
+           *
+           * For the suites, which otherwise draw at fixed fractions of the
+           * canvas and so draw a different house every time the framing
+           * changes - a real person draws inside the dashed shape because they
+           * can see it, and this is how a test does the same thing.
+           */
+          data-guide={
+            guideBox
+              ? `${Math.round(guideBox.x)},${Math.round(guideBox.y)},${Math.round(guideBox.w)},${Math.round(guideBox.h)}`
+              : undefined
+          }
           className="block h-full w-full touch-none"
           style={{ cursor: tool === "name" ? (hover === null ? "default" : "pointer") : "crosshair" }}
           onPointerDown={onPointerDown}
@@ -707,12 +929,18 @@ export function DrawingBoard({
             {cancelLabel}
           </button>
         )}
+        {/* What the build will do, said before it is done rather than after.
+            A space with no name is not an error any more - it goes to the room
+            next door - so saying "still to name" would be asking for work that
+            is not needed. It says what will happen to it instead. */}
         <span data-testid="drawing-status" className="text-xs text-mist-400">
           {faces.length === 0
             ? "Draw the walls — a space lights up as soon as the walls close round it."
             : `${named} of ${faces.length} named` +
               (faces.length > named
-                ? ` · ${faces.length - named} space${faces.length - named === 1 ? "" : "s"} still to name`
+                ? ` · ${faces.length - named} unnamed, ${
+                    named > 0 ? "which will join the room next door" : "so name one to start"
+                  }`
                 : missing.length > 0
                   ? ` · ${missing.length} not drawn`
                   : " · ready")}

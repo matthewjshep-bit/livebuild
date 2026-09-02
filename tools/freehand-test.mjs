@@ -147,6 +147,60 @@ if (outside) {
   check("and says where to click", /inside a room/.test(await page.getByTestId("drawing-problem").innerText()));
 }
 
+// --- turning the drawing, for a house drawn facing the wrong way ---
+//
+// The plan is the thing that might be ninety degrees out; the building outline
+// and the streets are survey data and must not move. Two quarter turns in
+// opposite directions is the check that costs nothing and catches a sign error,
+// which is the way this goes wrong and looks fine while doing it.
+{
+  const before = await page.getByTestId("drawing-status").innerText();
+  await page.getByTestId("rotate-right").click();
+  await page.waitForTimeout(350);
+  const turned = await page.getByTestId("drawing-status").innerText();
+  check("a turn keeps every space it had", turned === before, `${before} -> ${turned}`);
+
+  await page.getByTestId("rotate-left").click();
+  await page.waitForTimeout(350);
+  check(
+    "and turning back leaves it as it was",
+    (await page.getByTestId("drawing-status").innerText()) === before,
+  );
+
+  // One entry on the timeline, not one per wall: a turn is a single thing
+  // somebody did and undoing it a wall at a time would be absurd.
+  await page.getByTestId("rotate-right").click();
+  await page.waitForTimeout(350);
+  await page.getByRole("button", { name: "Undo" }).click();
+  await page.waitForTimeout(350);
+  check(
+    "and one undo takes a whole turn back",
+    (await page.getByTestId("drawing-status").innerText()) === before,
+    await page.getByTestId("drawing-status").innerText(),
+  );
+}
+
+// --- a wall gone over twice is one wall ---
+//
+// The report this was written for: going back over a line, which is how people
+// draw, left a thin cavity between the two strokes and the reader called it a
+// room. Six of those came out as "6 spaces have no name" and no way forward.
+{
+  await page.getByRole("button", { name: "Draw walls" }).click();
+  await page.waitForTimeout(150);
+  const spaces = () =>
+    page.getByTestId("drawing-status").innerText().then((t) => Number(/of (\d+)/.exec(t)?.[1] ?? 0));
+  const was = await spaces();
+  // Along the middle wall again, a few pixels over - a redraw, not a new wall.
+  await line([0.505, 0.2], [0.505, 0.8]);
+  await page.waitForTimeout(450);
+  check(
+    "going over a wall again does not make a room",
+    (await spaces()) === was,
+    `${was} spaces before, ${await spaces()} after`,
+  );
+}
+
 // --- name both halves off the chips ---
 
 await nameByChip(0.32, 0.5, "Kitchen");
@@ -182,7 +236,7 @@ console.log(JSON.stringify({
   sketchCalls: calls.filter((c) => c.includes("sketch")),
   errors: errors.slice(0, 3),
   verdict: failures === 0
-    ? `FREEHAND OK - a wobbly plan drawn with the pointer became ${after?.summary}, its spaces lit up as they closed, the names came off the house sheet, and it never left the browser`
+    ? `FREEHAND OK - a wobbly plan drawn with the pointer became ${after?.summary}, its spaces lit up as they closed, a wall gone over twice stayed one wall, the drawing turns and turns back, the names came off the house sheet, and it never left the browser`
     : `FREEHAND BROKEN - ${failures} failures`,
 }, null, 2));
 await browser.close();

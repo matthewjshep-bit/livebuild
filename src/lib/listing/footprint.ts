@@ -1,5 +1,7 @@
 import "server-only";
 
+import { type Street, streetsFrom } from "@/lib/listing/streets";
+
 /**
  * The building's real outline, from OpenStreetMap.
  *
@@ -39,6 +41,12 @@ const MIRRORS = [
 const SEARCH_RADIUS_M = 30;
 
 /**
+ * How far to look for streets. Far enough to see the corner, near enough to
+ * stay a picture of this house rather than of the neighbourhood.
+ */
+const STREET_RADIUS_M = 130;
+
+/**
  * Identify ourselves, in the format Overpass will actually accept.
  *
  * Both services ask callers to identify themselves, and Overpass enforces it in
@@ -63,6 +71,8 @@ const USER_AGENT = "livebuild.ai/1.0";
 const RETRYABLE = new Set([429, 500, 502, 503, 504]);
 
 export type FetchedFootprint = {
+  /** The named roads round it, which came back in the same request. */
+  streets: Street[];
   /** The outline as [lat, lon] pairs, unclosed. */
   ring: Array<[number, number]>;
   /**
@@ -151,8 +161,24 @@ export async function fetchFootprint(
   lat: number,
   lon: number,
 ): Promise<FetchedFootprint | null> {
+  /**
+   * The building and the streets round it, in one request.
+   *
+   * They were two, and the second one cost an address a hundred and eighty
+   * seconds: Overpass is free, oversubscribed and answers 504 often enough that
+   * this file already calls it "a normal Tuesday", and asking twice doubles
+   * every one of those odds for a lookup that is supposed to feel instant. A
+   * union of two `around` clauses at different radii is one round trip and the
+   * same work at the far end.
+   *
+   * The streets are a nicety and the building is the point, so nothing here
+   * fails for want of a road.
+   */
   const query = `[out:json][timeout:25];
-way(around:${SEARCH_RADIUS_M},${lat},${lon})["building"];
+(
+  way(around:${SEARCH_RADIUS_M},${lat},${lon})["building"];
+  way(around:${STREET_RADIUS_M},${lat},${lon})["highway"]["name"];
+);
 out geom;`;
 
   const data = (await overpass(query)) as {
@@ -171,7 +197,13 @@ out geom;`;
   ];
 
   const measured = (data.elements ?? [])
-    .filter((e) => e.type === "way" && (e.geometry?.length ?? 0) >= 4)
+    .filter(
+      (e) =>
+        e.type === "way" &&
+        // Roads come back in the same answer now, and a road is not a building.
+        e.tags?.building !== undefined &&
+        (e.geometry?.length ?? 0) >= 4,
+    )
     .map((element) => {
       const points = element.geometry!.map(toLocal);
 
@@ -247,7 +279,13 @@ out geom;`;
         360,
     }));
 
-  return { ring, tags: chosen.tags ?? {}, wayId: chosen.id, outbuildings };
+  return {
+    ring,
+    tags: chosen.tags ?? {},
+    wayId: chosen.id,
+    outbuildings,
+    streets: streetsFrom(data.elements ?? []),
+  };
 }
 
 /**

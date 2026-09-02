@@ -183,11 +183,17 @@ const twoLabels = [label(200, 250, "Kitchen"), label(400, 250, "Living Room")];
     pen([100, 400], [100, 240]),
   ];
   const r = strokesToRooms(strokes, [label(300, 250, "Kitchen")]);
-  check("a real gap is refused", !r.ok);
-  if (!r.ok) {
-    // Named after the room somebody wrote in, which is what they can act on.
-    check("and names the room that did not close", /Kitchen is not closed/.test(r.why), r.why);
-    check("and says where to look", r.at.length > 0);
+  // This used to refuse and name the room, which was a good message and a bad
+  // outcome: a wall that stops short is a thing the reader can close, and
+  // stopping meant somebody redrew a house they had already drawn.
+  check("a real gap does not stop the build", r.ok, r.ok ? "" : r.why);
+  if (r.ok) {
+    check("it still comes out as one room", r.rooms.length === 1, `${r.rooms.length}`);
+    check(
+      "and says what it had to do",
+      r.adjustments.some((a) => /closed|fold|narrow|weld/i.test(a)),
+      r.adjustments.join(" | "),
+    );
   }
 }
 
@@ -243,11 +249,33 @@ const twoLabels = [label(200, 250, "Kitchen"), label(400, 250, "Living Room")];
   }
 }
 
-// --- a room with no name is refused, because "Other" is a wrong answer ---
+// --- a room with no name goes to the room next door ---
+//
+// The refusal this replaces was the single most reported thing about the pad.
+// It was defensible - "Other" really is a wrong answer for a room - and it made
+// a drawing somebody had plainly finished unbuildable because one space out of
+// eight had no word in it. The space next door is a better answer than a stop.
 {
-  const r = strokesToRooms(twoRooms(), [label(200, 250, "Kitchen")]);
-  check("an unnamed room is refused", !r.ok);
-  if (!r.ok) check("and says why", /no name/.test(r.why), r.why);
+  // Both at a fixed scale. Without one the reader falls back to "a room is
+  // about sixteen square metres", so two rooms come out as 32 m2 and the one
+  // they fold into comes out as 16 - which says nothing about whether the fold
+  // kept the floor, only that the fallback did its job.
+  const at = { metresPerPixel: 0.02 };
+  const before = strokesToRooms(twoRooms(), twoLabels, at);
+  const r = strokesToRooms(twoRooms(), [label(200, 250, "Kitchen")], at);
+  check("an unnamed room does not stop the build", r.ok, r.ok ? "" : r.why);
+  if (r.ok && before.ok) {
+    check("it is folded into the one that has a name", r.rooms.length === 1, `${r.rooms.length}`);
+    check("which keeps its name", r.rooms[0].label === "Kitchen", r.rooms[0].label);
+    check("and says so", r.adjustments.some((a) => /folded/i.test(a)), r.adjustments.join(" | "));
+    // Nothing is lost in the fold: the two rooms together are the one room.
+    const both = before.rooms.reduce((sum, room) => sum + area(room.polygon), 0);
+    check(
+      "and the floor area is conserved",
+      Math.abs(area(r.rooms[0].polygon) - both) / both < 0.02,
+      `${area(r.rooms[0].polygon).toFixed(1)} vs ${both.toFixed(1)}`,
+    );
+  }
 }
 
 // --- two names in one space is the most useful error here ---
@@ -259,9 +287,16 @@ const twoLabels = [label(200, 250, "Kitchen"), label(400, 250, "Living Room")];
     pen([100, 400], [100, 100]),
   ];
   const r = strokesToRooms(strokes, twoLabels);
-  check("two names in one room is refused", !r.ok);
-  if (!r.ok) check("and asks the right question",
-    /same space/.test(r.why) && /wall missing/.test(r.why), r.why);
+  check("two names in one room still builds", r.ok, r.ok ? "" : r.why);
+  if (r.ok) {
+    check("as the first of them", r.rooms.length === 1 && r.rooms[0].label === "Kitchen",
+      r.rooms.map((room) => room.label).join(", "));
+    // Still worth saying. It usually does mean a wall is missing, and that is
+    // something the drawing can be corrected for - just not stopped for.
+    check("and still asks the right question",
+      r.adjustments.some((a) => /same space/.test(a) && /wall missing/.test(a)),
+      r.adjustments.join(" | "));
+  }
 }
 
 // --- walls drawn as double lines, the way somebody used to plans would ---
@@ -302,8 +337,108 @@ const twoLabels = [label(200, 250, "Kitchen"), label(400, 250, "Living Room")];
   for (const x of [100, 150, 220, 270, 340, 390]) strokes.push(pen([x, 100], [x, 260], 0.3));
   for (const y of [100, 150, 210, 260]) strokes.push(pen([100, y], [390, y], 0.3));
   const r = strokesToRooms(strokes, [label(185, 180, "Kitchen"), label(305, 180, "Living Room")]);
-  check("a drawing with more spaces than names is refused", !r.ok);
-  if (!r.ok) check("and suggests what to draw instead", /one line per wall/.test(r.why), r.why);
+  check("a drawing with more spaces than names still builds", r.ok, r.ok ? "" : r.why);
+  if (r.ok) {
+    check("as the rooms that were named", r.rooms.length === 2, `${r.rooms.length}`);
+    check(
+      "and every one of them is a room somebody could stand in",
+      r.rooms.every((room) => area(room.polygon) > 2),
+      r.rooms.map((room) => `${room.label} ${area(room.polygon).toFixed(1)}`).join(", "),
+    );
+  }
+}
+
+// --- the same drawing, drawn small and drawn large ---
+//
+// The bug this pins was invisible and decided everything. Every tolerance was a
+// number of paper pixels, and paper pixels are screen pixels over the zoom,
+// which the pad clamps between 0.3 and 4 - so the *same house*, drawn by the
+// same hand, read differently depending on how far somebody had scrolled the
+// wheel before they started. Zoomed out to see the whole plan, corner-closing
+// was thirteen times stricter than zoomed in.
+{
+  // The wobble and the sampling scale too, or this measures the test's hand
+  // rather than the reader: a fixed 1.6px shake is 1% of a small drawing and a
+  // tenth of that on a large one, which is a different drawing, not the same
+  // one bigger.
+  const at = (k: number): Stroke[] => {
+    const wall = (a: Vec2, b: Vec2) => pen(a, b, 1.6 * k, 6 * k);
+    return [
+      // A corner that misses by a hair, scaled with everything else.
+      wall([100 * k, 100 * k], [500 * k, 100 * k]),
+      wall([500 * k, 100 * k], [500 * k, 400 * k]),
+      wall([500 * k, 400 * k], [100 * k, 400 * k]),
+      wall([100 * k, 400 * k], [100 * k, 108 * k]),
+      wall([300 * k, 100 * k], [300 * k, 400 * k]),
+    ];
+  };
+  const small = strokesToRooms(at(0.35), twoLabels);
+  const large = strokesToRooms(at(3), twoLabels);
+  check("a drawing made small reads", small.ok, small.ok ? "" : small.why);
+  check("and made large reads the same way", large.ok, large.ok ? "" : large.why);
+  if (small.ok && large.ok) {
+    check(
+      "into the same rooms",
+      small.rooms.length === large.rooms.length && small.rooms.length === 2,
+      `${small.rooms.length} vs ${large.rooms.length}`,
+    );
+    // Same shape, not merely the same count: with no pixel scale given, both
+    // fall back to rooms of a usual size, so the metres should agree closely.
+    const shape = (r: typeof small) =>
+      r.ok ? r.rooms.map((room) => area(room.polygon)).sort((a, b) => a - b) : [];
+    const a = shape(small);
+    const b = shape(large);
+    check(
+      "and to the same size",
+      a.every((v, i) => Math.abs(v - b[i]) / Math.max(v, 1) < 0.05),
+      `${a.map((v) => v.toFixed(1))} vs ${b.map((v) => v.toFixed(1))}`,
+    );
+  }
+}
+
+// --- the drawing that started this ---
+//
+// Six walls drawn as pairs of lines, which is what a plan looks like in print
+// and therefore what people draw. Every cavity between a pair used to come out
+// as a room with no name, and six of them came out as a refusal telling the
+// user to draw differently. This is the exact shape of that report.
+{
+  const strokes: Stroke[] = [];
+  // Outer walls, single lines.
+  strokes.push(pen([100, 100], [700, 100]));
+  strokes.push(pen([700, 100], [700, 500]));
+  strokes.push(pen([700, 500], [100, 500]));
+  strokes.push(pen([100, 500], [100, 100]));
+  // Interior walls, each drawn twice about fifteen pixels apart.
+  for (const x of [300, 315]) strokes.push(pen([x, 100], [x, 500]));
+  for (const y of [300, 315]) strokes.push(pen([100, y], [300, y]));
+  for (const y of [220, 235]) strokes.push(pen([315, y], [700, y]));
+
+  const labels = [
+    label(200, 200, "Kitchen"),
+    label(200, 420, "Living Room"),
+    label(500, 160, "Bedroom 2"),
+    label(500, 380, "Primary Bedroom"),
+  ];
+  const r = strokesToRooms(strokes, labels);
+  check("a plan drawn with doubled walls builds", r.ok, r.ok ? "" : r.why);
+  if (r.ok) {
+    check(
+      "as the four rooms that were named",
+      r.rooms.length === 4,
+      r.rooms.map((room) => room.label).join(", "),
+    );
+    check(
+      "with no wall cavities among them",
+      r.rooms.every((room) => area(room.polygon) > 4),
+      r.rooms.map((room) => `${room.label} ${area(room.polygon).toFixed(1)}`).join(", "),
+    );
+    check(
+      "and it says the walls were doubled",
+      r.adjustments.some((a) => /drawn twice|narrow to stand in|[Ff]olded/.test(a)),
+      r.adjustments.join(" | "),
+    );
+  }
 }
 
 // --- nothing at all ---
@@ -317,5 +452,5 @@ if (failures > 0) {
   process.exit(1);
 }
 console.log(
-  "STROKES OK - a wobbly plan reads as rooms, overshoots and T-junctions close, a six-room house keeps all six, the spaces are readable before they are named, a stated floor area sets the size, an erased wall stays erased, a stray tick is ignored, an angled wing keeps its angles, double-line walls give the rooms anyway, and an unclosed room, an unnamed one, two names in one space and a drawing with more spaces than names are each refused with somewhere to look",
+  "STROKES OK - a wobbly plan reads as rooms, overshoots and T-junctions close, a six-room house keeps all six, the spaces are readable before they are named, a stated floor area sets the size, an erased wall stays erased, a stray tick is ignored, an angled wing keeps its angles, the same house reads the same drawn small or large, and a drawing is taken as it comes: doubled walls weld into one, a gap closes, a space with no name goes to the room next door, and only an empty pad refuses",
 );

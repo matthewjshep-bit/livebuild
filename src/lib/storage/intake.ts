@@ -4,6 +4,8 @@ import { DOC_STORE, del, entries, get, put } from "@/lib/storage/db";
 import { mediaRef, putMedia, resolveMediaUrl } from "@/lib/media-store";
 import type { BuildEvidence } from "@/lib/build/gather";
 import type { ListingFacts, ListingFootprint } from "@/lib/listing/types";
+import type { HouseSheet } from "@/lib/plan/house-sheet";
+import type { Label, Stroke } from "@/lib/plan/strokes";
 import type { Plan } from "@/lib/schema";
 
 /**
@@ -39,6 +41,9 @@ export type IntakePhoto = {
   guessed?: "high" | "low";
 };
 
+/** One storey as it was drawn. */
+export type IntakeDrawing = { level: number; strokes: Stroke[]; labels: Label[] };
+
 export type Intake = {
   propertyId: string;
   label: string;
@@ -67,8 +72,20 @@ export type Intake = {
    * refreshed tab would be the worst failure this feature has.
    */
   layout?: Plan | null;
+  /**
+   * The pen itself, kept for the same reason the layout is.
+   *
+   * `layout` is what the drawing became; this is what it was drawn from, and it
+   * is what "Redraw" and a refreshed tab both need. One entry per storey,
+   * because a house is drawn a floor at a time. Coordinates are rounded on the
+   * way in - a ten-room plan is a few thousand points and the pen samples far
+   * finer than a wall is ever placed.
+   */
+  drawings?: IntakeDrawing[];
+  /** The house in numbers, so the sheet is not re-answered after a reload. */
+  sheet?: HouseSheet;
   /** Where the wizard was. Absent means "photos", which every old record was. */
-  stage?: "photos" | "layout";
+  stage?: "photos" | "draw" | "layout";
   updatedAt: number;
 };
 

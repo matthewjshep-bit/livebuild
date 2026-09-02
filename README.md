@@ -192,19 +192,23 @@ photograph cannot, so the photograph stays within reach.
 
 ## Making a tour
 
-**Drop in your photos and press one button.** That is the whole required flow.
+**Drop in your photos, say what is in the house, and draw the layout.** Three
+screens, and the third is a pen.
 
 Everything else is inferred from the photos: which room each one is, how the
 rooms connect, what shape the house is, and where each shot was taken from. It
 takes about a minute, and then shows you what it built so you can correct
 anything before opening it.
 
-Two optional things make it closer to your house, and neither is required:
+Drawing is not optional for a house, and that is a deliberate reversal. It used
+to be a button hidden inside the satellite editor, so the hardest surface was
+the default and the easiest one was behind it — everybody dragged rectangles,
+and the drawing arrived too late to inform the room list or the classifier. Now
+the arrangement is the thing you are asked for, because arrangement is the one
+thing photographs struggle to pin down and the one thing you already know.
 
-- **A sentence about the house** ("two storey 3 bed 2.5 bath, primary upstairs
-  with an ensuite"). This mainly helps it tell three bedrooms apart.
-- **A drawing of the layout** — see below. This is the strongest signal of all,
-  because arrangement is the one thing photos struggle to pin down.
+A single room (**A room**, at the first screen) skips all of it: there is no
+arrangement to draw for one space.
 
 ### How the shape is worked out
 
@@ -225,12 +229,51 @@ Dragging rectangles into the right arrangement is the worst part of the builder,
 and polish does not fix it: the layout already exists in your head and a mouse
 is a slow way to get it out.
 
-So draw it instead. **Draw the layout** in the layout step opens a pad: drag to
-draw walls, switch to *Add a name* and click inside each room to label it. Or
-switch to *Photo of paper* if you would rather sketch on a notepad and
-photograph it — both go through the same reading pipeline.
+So draw it instead, and draw it *first*. Drag to draw walls, one line per wall.
+Or press **I already have it on paper** if you would rather sketch on a notepad,
+or already have a floor plan from a listing — both go through the same reading
+pipeline.
 
-A box per room with the name in it is all it needs.
+A box per room with the name in it is all it needs. A house with more than one
+storey is drawn a floor at a time, from tabs above the pad, and each floor needs
+a staircase — a storey with no way up it is refused, because that mistake is
+invisible on the plan and only shows up when somebody walks the tour.
+
+### The rooms appear as you close them
+
+The pad shows what your walls have actually made. Every enclosed space is
+tinted the moment its last wall lands, the one under the cursor lights up, and
+the naming card stands beside that space rather than on top of it — so "which
+room am I naming" is answered before you commit rather than by a refusal
+afterwards. The names on offer are the ones the house sheet says the house has,
+so naming a room is a press.
+
+This matters more than it sounds. Two rooms that came out as one because a wall
+missed by a hair are now *visible* as one shape, which is the only way anybody
+was ever going to find that out.
+
+### You draw on top of the building
+
+When the address gave a surveyed outline, that outline is on the pad before you
+start — the real shape, dashed, framed to fill the paper. Trace it and the house
+comes out this building's shape rather than a rectangle to be repacked
+afterwards, and the pad's scale is fixed, so what you draw is already in metres.
+
+### Then it is fitted to the building
+
+A drawing has no scale of its own — a room came out big because that is where
+your pen stopped. So once the photos have been read and the building's outline
+is known, the arrangement you drew is packed into that outline: which room is
+where is kept exactly, and only the dimensions are given up to the shape the map
+measured. What lands on the satellite step is your plan, already placed.
+
+Nudging is still there, and it can now hit a number: walls land on six-inch
+increments, and a selected room takes a width and depth in feet typed straight
+in. Dragging a rectangle over a photograph was never going to land on a
+measurement somebody took with a tape.
+
+With no address there is nothing to fit to, and the floor area from the house
+sheet sets the size instead.
 
 Write a size like `12x14` inside a room and everything scales from it. Several
 rooms with dimensions are better than one - the scale comes from all of them at
@@ -268,7 +311,8 @@ match cannot steal photos that had a perfect home, then whatever is left by
 resemblance. Anything still unplaced is reported rather than dropped.
 
 `public/fixtures/sketch-floorplan.jpg` is a generated notepad sketch with known
-ground truth, used by `tools/sketch-test.ts`.
+ground truth, used by `tools/sketch-test.ts` and by the photo-of-paper half of
+`tools/sketch-flow-test.mjs`.
 
 ## Importing a listing
 
@@ -458,9 +502,11 @@ navigate to.
 
 ```
 src/
-  app/new/              # the 4-step wizard - the way in
+  app/new/              # the wizard - photos, sheet, pen, confirm
   lib/
     schema.ts           # the property document - the contract between phases
+    plan/strokes.ts     # pen strokes to rooms - straighten, weld, walk the faces
+    plan/drawn.ts       # check a drawing, and fit its arrangement to a building
     plan/autolayout.ts  # build a plan from room names; derive doorways
     plan/geometry.ts    # extrusion, wall/doorway subtraction, plan<->world
     plan/walkgraph.ts   # which rooms connect, derived from doorways
@@ -469,7 +515,7 @@ src/
     render/quality.ts   # what this machine can afford to render
     media-store.ts      # photos in IndexedDB, referenced as idb:<key>
   components/
-    wizard/             # drop photos, tag rooms, arrange
+    wizard/             # drop photos, say what is in it, draw it, confirm
     editor/             # advanced: draw the plan by hand
     tour/               # dollhouse, walk, lighting, post, camera rig, minimap
 pipeline/               # Python. Optional now - see below.
@@ -487,7 +533,9 @@ npx tsx tools/bom-test.ts        # rollups add up; condition drives scope
 npx tsx tools/room-kind-test.ts  # every room name resolves to the right kind
 npx tsx tools/walls-test.ts      # shared walls built once, doorways cut, headers above
 npx tsx tools/furniture-test.ts  # furniture fits its room and never blocks a door
-npx tsx tools/sketch-test.ts     # a hand-drawn plan becomes a connected, correctly-scaled one
+npx tsx tools/strokes-test.ts    # pen strokes become the rooms they enclose, or a refusal
+npx tsx tools/drawn-test.ts      # a drawing is checked, and fitted to a real building
+npx tsx tools/sketch-test.ts     # a photographed plan becomes a connected, correctly-scaled one
 npx tsx tools/describe-test.ts   # descriptions parse, lay out connected, and scale to sqft
 npx tsx tools/layout-test.ts     # every generated plan is fully walkable
 npx tsx tools/floors-test.ts     # storeys, stairs, and pass-through rooms
@@ -496,10 +544,12 @@ npx tsx tools/imagery-test.ts    # the geo maths behind the satellite trace
 node tools/replica-test.mjs      # no photograph is ever drawn in the model
 node tools/walk-test.mjs         # a room marker puts you inside, on foot
 node tools/floors-walk-test.mjs  # you can actually get upstairs, two ways
-node tools/builder-test.mjs      # add a room, rotate it, add a storey
+node tools/builder-test.mjs      # add a room, rotate it, type its size, add a storey
 node tools/author-test.mjs       # the advanced editor still works
 node tools/model-test.mjs        # the model renders on both sample plans
-node tools/wizard-test.mjs       # photos in, walkable tour out
+node tools/freehand-test.mjs     # draw a house with a pointer; spaces light up as they close
+node tools/layout-stage-test.mjs # the drawing arrives fitted, and a hole still refuses to build
+node tools/oneclick-test.mjs     # photos in, walkable tour out
 node tools/persistence-test.mjs  # work survives a reload with its photos attached
 node tools/bom-page-test.mjs     # grade from photos, render the BOM, export CSV (calls the API)
 node tools/publish-test.mjs      # publish, then load the link with empty storage (needs Supabase)

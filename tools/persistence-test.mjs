@@ -21,7 +21,7 @@ import { chromium } from "playwright";
 import { readdirSync } from "node:fs";
 import { join } from "node:path";
 
-import { addPhotos, build, freshStart, savedProperty } from "./lib/flow.mjs";
+import { addPhotos, build, chooseMode, freshStart, savedProperty } from "./lib/flow.mjs";
 
 const base = process.env.BASE_URL ?? "http://localhost:3000";
 const dir = "public/properties/demo-house/photos";
@@ -54,11 +54,13 @@ const onHomePage = /still importing/.test(listed);
 // And reopening it by id brings the photographs back, with no prompt in the way.
 await page.goto(`${base}/new?id=${importing}`, { waitUntil: "networkidle" });
 await page.waitForTimeout(2500);
+// Reopening restores the work, not the screen, so the mode choice is answered
+// again like any other visit before the photographs are on show.
+await chooseMode(page);
+await page.waitForTimeout(1500);
 const restored = await page.evaluate(() => ({
   thumbnails: document.querySelectorAll("img").length,
-  canBuild: [...document.querySelectorAll("button")].some((b) =>
-    /Build my tour/.test(b.textContent ?? ""),
-  ),
+  canBuild: Boolean(document.querySelector('[data-testid="continue-from-photos"]')),
   gated: /You have a tour in progress/.test(document.body.innerText),
 }));
 

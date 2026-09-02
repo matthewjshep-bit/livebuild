@@ -9,7 +9,7 @@ import { chromium } from "playwright";
 import { readdirSync } from "node:fs";
 import { join } from "node:path";
 
-import { addPhotos, build, describe, drawLayout, freshStart } from "./lib/flow.mjs";
+import { addPhotos, describe, drawLayout, drawRooms, freshStart } from "./lib/flow.mjs";
 
 const base = process.env.BASE_URL ?? "http://localhost:3000";
 const dir = "public/properties/demo-house/photos";
@@ -51,10 +51,13 @@ const understood = await page.evaluate(() => {
   };
 });
 
-// Already on the sheet, so this only has to accept it and get through the
-// layout stage.
+// Already on the sheet, so this only has to accept it, draw the house and get
+// through the layout stage. Two storeys means two drawings - which is the point
+// of the assertion below about floor tabs.
 await page.getByTestId("build-from-sheet").click();
-const arrived = await drawLayout(page, { timeoutMs: 200_000 });
+await page.waitForTimeout(600);
+const drew = await drawRooms(page, { rooms: 4 });
+const arrived = drew && (await drawLayout(page, { timeoutMs: 200_000 }));
 await page.screenshot({ path: "shots/72-described-layout.png" });
 
 const layout = await page.evaluate(() => {

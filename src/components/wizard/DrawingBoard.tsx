@@ -1,8 +1,9 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { type Dispatch, type SetStateAction, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import { type Label, type Stroke, strokesToRooms } from "@/lib/plan/strokes";
+import { centroid, pointInPolygon } from "@/lib/plan/geometry";
+import { type Label, type Stroke, readStrokes, strokesToRooms } from "@/lib/plan/strokes";
 import type { Room, Vec2 } from "@/lib/schema";
 
 /**
@@ -23,6 +24,14 @@ import type { Room, Vec2 } from "@/lib/schema";
  * on the same drag that draws leaves a stroke every time somebody tries to
  * shift the paper, so: the pen is the primary pointer, panning is the middle
  * button or space held down, and zooming is the wheel.
+ *
+ * **The spaces are shown as they close.** This is the change that makes naming
+ * possible rather than merely available. `readStrokes` runs on every stroke, so
+ * a room appears the moment its last wall lands, hovering lights the one under
+ * the cursor, and the name goes to that room's centroid instead of to wherever
+ * the pointer happened to be. Before this, "click inside the room" asked
+ * somebody to aim at something they could not see, and the first they heard of
+ * a miss was a refusal after the fact.
  */
 
 type Tool = "draw" | "name" | "erase";
@@ -34,29 +43,122 @@ const PAPER = "#12151a";
 const INK = "#c9d1da";
 const GRID = "rgba(120,132,150,0.10)";
 
+/**
+ * A space with no name yet, a space with one, and the one under the cursor.
+ *
+ * Strong enough to be read at a glance rather than merely present. The whole
+ * job of the fill is to answer "which rooms has it found" before anybody
+ * commits to a name - two rooms that came out as one because a wall missed by a
+ * hair have to be *visible* as one shape, and a tint you have to look for does
+ * not do that.
+ */
+const EMPTY_FILL = "rgba(120,160,220,0.18)";
+const EMPTY_EDGE = "rgba(120,160,220,0.45)";
+const NAMED_FILL = "rgba(126,231,135,0.16)";
+const NAMED_EDGE = "rgba(126,231,135,0.45)";
+const HOVER_FILL = "rgba(120,160,220,0.34)";
+const HOVER_EDGE = "rgba(150,190,240,0.9)";
+
+/** The building's own outline, when the map measured one, to draw inside. */
+const GUIDE_FILL = "rgba(242,165,65,0.06)";
+const GUIDE_EDGE = "rgba(242,165,65,0.55)";
+
+/** How far clear of the room the naming card stands, and how wide it is. */
+const CARD_GAP_PX = 12;
+const CARD_WIDTH_PX = 256;
+
 export function DrawingBoard({
+  strokes,
+  labels,
+  onStrokes,
+  onLabels,
+  wanted = [],
+  guide,
+  targetGroundSqft,
+  onDropWanted,
   onRooms,
   onCancel,
+  cancelLabel = "Cancel",
+  cta = "Use this drawing",
+  notice,
   busy,
 }: {
+  strokes: Stroke[];
+  labels: Label[];
+  onStrokes: Dispatch<SetStateAction<Stroke[]>>;
+  onLabels: Dispatch<SetStateAction<Label[]>>;
+  /** The rooms the house sheet says exist, offered as chips rather than typing. */
+  wanted?: string[];
+  /**
+   * The building as the map measured it, and what a paper pixel is worth.
+   *
+   * Two things at once, and the second is the more useful. Drawn under the pen
+   * it is a shape to trace, so the outline comes out being the building's
+   * rather than a rectangle to be repacked later. And it fixes the pad's scale,
+   * so the rooms leave here already in real metres instead of in the "sixteen
+   * square metres a room" guess a drawing otherwise has to make.
+   */
+  guide?: { outline: Vec2[]; metresPerPixel: number } | null;
+  /** This floor's area, when somebody typed one. The drawing has no scale. */
+  targetGroundSqft?: number;
+  /** Take a room off the sheet, for one that turned out not to be drawn. */
+  onDropWanted?: (label: string) => void;
   /** The rooms read out of the drawing, in the drawing's own metres. */
   onRooms: (rooms: Room[], adjustments: string[]) => void;
   onCancel?: () => void;
+  cancelLabel?: string;
+  /** What accepting this drawing leads to - another storey, or the build. */
+  cta?: string;
+  /** A complaint from whoever received the rooms, shown where the board's own go. */
+  notice?: string | null;
   busy?: boolean;
 }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
 
   const [tool, setTool] = useState<Tool>("draw");
-  const [strokes, setStrokes] = useState<Stroke[]>([]);
-  const [labels, setLabels] = useState<Label[]>([]);
   const [view, setView] = useState({ x: 0, y: 0, scale: 1 });
-  const [naming, setNaming] = useState<{ x: number; y: number } | null>(null);
+  const [naming, setNaming] = useState<{ polygon: Vec2[]; at: Vec2 } | null>(null);
+  const [hover, setHover] = useState<number | null>(null);
   const [problem, setProblem] = useState<{ why: string; at: Vec2[] } | null>(null);
 
   const drawing = useRef<Stroke | null>(null);
   const panning = useRef<{ x: number; y: number } | null>(null);
   const spaceDown = useRef(false);
+
+  /**
+   * The spaces, recomputed whenever the walls change.
+   *
+   * The same function the reader uses, so what is on screen and what will be
+   * accepted cannot disagree. It only runs when a stroke lands - never during
+   * one - so the cost is one pass per wall drawn.
+   */
+  const read = useMemo(() => readStrokes(strokes), [strokes]);
+  const faces = read.faces;
+
+  /** The name written inside a space, if any. */
+  const nameOf = useCallback(
+    (polygon: Vec2[]): Label | null =>
+      labels.find((l) => pointInPolygon([l.x, l.y], polygon)) ?? null,
+    [labels],
+  );
+
+  const named = useMemo(() => faces.filter((f) => nameOf(f) !== null).length, [faces, nameOf]);
+  const taken = useMemo(
+    () => new Set(labels.map((l) => l.text.trim().toLowerCase())),
+    [labels],
+  );
+
+  /** The outline in the pad's own pixels, which is what everything is drawn in. */
+  const guidePaper = useMemo(
+    () =>
+      guide
+        ? guide.outline.map(
+            ([x, y]) => [x / guide.metresPerPixel, y / guide.metresPerPixel] as Vec2,
+          )
+        : null,
+    [guide],
+  );
 
   /** Screen to paper. Everything stored is in paper coordinates. */
   const toPaper = useCallback(
@@ -68,6 +170,12 @@ export function DrawingBoard({
         (clientY - rect.top - view.y) / view.scale,
       ];
     },
+    [view],
+  );
+
+  /** Paper to screen, for putting the naming card beside the room it names. */
+  const toScreen = useCallback(
+    ([x, y]: Vec2): [number, number] => [x * view.scale + view.x, y * view.scale + view.y],
     [view],
   );
 
@@ -99,6 +207,36 @@ export function DrawingBoard({
     }
     ctx.stroke();
 
+    // The building, under everything. A shape to trace, never a thing to hit -
+    // it is the constraint rather than part of the drawing.
+    if (guidePaper && guidePaper.length > 2) {
+      ctx.beginPath();
+      guidePaper.forEach(([x, y], i) => (i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y)));
+      ctx.closePath();
+      ctx.fillStyle = GUIDE_FILL;
+      ctx.fill();
+      ctx.strokeStyle = GUIDE_EDGE;
+      ctx.lineWidth = 2 / view.scale;
+      ctx.setLineDash([10 / view.scale, 7 / view.scale]);
+      ctx.stroke();
+      ctx.setLineDash([]);
+    }
+
+    // The spaces, under the ink so a wall is never hidden by the room it makes.
+    faces.forEach((face, i) => {
+      const has = nameOf(face) !== null;
+      ctx.beginPath();
+      face.forEach(([x, y], j) => (j === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y)));
+      ctx.closePath();
+      ctx.fillStyle = i === hover ? HOVER_FILL : has ? NAMED_FILL : EMPTY_FILL;
+      ctx.fill();
+      // Every space is outlined, not only the hovered one, so the shape of what
+      // was found is legible without hunting for it with the pointer.
+      ctx.strokeStyle = i === hover ? HOVER_EDGE : has ? NAMED_EDGE : EMPTY_EDGE;
+      ctx.lineWidth = (i === hover ? 2.5 : 1.5) / view.scale;
+      ctx.stroke();
+    });
+
     ctx.lineCap = "round";
     ctx.lineJoin = "round";
     for (const stroke of [...strokes, drawing.current].filter(Boolean) as Stroke[]) {
@@ -124,7 +262,7 @@ export function DrawingBoard({
         ctx.stroke();
       }
     }
-  }, [strokes, labels, view, problem]);
+  }, [strokes, labels, faces, guidePaper, hover, nameOf, view, problem]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -142,6 +280,41 @@ export function DrawingBoard({
   }, [redraw]);
 
   useEffect(redraw, [redraw]);
+
+  /**
+   * Open on the building, once.
+   *
+   * The pad's coordinates are metres over a fixed scale now, so an outline can
+   * land anywhere and at any size relative to the canvas - a wide bungalow and
+   * a narrow townhouse are not the same shape on screen. Framing it on arrival
+   * is the difference between "trace this" and "find the building first".
+   *
+   * Only on arrival: re-framing on every resize would fight anybody who has
+   * panned or zoomed, and a pad that keeps snapping back is worse than one that
+   * opens badly.
+   */
+  const framed = useRef(false);
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (framed.current || !guidePaper || guidePaper.length < 3 || !canvas) return;
+    const width = canvas.clientWidth;
+    const height = canvas.clientHeight;
+    if (width < 40 || height < 40) return;
+
+    const xs = guidePaper.map((p) => p[0]);
+    const ys = guidePaper.map((p) => p[1]);
+    const w = Math.max(...xs) - Math.min(...xs);
+    const h = Math.max(...ys) - Math.min(...ys);
+    if (w <= 0 || h <= 0) return;
+
+    const scale = Math.max(0.3, Math.min(4, Math.min(width / w, height / h) * 0.8));
+    framed.current = true;
+    setView({
+      scale,
+      x: width / 2 - ((Math.min(...xs) + w / 2) * scale),
+      y: height / 2 - ((Math.min(...ys) + h / 2) * scale),
+    });
+  }, [guidePaper, strokes]);
 
   useEffect(() => {
     const down = (e: KeyboardEvent) => {
@@ -177,10 +350,20 @@ export function DrawingBoard({
   const undo = () => {
     const previous = history.current.pop();
     if (!previous) return;
-    setStrokes(previous.strokes);
-    setLabels(previous.labels);
+    onStrokes(previous.strokes);
+    onLabels(previous.labels);
+    setNaming(null);
     setProblem(null);
   };
+
+  /** Which space a paper point is in, or null out in the margins. */
+  const faceAt = useCallback(
+    (point: Vec2): number | null => {
+      const hit = faces.findIndex((face) => pointInPolygon(point, face));
+      return hit >= 0 ? hit : null;
+    },
+    [faces],
+  );
 
   const onPointerDown = (e: React.PointerEvent) => {
     if (busy) return;
@@ -191,8 +374,20 @@ export function DrawingBoard({
       return;
     }
     if (tool === "name") {
-      const [x, y] = toPaper(e.clientX, e.clientY);
-      setNaming({ x, y });
+      const at = toPaper(e.clientX, e.clientY);
+      const hit = faceAt(at);
+      // A click in the margins names nothing. It used to drop a label there and
+      // refuse later; saying so now is the same information, sooner.
+      if (hit === null) {
+        setNaming(null);
+        setProblem({
+          why: "That is not inside a room. Click a shaded space, or close its walls first.",
+          at: [],
+        });
+        return;
+      }
+      setProblem(null);
+      setNaming({ polygon: faces[hit], at: centroid(faces[hit]) });
       return;
     }
     remember();
@@ -209,9 +404,19 @@ export function DrawingBoard({
       setView((v) => ({ ...v, x: e.clientX - panning.current!.x, y: e.clientY - panning.current!.y }));
       return;
     }
-    if (!drawing.current) return;
-    drawing.current.points.push(toPaper(e.clientX, e.clientY));
-    redraw();
+    if (drawing.current) {
+      drawing.current.points.push(toPaper(e.clientX, e.clientY));
+      redraw();
+      return;
+    }
+    // Only the name tool lights a room. Under the pen it would be a distraction
+    // from the line being drawn.
+    if (tool !== "name") {
+      if (hover !== null) setHover(null);
+      return;
+    }
+    const next = faceAt(toPaper(e.clientX, e.clientY));
+    if (next !== hover) setHover(next);
   };
 
   const onPointerUp = () => {
@@ -219,12 +424,39 @@ export function DrawingBoard({
     const stroke = drawing.current;
     drawing.current = null;
     if (!stroke || stroke.points.length < 2) return;
-    setStrokes((all) => [...all, stroke]);
+    onStrokes((all) => [...all, stroke]);
     setProblem(null);
   };
 
-  const read = () => {
-    const result = strokesToRooms(strokes, labels);
+  /** Put a name in the space the card is open on, replacing whatever was there. */
+  const nameIt = (text: string) => {
+    const trimmed = text.trim();
+    if (!naming || !trimmed) {
+      setNaming(null);
+      return;
+    }
+    const polygon = naming.polygon;
+    remember();
+    onLabels((all) => [
+      ...all.filter((l) => !pointInPolygon([l.x, l.y], polygon)),
+      { x: naming.at[0], y: naming.at[1], text: trimmed },
+    ]);
+    setNaming(null);
+  };
+
+  const unname = () => {
+    if (!naming) return;
+    const polygon = naming.polygon;
+    remember();
+    onLabels((all) => all.filter((l) => !pointInPolygon([l.x, l.y], polygon)));
+    setNaming(null);
+  };
+
+  const finish = () => {
+    const result = strokesToRooms(strokes, labels, {
+      metresPerPixel: guide?.metresPerPixel,
+      targetGroundSqft,
+    });
     if (!result.ok) {
       setProblem({ why: result.why, at: result.at });
       return;
@@ -240,16 +472,53 @@ export function DrawingBoard({
         : "border-ink-500 bg-ink-800 text-mist-200 hover:bg-ink-700"
     }`;
 
+  const existing = naming ? nameOf(naming.polygon) : null;
+  /**
+   * Beside the room, never on top of it.
+   *
+   * The card used to be pinned to the top of the canvas, which covered the
+   * drawing and said nothing about which space had been hit. Putting it at the
+   * room's centroid would say which one and then hide it - and seeing the room
+   * lit is the whole reason this is better. So it stands clear of the room's
+   * right edge, flips to the left when that would run off the canvas, and is
+   * clamped into view either way.
+   */
+  const card = useMemo(() => {
+    if (!naming) return null;
+    const xs = naming.polygon.map((p) => p[0]);
+    const ys = naming.polygon.map((p) => p[1]);
+    const [right, top] = toScreen([Math.max(...xs), Math.min(...ys)]);
+    const [left] = toScreen([Math.min(...xs), 0]);
+    const width = wrapRef.current?.clientWidth ?? 0;
+    const beyond = right + CARD_GAP_PX + CARD_WIDTH_PX > width;
+    return { x: beyond ? left - CARD_GAP_PX - CARD_WIDTH_PX : right + CARD_GAP_PX, y: top };
+  }, [naming, toScreen]);
+  const missing = wanted.filter((label) => !taken.has(label.trim().toLowerCase()));
+
   return (
     <div className="flex h-full min-h-0 flex-col">
       <div className="mb-2 flex flex-wrap items-center gap-2">
         <button type="button" onClick={() => setTool("draw")} className={button(tool === "draw")}>
           Draw walls
         </button>
-        <button type="button" onClick={() => setTool("name")} className={button(tool === "name")}>
+        <button
+          type="button"
+          onClick={() => {
+            setTool("name");
+            setNaming(null);
+          }}
+          className={button(tool === "name")}
+        >
           Name a room
         </button>
-        <button type="button" onClick={() => setTool("erase")} className={button(tool === "erase")}>
+        <button
+          type="button"
+          onClick={() => {
+            setTool("erase");
+            setNaming(null);
+          }}
+          className={button(tool === "erase")}
+        >
           Erase
         </button>
         <span className="mx-1 h-6 w-px bg-ink-600" />
@@ -260,8 +529,9 @@ export function DrawingBoard({
           type="button"
           onClick={() => {
             remember();
-            setStrokes([]);
-            setLabels([]);
+            onStrokes([]);
+            onLabels([]);
+            setNaming(null);
             setProblem(null);
           }}
           className={button(false)}
@@ -281,63 +551,152 @@ export function DrawingBoard({
           ref={canvasRef}
           data-testid="drawing-board"
           className="block h-full w-full touch-none"
-          style={{ cursor: tool === "name" ? "text" : "crosshair" }}
+          style={{ cursor: tool === "name" ? (hover === null ? "default" : "pointer") : "crosshair" }}
           onPointerDown={onPointerDown}
           onPointerMove={onPointerMove}
           onPointerUp={onPointerUp}
-          onPointerLeave={onPointerUp}
+          onPointerLeave={() => {
+            onPointerUp();
+            setHover(null);
+          }}
           onWheel={(e) => {
             const factor = e.deltaY < 0 ? 1.12 : 1 / 1.12;
             setView((v) => ({ ...v, scale: Math.max(0.3, Math.min(4, v.scale * factor)) }));
           }}
         />
 
-        {naming && (
-          <form
-            className="absolute left-1/2 top-4 -translate-x-1/2 rounded-lg border border-ink-500 bg-ink-800 px-3 py-2 shadow-lg"
-            onSubmit={(e) => {
-              e.preventDefault();
-              const input = (e.currentTarget.elements.namedItem("room") as HTMLInputElement);
-              const text = input.value.trim();
-              if (text) {
-                remember();
-                setLabels((all) => [...all, { ...naming, text }]);
-              }
-              setNaming(null);
+        {naming && card && (
+          <div
+            data-testid="naming-card"
+            className="absolute z-10 max-w-[calc(100%-1rem)] rounded-lg border border-ink-500 bg-ink-800 p-2.5 shadow-lg"
+            /* Beside the room being named rather than pinned to the top of the
+               canvas, where it covered the drawing and told you nothing about
+               which space you had hit. Clamped so it stays on screen. */
+            style={{
+              width: CARD_WIDTH_PX,
+              left: `clamp(0.5rem, ${card.x}px, calc(100% - ${CARD_WIDTH_PX + 8}px))`,
+              top: `clamp(0.5rem, ${card.y}px, calc(100% - 13rem))`,
             }}
           >
-            <input
-              name="room"
-              autoFocus
-              placeholder="Kitchen"
-              aria-label="Room name"
-              className="h-10 w-48 rounded border border-ink-600 bg-ink-700 px-2.5 text-sm outline-none focus:border-accent-dim"
-            />
-            <button type="submit" className="ml-2 rounded bg-accent px-3 py-2 text-xs font-semibold text-ink-900">
-              Add
-            </button>
-          </form>
+            {existing && (
+              <p className="mb-1.5 text-[11px] text-mist-400">
+                This space is <span className="text-mist-200">{existing.text}</span>. Naming it
+                again renames it — if it should be two rooms, draw the wall between them.
+              </p>
+            )}
+            {missing.length > 0 && (
+              <div className="mb-2 flex flex-wrap gap-1.5">
+                {missing.map((label) => (
+                  <button
+                    key={label}
+                    type="button"
+                    data-testid="name-chip"
+                    onClick={() => nameIt(label)}
+                    className="rounded border border-ink-500 px-2 py-1 text-xs text-mist-200 transition hover:border-accent-dim hover:bg-ink-700"
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+            )}
+            <form
+              className="flex items-center gap-1.5"
+              onSubmit={(e) => {
+                e.preventDefault();
+                const input = e.currentTarget.elements.namedItem("room") as HTMLInputElement;
+                nameIt(input.value);
+              }}
+            >
+              <input
+                name="room"
+                autoFocus
+                defaultValue={existing?.text ?? ""}
+                placeholder="Something else"
+                aria-label="Room name"
+                className="h-9 min-w-0 flex-1 rounded border border-ink-600 bg-ink-700 px-2.5 text-sm outline-none focus:border-accent-dim"
+              />
+              <button
+                type="submit"
+                className="rounded bg-accent px-3 py-2 text-xs font-semibold text-ink-900"
+              >
+                Add
+              </button>
+            </form>
+            <div className="mt-1.5 flex items-center gap-3 text-[11px]">
+              {existing && (
+                <button type="button" onClick={unname} className="text-warn hover:underline">
+                  Remove name
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={() => setNaming(null)}
+                className="ml-auto text-mist-400 hover:text-mist-200"
+              >
+                Close
+              </button>
+            </div>
+          </div>
         )}
       </div>
 
-      {problem && (
+      {(problem || notice) && (
         <p
           data-testid="drawing-problem"
           className="mt-2 rounded border border-warn/40 bg-warn/10 px-3 py-2 text-xs text-warn"
         >
-          {problem.why}
+          {problem?.why ?? notice}
         </p>
+      )}
+
+      {/* What the sheet says the house has, against what has actually been
+          drawn. A room nobody drew has to be visibly dropped rather than
+          quietly invented later, because the sheet is what decides the room
+          list the whole build is packed from. */}
+      {wanted.length > 0 && (
+        <div className="mt-2 flex flex-wrap items-center gap-1.5">
+          <span className="mr-1 text-[11px] uppercase tracking-wide text-mist-400">
+            In the house
+          </span>
+          {wanted.map((label) => {
+            const on = taken.has(label.trim().toLowerCase());
+            return (
+              <span
+                key={label}
+                data-room={label}
+                data-testid={on ? "wanted-drawn" : "wanted-missing"}
+                className={`inline-flex items-center gap-1 rounded border px-2 py-1 text-xs ${
+                  on
+                    ? "border-accent-dim bg-accent/10 text-mist-200"
+                    : "border-ink-600 text-mist-400"
+                }`}
+              >
+                {on ? "✓" : "·"} {label}
+                {!on && onDropWanted && (
+                  <button
+                    type="button"
+                    onClick={() => onDropWanted(label)}
+                    aria-label={`Take ${label} out of the house`}
+                    className="ml-0.5 text-mist-400 hover:text-warn"
+                  >
+                    ×
+                  </button>
+                )}
+              </span>
+            );
+          })}
+        </div>
       )}
 
       <div className="mt-3 flex flex-wrap items-center gap-3">
         <button
           type="button"
-          onClick={read}
+          onClick={finish}
           disabled={busy || strokes.length < 3}
           data-testid="read-drawing"
           className="rounded-lg bg-accent px-5 py-2.5 text-sm font-semibold text-ink-900 transition hover:brightness-110 disabled:opacity-40"
         >
-          Use this drawing
+          {cta}
         </button>
         {onCancel && (
           <button
@@ -345,13 +704,18 @@ export function DrawingBoard({
             onClick={onCancel}
             className="rounded-lg border border-ink-500 px-4 py-2.5 text-sm text-mist-200 transition hover:bg-ink-600"
           >
-            Cancel
+            {cancelLabel}
           </button>
         )}
-        <span className="text-xs text-mist-400">
-          {labels.length === 0
-            ? "Draw the walls, then name each room — the names are how the rest of the house knows what they are."
-            : `${strokes.filter((s) => !s.erase).length} strokes, ${labels.length} named`}
+        <span data-testid="drawing-status" className="text-xs text-mist-400">
+          {faces.length === 0
+            ? "Draw the walls — a space lights up as soon as the walls close round it."
+            : `${named} of ${faces.length} named` +
+              (faces.length > named
+                ? ` · ${faces.length - named} space${faces.length - named === 1 ? "" : "s"} still to name`
+                : missing.length > 0
+                  ? ` · ${missing.length} not drawn`
+                  : " · ready")}
         </span>
       </div>
     </div>

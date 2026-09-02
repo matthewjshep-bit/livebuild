@@ -2,6 +2,7 @@ import { type AngleFamily, dominantAngles, snapToFamily } from "@/lib/plan/angle
 import { area, pointInPolygon, signedArea } from "@/lib/plan/geometry";
 import { triangulate } from "@/lib/model/tessellate";
 import type { Room, Vec2 } from "@/lib/schema";
+import { sqftToM2 } from "@/lib/units";
 
 /**
  * Turning what somebody drew into rooms.
@@ -236,8 +237,23 @@ function weld(
    * face through that. Snapping the stem onto the bar and splitting the bar
    * there is the one structural repair this does, and it is the difference
    * between two rooms and one.
+   *
+   * **Repeated until nothing is left to join.** This ran three passes, and one
+   * split per pass, so a drawing could only ever have three T-junctions
+   * repaired - and an interior wall has two ends. Three interior walls was the
+   * effective ceiling: draw a fourth and it silently did nothing, its rooms came
+   * out as one space, and the only symptom was a plan with fewer rooms than
+   * walls. A six-room house is not an unusual drawing, so the ceiling was well
+   * inside what anybody would actually draw.
+   *
+   * Restarting the scan after each split is deliberate: the split rebuilds the
+   * segment list, so every index after `j` has moved. The cap is on the number
+   * of repairs rather than on passes, and it is generous - each repair adds one
+   * segment, and a hand drawing has tens of them, so it exists to bound a bug
+   * rather than to bound the work.
    */
-  for (let pass = 0; pass < 3; pass++) {
+  const REPAIR_LIMIT = welded.length * 4 + 16;
+  for (let repair = 0; repair < REPAIR_LIMIT; repair++) {
     let split = false;
     for (let i = 0; i < welded.length && !split; i++) {
       for (const end of [welded[i].a, welded[i].b]) {
@@ -404,24 +420,51 @@ function faces(segments: Segment[]): Vec2[][] {
 export type StrokeOptions = {
   /** Metres per drawing pixel. Supplied by whoever knows the real size. */
   metresPerPixel?: number;
+  /**
+   * How big the drawing is meant to be, when nobody knows the pixel scale.
+   *
+   * Weaker than `metresPerPixel` and stronger than the guess below it: the
+   * house sheet asks for a floor area, and a number somebody typed beats a
+   * number this file made up.
+   */
+  targetGroundSqft?: number;
   /** How far a wall may be turned to line up with the others. */
   snapDeg?: number;
 };
 
-export function strokesToRooms(
-  strokes: Stroke[],
-  labels: Label[],
-  options: StrokeOptions = {},
-): StrokeResult {
+/** What the strokes make, before anything is asked about names or size. */
+export type StrokeRead = {
+  /** The closed spaces the walls enclose, in paper coordinates. */
+  faces: Vec2[][];
+  /** What had to be tidied, in words, so a surprise is a told surprise. */
+  adjustments: string[];
+  /** Wall ends that met nothing. Somewhere to point when a room will not close. */
+  gaps: Vec2[];
+  /** Why there is nothing to show, when that is worth saying. */
+  why: string | null;
+};
+
+/**
+ * Strokes to spaces, and no further.
+ *
+ * The front half of `strokesToRooms`, split out because the drawing board needs
+ * it on every stroke and not only when somebody presses the button. Showing the
+ * spaces as they close is what makes naming one possible: until the faces are on
+ * screen, "click inside the room" asks somebody to aim at something they cannot
+ * see, and the first they hear of a miss is a refusal afterwards.
+ *
+ * It is the same pipeline, in the same order, with the same constants - so what
+ * the board draws and what the reader accepts cannot drift apart.
+ */
+export function readStrokes(strokes: Stroke[], options: StrokeOptions = {}): StrokeRead {
   const adjustments: string[] = [];
+  const nothing = (why: string): StrokeRead => ({ faces: [], adjustments, gaps: [], why });
 
   const inked = applyErasers(strokes);
-  if (inked.length === 0) return { ok: false, why: "Nothing is drawn yet.", at: [] };
+  if (inked.length === 0) return nothing("Nothing is drawn yet.");
 
   let segments = inked.flatMap((points) => segmentsOf(resample(points)));
-  if (segments.length < 3) {
-    return { ok: false, why: "That is not enough wall to make a room.", at: [] };
-  }
+  if (segments.length < 3) return nothing("That is not enough wall to make a room.");
 
   // --- straighten, keeping genuine angles ---
   const family: AngleFamily = dominantAngles(segments);
@@ -451,27 +494,42 @@ export function strokesToRooms(
    * a hyphen under a label and everything left behind by rubbing a wall out -
    * all of which the face walk discards without complaint. The question that
    * actually matters is not whether something dangles but whether a room
-   * somebody *named* failed to close, and that is answered below, where the
-   * labels are. Kept only to point at.
+   * somebody *named* failed to close, and that is answered by the caller, where
+   * the labels are. Kept only to point at.
    */
-  const dangling = joined.gaps;
+  const gaps = joined.gaps;
 
   // --- rooms ---
   const loops = faces(planarise(segments));
 
   const total = loops.reduce((sum, l) => sum + area(l), 0);
-  const rooms: Vec2[][] = [];
+  const kept: Vec2[][] = [];
   let slivers = 0;
   for (const loop of loops) {
     if (area(loop) < total * SLIVER_FRACTION) {
       slivers++;
       continue;
     }
-    rooms.push(loop);
+    kept.push(loop);
   }
   if (slivers > 0) {
     adjustments.push(`Ignored ${slivers} sliver${slivers === 1 ? "" : "s"} where walls crossed.`);
   }
+
+  return { faces: kept, adjustments, gaps, why: null };
+}
+
+export function strokesToRooms(
+  strokes: Stroke[],
+  labels: Label[],
+  options: StrokeOptions = {},
+): StrokeResult {
+  const read = readStrokes(strokes, options);
+  if (read.why) return { ok: false, why: read.why, at: read.gaps };
+
+  const adjustments = [...read.adjustments];
+  const rooms = read.faces;
+  const dangling = read.gaps;
 
   // --- names ---
   /**
@@ -542,10 +600,20 @@ export function strokesToRooms(
   let scale = options.metresPerPixel;
   if (!scale) {
     const drawn = named.reduce((sum, r) => sum + area(r.polygon), 0);
-    // A typical room is about 16 square metres, so the whole drawing is about
-    // that many times the number of rooms.
-    scale = Math.sqrt((16 * named.length) / Math.max(drawn, 1));
-    adjustments.push("No size was given, so this is scaled to rooms of a usual size.");
+    if (options.targetGroundSqft && options.targetGroundSqft > 0) {
+      // A floor area somebody typed into the house sheet. Weaker than a real
+      // pixel scale and stronger than the guess below, which is the whole point
+      // of having it: the sheet already asks for this number.
+      scale = Math.sqrt(sqftToM2(options.targetGroundSqft) / Math.max(drawn, 1));
+      adjustments.push(
+        `Scaled to the ${Math.round(options.targetGroundSqft)} sq ft you gave for this floor.`,
+      );
+    } else {
+      // A typical room is about 16 square metres, so the whole drawing is about
+      // that many times the number of rooms.
+      scale = Math.sqrt((16 * named.length) / Math.max(drawn, 1));
+      adjustments.push("No size was given, so this is scaled to rooms of a usual size.");
+    }
   }
 
   const out: Room[] = named.map((r, i) => ({

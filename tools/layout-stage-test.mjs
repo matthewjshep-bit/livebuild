@@ -1,20 +1,22 @@
 /**
  * The layout is drawn before the house is built, and the gate is real.
  *
- * Two things are being proved. First that the stage exists at all and stops the
- * build: the canvas opens empty, the rooms the house is known to have are
- * listed to place, and nothing is constructed until somebody says so. Second,
- * and the part that matters, that the gate is not decorative - a drawing with a
- * hole in it must refuse to build, because a piece of a house belonging to no
- * room is a room with no doorways into it, and that is invisible until somebody
- * walks the tour and hits a dead end.
+ * Two things are being proved. First that the drawing reaches this stage
+ * already fitted to the building: the canvas used to open empty and ask for
+ * nine rectangles to be dragged into an irregular outline, which is not a thing
+ * a person can do - so what lands here now is the plan somebody drew, with only
+ * its dimensions given up to the outline the map measured. Second, and the part
+ * that matters, that the gate is not decorative - a drawing with a hole in it
+ * must refuse to build, because a piece of a house belonging to no room is a
+ * room with no doorways into it, and that is invisible until somebody walks the
+ * tour and hits a dead end.
  *
  * Driven from an address rather than photographs, because an address is what
- * produces a measured outline, and the outline is the whole point of drawing
- * inside it.
+ * produces a measured outline, and the outline is the whole point of fitting to
+ * it.
  */
 import { chromium } from "playwright";
-import { chooseMode } from "./lib/flow.mjs";
+import { chooseMode, drawRooms } from "./lib/flow.mjs";
 
 const base = process.env.BASE_URL ?? "http://localhost:3000";
 const ADDRESS = "902 23rd Avenue East, Seattle, WA 98112";
@@ -57,15 +59,32 @@ if (!found) {
   process.exit(0);
 }
 
-await page.getByRole("button", { name: "Build the house" }).click();
+// The address lands on the photo screen with the listing's facts read; the
+// sheet is the next step whether or not any photographs were dropped.
+await page.getByTestId("continue-from-photos").click();
+await page.waitForTimeout(800);
 
-// --- the stage stops the build ---
-let arrived = false;
-for (let i = 0; i < 90 && !arrived; i++) {
-  await page.waitForTimeout(1500);
-  arrived = (await page.getByTestId("suggest-layout").count()) > 0;
+// --- the sheet leads to the pen, and the pen comes before the build ---
+await page.getByTestId("build-from-sheet").click();
+await page.waitForTimeout(900);
+check("the sheet leads straight to the board", (await page.getByTestId("drawing-board").count()) === 1);
+await page.screenshot({ path: "shots/L1-drawing.png" });
+
+const drew = await drawRooms(page);
+check("a house can be drawn", drew);
+if (!drew) {
+  console.log(JSON.stringify({ verdict: "THE DRAWING WAS REFUSED", errors }, null, 2));
+  await browser.close();
+  process.exit(1);
 }
-check("the build stops to be drawn", arrived);
+
+// --- and arrives fitted to the building the map measured ---
+let arrived = false;
+for (let i = 0; i < 120 && !arrived; i++) {
+  await page.waitForTimeout(1500);
+  arrived = (await page.getByTestId("build-from-layout").count()) > 0;
+}
+check("the build stops to be confirmed", arrived);
 if (!arrived) {
   console.log(JSON.stringify({ verdict: "LAYOUT STAGE NEVER APPEARED", errors }, null, 2));
   await browser.close();
@@ -73,44 +92,20 @@ if (!arrived) {
 }
 
 await page.waitForTimeout(800);
-await page.screenshot({ path: "shots/L1-layout-empty.png" });
+await page.screenshot({ path: "shots/L2-layout-fitted.png" });
 
-const empty = await page.evaluate(() => ({
+const fittedIn = await page.evaluate(() => ({
   text: document.body.innerText,
   // The measured outline, drawn beneath everything and never interactive.
   boundaries: document.querySelectorAll("svg polygon").length,
-  unplaced: document.querySelectorAll('[data-testid="unplaced-room"]').length,
-  canBuild: !document.querySelector('[data-testid="build-from-layout"]')?.disabled,
-  rooms: (() => {
-    const index = JSON.parse(localStorage.getItem("mattermatt:index") ?? "[]");
-    const doc = JSON.parse(localStorage.getItem("mattermatt:property:" + index.pop()) ?? "null");
-    return doc?.plan?.rooms?.length ?? null;
-  })(),
-}));
-
-check("the canvas opens empty, as the user asked", !/\d+ rooms, \d+ doorways/.test(empty.text));
-check("the measured outline is drawn to draw inside", empty.boundaries >= 1, `${empty.boundaries}`);
-check("the rooms the house is known to have are listed", empty.unplaced > 0, `${empty.unplaced}`);
-check("nothing can be built yet", !empty.canBuild);
-check("and nothing has been saved yet", empty.rooms === null || empty.rooms === 0, `${empty.rooms}`);
-
-// --- a suggestion fills it, and only when asked ---
-await page.getByTestId("suggest-layout").click();
-let ready = false;
-for (let i = 0; i < 60 && !ready; i++) {
-  await page.waitForTimeout(1500);
-  ready = await page.getByTestId("build-from-layout").isEnabled().catch(() => false);
-}
-check("a suggestion can be asked for and fills the plan", ready);
-await page.waitForTimeout(600);
-await page.screenshot({ path: "shots/L2-layout-suggested.png" });
-
-const suggested = await page.evaluate(() => ({
-  text: document.body.innerText,
   faults: document.querySelectorAll('[data-testid="layout-fault"]').length,
+  canBuild: !document.querySelector('[data-testid="build-from-layout"]')?.disabled,
 }));
-check("a suggested layout has no faults", suggested.faults === 0, suggested.text.slice(0, 200));
-check("and reports what it drew", /\d+ rooms, \d+ doorways\./.test(suggested.text));
+
+check("the drawing arrives already placed", /\d+ rooms, \d+ doorways\./.test(fittedIn.text), fittedIn.text.slice(0, 200));
+check("inside the measured outline", fittedIn.boundaries >= 1, `${fittedIn.boundaries}`);
+check("with nothing wrong with it", fittedIn.faults === 0, fittedIn.text.slice(0, 200));
+check("and can be built without dragging anything", fittedIn.canBuild);
 
 // --- the gate refuses a drawing with a hole in it ---
 //

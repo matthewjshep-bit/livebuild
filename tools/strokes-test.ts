@@ -11,8 +11,9 @@
  * doorway or a slip, and nothing here can tell - so it has to say where the gap
  * is rather than pick one.
  */
-import { strokesToRooms, type Label, type Stroke } from "../src/lib/plan/strokes";
+import { readStrokes, strokesToRooms, type Label, type Stroke } from "../src/lib/plan/strokes";
 import { area } from "../src/lib/plan/geometry";
+import { sqftToM2 } from "../src/lib/units";
 import type { Vec2 } from "../src/lib/schema";
 
 let failures = 0;
@@ -101,6 +102,75 @@ const twoLabels = [label(200, 250, "Kitchen"), label(400, 250, "Living Room")];
   const r = strokesToRooms(strokes, twoLabels);
   check("a T-junction is joined and split", r.ok, r.ok ? "" : r.why);
   if (r.ok) check("giving two rooms, not one", r.rooms.length === 2, `${r.rooms.length}`);
+}
+
+// --- a house with more than three interior walls ---
+{
+  /**
+   * The ceiling this had, and the reason it was invisible.
+   *
+   * The T-junction repair ran three passes and split once per pass, so exactly
+   * three junctions could ever be joined - and an interior wall has two of
+   * them. A six-room house needs eight, so the later walls did nothing at all:
+   * no refusal, no adjustment, just rooms quietly coming out merged. Six spaces
+   * from six spaces drawn is the whole assertion.
+   */
+  const strokes = [
+    pen([100, 100], [700, 100]),
+    pen([700, 100], [700, 500]),
+    pen([700, 500], [100, 500]),
+    pen([100, 500], [100, 100]),
+    pen([100, 300], [700, 300]),
+    pen([300, 100], [300, 300]),
+    pen([500, 100], [500, 300]),
+    pen([300, 300], [300, 500]),
+    pen([500, 300], [500, 500]),
+  ];
+  const names = [
+    label(200, 200, "Kitchen"),
+    label(400, 200, "Living Room"),
+    label(600, 200, "Dining Room"),
+    label(200, 400, "Primary Bedroom"),
+    label(400, 400, "Bedroom 2"),
+    label(600, 400, "Bathroom"),
+  ];
+  const r = strokesToRooms(strokes, names);
+  check("a six-room house reads", r.ok, r.ok ? "" : r.why);
+  if (r.ok) {
+    check("as six rooms and not fewer", r.rooms.length === 6, `${r.rooms.length}`);
+    check(
+      "each of them named",
+      new Set(r.rooms.map((room) => room.label)).size === 6,
+      r.rooms.map((room) => room.label).join(", "),
+    );
+  }
+}
+
+// --- the spaces, before anything is asked about names ---
+{
+  const r = readStrokes(twoRooms());
+  check("the board can see the spaces without names", r.faces.length === 2, `${r.faces.length}`);
+  check("and says nothing is wrong", r.why === null, r.why ?? "");
+  check("an empty pad has no spaces and says why", readStrokes([]).why !== null);
+}
+
+// --- a floor area somebody typed beats the assumption ---
+{
+  const r = strokesToRooms(twoRooms(), twoLabels, { targetGroundSqft: 800 });
+  check("a stated floor area is used", r.ok, r.ok ? "" : r.why);
+  if (r.ok) {
+    const total = r.rooms.reduce((sum, room) => sum + Math.abs(area(room.polygon)), 0);
+    check(
+      "and the drawing comes out that size",
+      Math.abs(total / sqftToM2(800) - 1) < 0.02,
+      `${Math.round(total / sqftToM2(1))} sqft`,
+    );
+    check(
+      "and says so",
+      r.adjustments.some((a) => /800 sq ft/.test(a)),
+      r.adjustments.join(" "),
+    );
+  }
 }
 
 // --- a gap nobody can guess about ---
@@ -247,5 +317,5 @@ if (failures > 0) {
   process.exit(1);
 }
 console.log(
-  "STROKES OK - a wobbly plan reads as rooms, overshoots and T-junctions close, an erased wall stays erased, a stray tick is ignored, an angled wing keeps its angles, double-line walls give the rooms anyway, and an unclosed room, an unnamed one, two names in one space and a drawing with more spaces than names are each refused with somewhere to look",
+  "STROKES OK - a wobbly plan reads as rooms, overshoots and T-junctions close, a six-room house keeps all six, the spaces are readable before they are named, a stated floor area sets the size, an erased wall stays erased, a stray tick is ignored, an angled wing keeps its angles, double-line walls give the rooms anyway, and an unclosed room, an unnamed one, two names in one space and a drawing with more spaces than names are each refused with somewhere to look",
 );

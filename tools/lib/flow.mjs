@@ -76,23 +76,140 @@ export async function describe(page, { beds, baths, floors } = {}) {
 }
 
 /**
+ * Draw a house with the pointer, badly, the way a hand does.
+ *
+ * The layout is drawn before the build now, and for a house it is not optional
+ * - so every suite that wants a finished tour has to get through this. Kept
+ * here rather than in each of them for the reason the rest of this file exists:
+ * a suite about photographs should not know how the pen works.
+ *
+ * Two bands of rooms, which is enough to be a house rather than a corridor, and
+ * exactly as many spaces as there are names to put in them. The names come off
+ * the board's own chips, so this always agrees with whatever the house sheet
+ * currently says.
+ *
+ * A house is drawn a floor at a time, so this repeats until the board goes
+ * away - the last storey's button starts the build rather than opening another
+ * tab.
+ */
+export async function drawRooms(page, { rooms = Infinity, timeoutMs = 120_000 } = {}) {
+  const deadline = Date.now() + timeoutMs;
+  const board = page.getByTestId("drawing-board");
+  while ((await board.count()) === 0 && Date.now() < deadline) await page.waitForTimeout(300);
+  if ((await board.count()) === 0) return false;
+
+  // Six storeys is far beyond anything the sheet offers; the bound is here so a
+  // board that refuses forever fails the suite instead of hanging it.
+  for (let storey = 0; storey < 6; storey++) {
+    if ((await board.count()) === 0) return true;
+    if (!(await drawOneStorey(page, rooms))) return false;
+    await page.waitForTimeout(700);
+  }
+  return (await board.count()) === 0;
+}
+
+/** One floor: an outline, some walls, and a name in every space it makes. */
+async function drawOneStorey(page, rooms) {
+  const board = page.getByTestId("drawing-board");
+  const wanted = await page.$$eval(
+    '[data-testid="wanted-missing"], [data-testid="wanted-drawn"]',
+    (els) => els.map((e) => e.dataset.room).filter(Boolean),
+  );
+  /**
+   * Every room the sheet lists, up to the cap - and the staircase whatever
+   * happens. A multi-storey house is refused without one, and rightly: an
+   * upstairs with no way up it looks perfectly fine on the plan.
+   */
+  const stairs = wanted.filter((n) => /stair/i.test(n));
+  const rest = wanted.filter((n) => !/stair/i.test(n));
+  const names = [...stairs, ...rest].slice(0, Math.min(rooms, wanted.length));
+  if (names.length < 2) return false;
+
+  const box = await board.boundingBox();
+  const at = (fx, fy) => [box.x + box.width * fx, box.y + box.height * fy];
+
+  /** A line drawn the way a hand draws one: in steps, with a wobble. */
+  const line = async (from, to, steps = 14) => {
+    const [x0, y0] = at(...from);
+    const [x1, y1] = at(...to);
+    await page.mouse.move(x0, y0);
+    await page.mouse.down();
+    for (let i = 1; i <= steps; i++) {
+      const t = i / steps;
+      const jitter = i === steps ? 0 : Math.sin(i * 2.1) * 1.6;
+      await page.mouse.move(x0 + (x1 - x0) * t + jitter, y0 + (y1 - y0) * t + jitter);
+    }
+    await page.mouse.up();
+    await page.waitForTimeout(50);
+  };
+
+  const top = Math.ceil(names.length / 2);
+  const bottom = names.length - top;
+  const L = 0.1;
+  const R = 0.9;
+  const T = 0.12;
+  const M = 0.5;
+  const B = 0.88;
+
+  await page.getByRole("button", { name: "Draw walls" }).click();
+  // The outline, then the wall across the middle.
+  await line([L, T], [R, T]);
+  await line([R, T], [R, B]);
+  await line([R, B], [L, B]);
+  await line([L, B], [L, T]);
+  if (bottom > 0) await line([L, M], [R, M]);
+
+  const split = async (count, y0, y1) => {
+    for (let i = 1; i < count; i++) {
+      const x = L + ((R - L) * i) / count;
+      await line([x, y0], [x, y1]);
+    }
+  };
+  await split(top, T, bottom > 0 ? M : B);
+  if (bottom > 0) await split(bottom, M, B);
+
+  // Name every space. A drawing with an unnamed one is refused, by design.
+  await page.getByRole("button", { name: "Name a room" }).click();
+  await page.waitForTimeout(200);
+  const centres = [];
+  for (let i = 0; i < top; i++) {
+    centres.push([L + ((R - L) * (i + 0.5)) / top, (T + (bottom > 0 ? M : B)) / 2]);
+  }
+  for (let i = 0; i < bottom; i++) {
+    centres.push([L + ((R - L) * (i + 0.5)) / bottom, (M + B) / 2]);
+  }
+  for (let i = 0; i < names.length; i++) {
+    const [x, y] = at(...centres[i]);
+    await page.mouse.click(x, y);
+    await page.waitForTimeout(180);
+    if ((await page.getByTestId("naming-card").count()) === 0) return false;
+    await page.getByLabel("Room name").fill(names[i]);
+    await page.getByRole("button", { name: "Add" }).click();
+    await page.waitForTimeout(150);
+  }
+
+  await page.getByTestId("read-drawing").click();
+  await page.waitForTimeout(600);
+  // A refusal leaves the problem on screen and the drawing untouched.
+  return (await page.getByTestId("drawing-problem").count()) === 0;
+}
+
+/**
  * Get through the layout stage.
  *
- * The build stops to be drawn now, and the canvas opens empty on purpose - so
- * every test that just wants a house has to say how it wants the layout made.
- * "suggested" presses the button that fills the canvas with what the packer
- * would have done, which is exactly the arrangement these tests used to get for
- * free, so their assertions keep meaning what they meant.
- *
- * A test that is about the *drawing* should place rooms itself and then call
- * `finishLayout` rather than this.
+ * This used to press "Suggest a layout", because the canvas opened empty. It
+ * does not any more: the drawing is done before the build and arrives here
+ * already fitted to the building, so pressing suggest would throw away the very
+ * thing the suite just drew. Accept what is on the canvas; ask for a suggestion
+ * only when nothing landed, which is the recovery path rather than the normal
+ * one.
  */
 export async function drawLayout(page, { timeoutMs = 200_000 } = {}) {
   const deadline = Date.now() + timeoutMs;
   let arrived = false;
   while (Date.now() < deadline) {
     await page.waitForTimeout(1500);
-    if (await page.getByTestId("suggest-layout").count()) {
+    if (await page.getByTestId("build-from-layout").count()) {
       arrived = true;
       break;
     }
@@ -101,12 +218,14 @@ export async function drawLayout(page, { timeoutMs = 200_000 } = {}) {
   }
   if (!arrived) return false;
 
-  await page.getByTestId("suggest-layout").click();
-  // The suggestion is a model call; wait for rooms to actually appear.
-  for (let i = 0; i < 40; i++) {
-    await page.waitForTimeout(1500);
-    const ready = await page.getByTestId("build-from-layout").isEnabled().catch(() => false);
-    if (ready) break;
+  let ready = await page.getByTestId("build-from-layout").isEnabled().catch(() => false);
+  if (!ready && (await page.getByTestId("suggest-layout").count())) {
+    await page.getByTestId("suggest-layout").click();
+    // The suggestion is a model call; wait for rooms to actually appear.
+    for (let i = 0; i < 40 && !ready; i++) {
+      await page.waitForTimeout(1500);
+      ready = await page.getByTestId("build-from-layout").isEnabled().catch(() => false);
+    }
   }
   return finishLayout(page, { timeoutMs: deadline - Date.now() });
 }
@@ -123,7 +242,7 @@ export async function finishLayout(page, { timeoutMs = 200_000 } = {}) {
  * Generous, because this really does run classification, layout, pose
  * estimation and the interior read end to end.
  */
-export async function build(page, { timeoutMs = 200_000, house } = {}) {
+export async function build(page, { timeoutMs = 200_000, house, rooms } = {}) {
   // The photo screen now leads to the house sheet rather than straight to a
   // build, because the bedroom count is worth asking for before building.
   const onwards = page.getByTestId("continue-from-photos");
@@ -135,6 +254,12 @@ export async function build(page, { timeoutMs = 200_000, house } = {}) {
   if ((await sheet.count()) > 0) {
     if (house) await describe(page, house);
     await sheet.click();
+    await page.waitForTimeout(500);
+    // The sheet leads to the pen now, and a house cannot be built without one.
+    // Every room the sheet lists gets drawn by default: a room nobody draws is
+    // a room the house does not have, so capping this is how a suite quietly
+    // ends up with photographs that have nowhere to go.
+    if (!(await drawRooms(page, rooms === undefined ? {} : { rooms }))) return false;
   }
   return drawLayout(page, { timeoutMs });
 }

@@ -6,6 +6,11 @@
  * a real pointer - badly, the way a hand does - and asserts that the rooms come
  * out of the browser, that a mistake is refused with somewhere to look, and
  * that no request is made to read the drawing at all.
+ *
+ * It is the main path now rather than a detour, so it also covers what made
+ * naming possible: the spaces appear as the walls close, the one under the
+ * cursor lights up, the card stands clear of it, and the names on offer are the
+ * ones the house sheet says the house has.
  */
 import { chromium } from "playwright";
 import { readdirSync } from "node:fs";
@@ -41,21 +46,23 @@ await page.setInputFiles('input[type="file"]', files);
 await page.waitForTimeout(2500);
 await page.getByTestId("continue-from-photos").click();
 await page.waitForTimeout(700);
+// The sheet leads to the pen now, and the pen comes before the build - so this
+// is reached in a moment rather than after a minute of classification.
 await page.getByTestId("build-from-sheet").click();
+await page.waitForTimeout(800);
 
-// Wait for the layout stage.
-let there = false;
-for (let i = 0; i < 80 && !there; i++) {
-  await page.waitForTimeout(1500);
-  there = (await page.getByTestId("draw-freehand").count()) > 0;
-}
-check("the layout stage offers drawing by hand", there);
-if (!there) { console.log(JSON.stringify({ verdict: "FREEHAND BROKEN - never reached the stage" })); await browser.close(); process.exit(1); }
-
-await page.getByTestId("draw-freehand").click();
-await page.waitForTimeout(600);
 const board = page.getByTestId("drawing-board");
-check("the board is there", (await board.count()) === 1);
+check("the sheet leads straight to the board", (await board.count()) === 1);
+if ((await board.count()) === 0) { console.log(JSON.stringify({ verdict: "FREEHAND BROKEN - never reached the board" })); await browser.close(); process.exit(1); }
+
+// Nothing has been classified yet: the drawing is what the build is told.
+check("and nothing has been sent away yet", !calls.some((c) => c.startsWith("POST /api/classify")), calls.join(", "));
+
+const wanted = await page.$$eval(
+  '[data-testid="wanted-missing"], [data-testid="wanted-drawn"]',
+  (els) => els.map((e) => e.dataset.room),
+);
+check("the house sheet's rooms are listed to draw", wanted.includes("Kitchen") && wanted.length >= 6, wanted.join(", "));
 
 const box = await board.boundingBox();
 const at = (fx, fy) => [box.x + box.width * fx, box.y + box.height * fy];
@@ -75,50 +82,95 @@ async function line(from, to, steps = 16) {
   await page.waitForTimeout(60);
 }
 
-async function name(fx, fy, text) {
+/** Name whichever space is under a point, by pressing the chip for it. */
+async function nameByChip(fx, fy, text) {
   await page.getByRole("button", { name: "Name a room" }).click();
   const [x, y] = at(fx, fy);
   await page.mouse.click(x, y);
   await page.waitForTimeout(250);
-  await page.getByLabel("Room name").fill(text);
-  await page.getByRole("button", { name: "Add" }).click();
-  await page.waitForTimeout(250);
+  const chip = page.getByTestId("name-chip").filter({ hasText: text }).first();
+  if ((await chip.count()) === 0) {
+    await page.getByLabel("Room name").fill(text);
+    await page.getByRole("button", { name: "Add" }).click();
+  } else {
+    await chip.click();
+  }
+  await page.waitForTimeout(200);
   await page.getByRole("button", { name: "Draw walls" }).click();
 }
 
-// --- an outline with one wall down the middle, drawn badly ---
+// --- an outline, drawn badly ---
 await line([0.15, 0.2], [0.85, 0.2]);
 await line([0.85, 0.2], [0.85, 0.8]);
 await line([0.85, 0.8], [0.15, 0.8]);
 await line([0.15, 0.8], [0.15, 0.2]);
+await page.waitForTimeout(400);
 await page.screenshot({ path: "shots/F1-drawn-outline.png" });
 
-// Named before there is a wall between them: two names, one space.
-await name(0.32, 0.5, "Kitchen");
-await name(0.68, 0.5, "Living Room");
-await page.getByTestId("read-drawing").click();
-await page.waitForTimeout(700);
+// One closed space, and it is visible as one before anybody names anything.
+check("a closed outline is one space", /of 1 named/.test(await page.getByTestId("drawing-status").innerText()), await page.getByTestId("drawing-status").innerText());
 
-const complaint = await page.getByTestId("drawing-problem").count();
-check("two names in one space is refused", complaint === 1);
-if (complaint) {
-  const why = await page.getByTestId("drawing-problem").innerText();
-  check("and asks the right question", /same space/.test(why) && /wall missing/.test(why), why);
-}
-await page.screenshot({ path: "shots/F2-drawn-refused.png" });
-
-// Put the wall in and try again.
+// --- a wall down the middle makes two ---
 await line([0.5, 0.2], [0.5, 0.8]);
-await page.getByTestId("read-drawing").click();
-await page.waitForTimeout(1200);
-await page.screenshot({ path: "shots/F3-drawn-accepted.png" });
+await page.waitForTimeout(400);
+check("the wall makes a second space", /of 2 named/.test(await page.getByTestId("drawing-status").innerText()), await page.getByTestId("drawing-status").innerText());
 
-const after = await page.evaluate(() => ({
-  stillDrawing: Boolean(document.querySelector('[data-testid="drawing-board"]')),
-  summary: document.body.innerText.match(/(\d+) rooms, (\d+) doorways\./)?.[0] ?? null,
-}));
-check("the drawing is accepted", !after.stillDrawing);
-check("and becomes rooms with doorways", /2 rooms, [1-9]/.test(after.summary ?? ""), `${after.summary}`);
+// --- the card stands clear of the room it names ---
+//
+// The left-hand room, because it has a neighbour to its right for the card to
+// stand in. Anywhere but on top of the lit room will do; seeing which space is
+// being named is the whole reason this is better than the old pinned card.
+await page.getByRole("button", { name: "Name a room" }).click();
+await page.waitForTimeout(150);
+const [cx, cy] = at(0.32, 0.5);
+await page.mouse.click(cx, cy);
+await page.waitForTimeout(250);
+check("clicking a space opens a card", (await page.getByTestId("naming-card").count()) === 1);
+const cardBox = await page.getByTestId("naming-card").boundingBox();
+const wallX = at(0.5, 0)[0];
+check(
+  "the card stands clear of the room it names",
+  cardBox && cardBox.x >= wallX - 2,
+  `card at ${cardBox && Math.round(cardBox.x)}, room ends at ${Math.round(wallX)}`,
+);
+const chips = await page.$$eval('[data-testid="name-chip"]', (els) => els.map((e) => e.textContent));
+check("and offers the rooms the house has", chips.includes("Kitchen"), chips.join(", "));
+await page.screenshot({ path: "shots/F2-naming-card.png" });
+await page.getByRole("button", { name: "Close" }).click();
+
+// A click out in the margins names nothing, and says so rather than failing later.
+await page.mouse.click(...at(0.04, 0.5));
+await page.waitForTimeout(200);
+const outside = await page.getByTestId("drawing-problem").count();
+check("clicking outside every room is refused on the spot", outside === 1);
+if (outside) {
+  check("and says where to click", /inside a room/.test(await page.getByTestId("drawing-problem").innerText()));
+}
+
+// --- name both halves off the chips ---
+
+await nameByChip(0.32, 0.5, "Kitchen");
+await nameByChip(0.68, 0.5, "Living Room");
+check("both spaces are named", /2 of 2 named/.test(await page.getByTestId("drawing-status").innerText()), await page.getByTestId("drawing-status").innerText());
+await page.screenshot({ path: "shots/F3-drawn-named.png" });
+
+await page.getByTestId("read-drawing").click();
+
+// The build runs from here, so this is the long wait rather than the drawing.
+let after = null;
+for (let i = 0; i < 90; i++) {
+  await page.waitForTimeout(1500);
+  after = await page.evaluate(() => ({
+    stillDrawing: Boolean(document.querySelector('[data-testid="drawing-board"]')),
+    summary: document.body.innerText.match(/(\d+) rooms, (\d+) doorways\./)?.[0] ?? null,
+    fitted: /Does this look right/.test(document.body.innerText),
+  }));
+  if (after.fitted) break;
+}
+await page.screenshot({ path: "shots/F4-fitted.png" });
+check("the drawing is accepted", after && !after.stillDrawing);
+check("and lands on the fitted plan", Boolean(after?.fitted));
+check("as rooms with doorways", /2 rooms, [1-9]/.test(after?.summary ?? ""), `${after?.summary}`);
 
 // The point of doing it in the browser.
 check("nothing was sent away to read the drawing",
@@ -126,11 +178,11 @@ check("nothing was sent away to read the drawing",
   calls.filter((c) => c.includes("sketch")).join(", "));
 
 console.log(JSON.stringify({
-  summary: after.summary,
+  summary: after?.summary,
   sketchCalls: calls.filter((c) => c.includes("sketch")),
   errors: errors.slice(0, 3),
   verdict: failures === 0
-    ? `FREEHAND OK - a wobbly plan drawn with the pointer became ${after.summary}, refused two names in one space first, and never left the browser`
+    ? `FREEHAND OK - a wobbly plan drawn with the pointer became ${after?.summary}, its spaces lit up as they closed, the names came off the house sheet, and it never left the browser`
     : `FREEHAND BROKEN - ${failures} failures`,
 }, null, 2));
 await browser.close();

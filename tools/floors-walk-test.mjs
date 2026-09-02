@@ -41,8 +41,8 @@ const minimap = page.locator("[data-minimap]");
 await minimap.locator("[data-minimap-level='1']").click();
 await page.waitForTimeout(600);
 // Rooms are the click target on the map now, not the photographs in them.
-const upstairsRoom = await minimap.locator("rect[data-room]").last().getAttribute("data-room");
-await minimap.locator("rect[data-room]").last().click({ force: true });
+const upstairsRoom = await minimap.locator("polygon[data-room]").last().getAttribute("data-room");
+await minimap.locator("polygon[data-room]").last().click({ force: true });
 await page.waitForTimeout(1600);
 const viaMinimap = room();
 const reachedTheRightRoom = viaMinimap === upstairsRoom;

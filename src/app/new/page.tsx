@@ -7,6 +7,7 @@ import { DrawingBoard } from "@/components/wizard/DrawingBoard";
 import { HouseSheet } from "@/components/wizard/HouseSheet";
 import { type BuildMode, ModeChoice } from "@/components/wizard/ModeChoice";
 import {
+  ASSUMED,
   EMPTY_SHEET,
   type HouseSheet as Sheet,
   factsWorthUsing,
@@ -18,6 +19,7 @@ import { PhotoDrop, type ImportedPhoto } from "@/components/wizard/PhotoDrop";
 import { PropertyStart } from "@/components/wizard/PropertyStart";
 import { PhotoReview } from "@/components/wizard/PhotoReview";
 import { PlanBuilder } from "@/components/wizard/PlanBuilder";
+import { SketchImport } from "@/components/wizard/SketchImport";
 import { type BuildEvidence, gatherEvidence } from "@/lib/build/gather";
 import {
   type BuildStep,
@@ -38,7 +40,8 @@ import { checkDrawn, drawableBoundary, fitToBuilding } from "@/lib/plan/drawn";
 import { GOOGLE_ATTRIBUTION } from "@/lib/site/geo";
 import { tileExtentFor, tilePlacement } from "@/lib/site/frame";
 import { useSiteTile } from "@/components/wizard/useSiteTile";
-import { roomKind } from "@/lib/plan/room-kind";
+import { levelName } from "@/lib/plan/geometry";
+import { isStairs, roomKind } from "@/lib/plan/room-kind";
 import { type HouseSpec, describeToSpec } from "@/lib/plan/describe";
 import { buildBom } from "@/lib/bom/build";
 import { type GradeProgress, gradeProperty } from "@/lib/bom/grade-client";
@@ -49,7 +52,8 @@ import { type ReadProgress, measureRooms, readRooms } from "@/lib/spec/read-clie
 // Aliased: `HouseSpec` is already taken here by the room-list type that
 // `describe` produces, which is a different thing entirely.
 import { HouseSpec as RoomSpecDoc } from "@/lib/spec/schema";
-import type { Exterior, Plan, Property } from "@/lib/schema";
+import type { Label, Stroke } from "@/lib/plan/strokes";
+import type { Exterior, Plan, Property, Room, Vec2 } from "@/lib/schema";
 import { requestPersistence } from "@/lib/storage/db";
 import {
   type Intake,
@@ -83,11 +87,19 @@ import { M_PER_FT, sqftToM2 } from "@/lib/units";
  * screen, so somebody with photographs of a single kitchen got the same
  * house-shaped pipeline as somebody building a whole house. "house-sheet"
  * replaces a `<textarea>` behind a disclosure triangle.
+ *
+ * "draw" comes straight after the sheet, and for a house it is not optional.
+ * It used to be a button hidden inside the satellite editor, which put the
+ * hardest surface first and the easiest one behind it - so everybody dragged
+ * rectangles, and the drawing arrived too late to inform the room list or the
+ * classifier. Drawn first, the layout is the thing the build is told; the
+ * satellite step that follows only fits it to the measured building.
  */
 type Stage =
   | "choose"
   | "photos"
   | "house-sheet"
+  | "draw"
   | "gathering"
   | "layout"
   | "building"
@@ -133,6 +145,10 @@ async function photosFromStorage(propertyId: string): Promise<ImportedPhoto[]> {
   return found;
 }
 
+/** Stable empties, so an undrawn storey does not remount the board every render. */
+const EMPTY_STROKES: Stroke[] = [];
+const EMPTY_LABELS: Label[] = [];
+
 function NewTourInner() {
   const params = useSearchParams();
   const resumeId = params.get("id");
@@ -170,6 +186,33 @@ function NewTourInner() {
   const [evidence, setEvidence] = useState<BuildEvidence | null>(null);
   /** The layout as drawn. Starts empty, because the user draws it. */
   const [layoutPlan, setLayoutPlan] = useState<Plan | null>(null);
+  /**
+   * The pen, held here rather than inside the board, and one per storey.
+   *
+   * Three things need it out here: the drawing has to survive stepping back to
+   * the sheet and forward again, it is the one thing on the intake record that
+   * cannot be recovered by asking again, and a house is drawn a floor at a
+   * time. The board itself stays level-blind - it draws whichever storey it is
+   * handed - so the only thing that knows about floors is this.
+   */
+  const [pen, setPen] = useState<Record<number, { strokes: Stroke[]; labels: Label[] }>>({});
+  const [drawLevel, setDrawLevel] = useState(0);
+  /** What each storey read as, kept until every storey has been drawn. */
+  const [drawnByLevel, setDrawnByLevel] = useState<Record<number, Room[]>>({});
+  /** Something wrong with a drawing that only the whole house can see. */
+  const [drawProblem, setDrawProblem] = useState<string | null>(null);
+  /** What the drawing read as, before the building has had its say on size. */
+  const [drawnRooms, setDrawnRooms] = useState<Room[] | null>(null);
+  /**
+   * What the reading had to tidy, kept where `construct` can reach it.
+   *
+   * A ref rather than state because `construct` overwrites `notes` wholesale
+   * with what the build found, and it runs in the same pass that sets them - so
+   * "straightened nine walls, closed sixteen corners" would be written and then
+   * immediately thrown away. These are the surprises the drawing was told about
+   * and they belong beside the build's own.
+   */
+  const drawnNotesRef = useRef<string[]>([]);
   const [suggesting, setSuggesting] = useState(false);
   /** How far the condition scan has got, or null when it is not running. */
   const [scan, setScan] = useState<GradeProgress | null>(null);
@@ -276,21 +319,42 @@ function NewTourInner() {
             })),
           );
 
+          if (intake.sheet) {
+            setSheet(intake.sheet);
+            setSheetPrefilled(true);
+          }
+          if (intake.drawings?.length) {
+            setPen(
+              Object.fromEntries(
+                intake.drawings.map((d) => [d.level, { strokes: d.strokes, labels: d.labels }]),
+              ),
+            );
+          }
+
           /**
            * Come back to the drawing, not to the start.
            *
-           * Only when both halves are there. Evidence without a layout would
+           * The layout stage needs both halves. Evidence without a layout would
            * put someone on an empty canvas having paid for the classify pass
            * and lost the drawing; a layout without evidence cannot be built
            * from, because construction needs the footprint and the room list.
            * Either alone is a corrupt record and the photos screen is the safe
            * place to restart from.
+           *
+           * The drawing stage needs neither - it runs before the classify pass
+           * and its whole content is the strokes, so a record with a drawing
+           * on it can always be resumed there.
            */
           if (intake.stage === "layout" && intake.evidence && intake.layout) {
             setEvidence(intake.evidence);
             setLayoutPlan(intake.layout);
             adjacencyRef.current = intake.evidence.adjacency;
             setStage("layout");
+          } else if (
+            intake.stage === "draw" &&
+            intake.drawings?.some((d) => d.strokes.length > 0)
+          ) {
+            setStage("draw");
           }
         } else {
           // No import record, but the photographs may still be there - a crash
@@ -461,10 +525,11 @@ function NewTourInner() {
     // Never write an untouched blank one. Bouncing off `/new` would otherwise
     // leave an empty tour on the home page every single time - the rule the
     // editor already states for the same reason.
-    // The layout stage saves too. A drawing is the one thing on this record
-    // that cannot be recovered by asking again, so it is the thing most worth
-    // writing down.
-    if (restoring || (stage !== "photos" && stage !== "layout") || !anythingWorthKeeping) return;
+    // The drawing and layout stages save too. A drawing is the one thing on
+    // this record that cannot be recovered by asking again, so it is the thing
+    // most worth writing down.
+    const saves = stage === "photos" || stage === "draw" || stage === "layout";
+    if (restoring || !saves || !anythingWorthKeeping) return;
 
     const timer = setTimeout(() => {
       // The document first, so a crash leaves a tour that is merely empty
@@ -502,7 +567,22 @@ function NewTourInner() {
         })),
         evidence,
         layout: layoutPlan,
-        stage: stage === "layout" ? "layout" : "photos",
+        sheet,
+        // The pen samples far finer than a wall is ever placed, so a tenth of a
+        // pixel is already more than the drawing means. Rounding here keeps a
+        // ten-room plan a small record instead of a few thousand long floats.
+        drawings: Object.entries(pen).map(([level, drawn]) => ({
+          level: Number(level),
+          strokes: drawn.strokes.map((stroke) => ({
+            ...stroke,
+            points: stroke.points.map(([x, y]) => [
+              Math.round(x * 10) / 10,
+              Math.round(y * 10) / 10,
+            ]) as Stroke["points"],
+          })),
+          labels: drawn.labels,
+        })),
+        stage: stage === "layout" ? "layout" : stage === "draw" ? "draw" : "photos",
         updatedAt: Date.now(),
       });
     }, 400);
@@ -521,6 +601,8 @@ function NewTourInner() {
     anythingWorthKeeping,
     evidence,
     layoutPlan,
+    sheet,
+    pen,
   ]);
 
   /**
@@ -665,7 +747,7 @@ function NewTourInner() {
    */
   const construct = useCallback(
     async (evidence: BuildEvidence, drawn: Plan | null, kind: BuildMode = "house") => {
-      const gathered = [...evidence.notes];
+      const gathered = [...drawnNotesRef.current, ...evidence.notes];
       const { footprint: prepared, adjacency, rooms } = evidence;
       const labelled = evidence.photos;
       const outside = evidence.outside;
@@ -889,6 +971,116 @@ function NewTourInner() {
     return checkDrawn(layoutPlan.rooms, boundary.outline, 0);
   }, [layoutPlan, boundary]);
 
+  /**
+   * The rooms the sheet says this house has, on the floor being drawn.
+   *
+   * Offered on the board as chips, so naming a room is a press rather than a
+   * spelling test - and so the names the layout is packed from and the names
+   * the classifier is allowed to choose from are the same words.
+   *
+   * Ground floor only: the pad draws one storey, and upstairs rooms would be
+   * chips for spaces that are not on this piece of paper.
+   */
+  const wantedRooms = useMemo(
+    () =>
+      sheetToSpec(sheet)
+        .rooms.filter((room) => room.level === drawLevel && roomKind(room.label) !== "outside")
+        .map((room) => room.label),
+    [sheet, drawLevel],
+  );
+
+  /**
+   * The building to draw inside, when the map measured one.
+   *
+   * `footprint.outline` is already the simplified, squared-up shape in metres -
+   * the listing lookup does that work, and it is in state before the drawing
+   * stage is reached, so this costs nothing. Handing it to the pad does two
+   * things: it gives the outline to trace, so the house comes out this
+   * building's shape rather than a rectangle to be repacked afterwards, and it
+   * fixes the pad's scale, so what is drawn is already in real metres.
+   *
+   * The same outline for every storey. An upper floor stands on the ground
+   * floor's footprint, which is exactly the assumption the packer has always
+   * made when it puts every level inside one outline.
+   */
+  const drawGuide = useMemo(() => {
+    const outline = footprint?.outline;
+    if (!outline || outline.length < 4) return null;
+    const xs = outline.map((p) => p[0]);
+    const ys = outline.map((p) => p[1]);
+    const span = Math.max(Math.max(...xs) - Math.min(...xs), Math.max(...ys) - Math.min(...ys));
+    // A pen stroke is a handful of pixels wide, so the paper has to be big
+    // enough that a wall is a line rather than a smudge.
+    if (!(span > 1)) return null;
+    return { outline: outline as Vec2[], metresPerPixel: span / 700 };
+  }, [footprint]);
+
+  /**
+   * The storeys to draw, in the order somebody would walk them.
+   *
+   * Straight off the sheet, because the sheet is what decides how many floors
+   * the house has. Drawing only the ground floor and letting the packer invent
+   * the rest would put an upstairs nobody drew above a ground floor somebody
+   * did - and the stairs would have to line up between the two by luck.
+   */
+  const drawLevels = useMemo(() => {
+    const levels = new Set(sheetToSpec(sheet).rooms.map((room) => room.level));
+    return [...levels].sort((a, z) => a - z);
+  }, [sheet]);
+
+  // A storey that stops existing - the floor count came down - must not keep a
+  // drawing that would be built anyway.
+  useEffect(() => {
+    if (!drawLevels.includes(drawLevel)) setDrawLevel(drawLevels[0] ?? 0);
+  }, [drawLevels, drawLevel]);
+
+  /**
+   * Whether what is on the satellite canvas came from a pen.
+   *
+   * Not just `drawnRooms`: a reload restores the layout and the strokes but not
+   * the intermediate reading, and telling somebody to "place each room inside
+   * the outline" about a plan they drew themselves is worse than saying
+   * nothing.
+   */
+  const cameFromDrawing =
+    (drawnRooms?.length ?? 0) > 0 ||
+    Object.values(pen).some((drawn) => drawn.strokes.length > 0);
+
+  /** The storey still to be drawn after this one, or null when this is the last. */
+  const nextToDraw = useMemo(
+    () => drawLevels.find((level) => level !== drawLevel && !drawnByLevel[level]) ?? null,
+    [drawLevels, drawLevel, drawnByLevel],
+  );
+
+  /**
+   * Take a room off the sheet because it turned out not to be drawn.
+   *
+   * The sheet is what decides the room list the whole build is packed from, so
+   * a room nobody drew has to be removed from it deliberately rather than
+   * invented back in later by the inventory. Bedrooms and bathrooms are counts
+   * rather than chips, so dropping one is a decrement.
+   */
+  const dropWantedRoom = useCallback((label: string) => {
+    setSheet((current) => {
+      const kind = roomKind(label);
+      // The primary bedroom is the one bedroom that is also a switch: dropping
+      // it takes the suite off rather than reducing the count, or the house
+      // loses a bedroom and keeps an ensuite belonging to nothing.
+      if (kind === "primary-bedroom") {
+        return { ...current, hasPrimary: false, beds: Math.max(0, current.beds - 1) };
+      }
+      if (kind === "bedroom") return { ...current, beds: Math.max(0, current.beds - 1) };
+      if (kind === "bathroom" || kind === "powder") {
+        return { ...current, baths: Math.max(0, current.baths - (kind === "powder" ? 0.5 : 1)) };
+      }
+      if (kind === "basement") return { ...current, hasBasement: false };
+      if (ASSUMED.includes(label)) {
+        return { ...current, removed: [...new Set([...current.removed, label])] };
+      }
+      return { ...current, extras: current.extras.filter((room) => room.label !== label) };
+    });
+  }, []);
+
   /** Rooms the house is known to have that are not on the drawing yet. */
   const unplaced = useMemo(() => {
     if (!evidence || !layoutPlan) return [];
@@ -943,8 +1135,6 @@ function NewTourInner() {
    * arrangement is kept and only the sizes are given up.
    */
   const [fitProblem, setFitProblem] = useState<string | null>(null);
-  /** Whether the pen is out. The drawing surface needs the whole screen. */
-  const [drawingFreehand, setDrawingFreehand] = useState(false);
   const fitLayout = useCallback(() => {
     if (!evidence?.footprint || !layoutPlan) return;
     const fitted = fitToBuilding(layoutPlan.rooms, evidence.footprint, 0);
@@ -958,7 +1148,15 @@ function NewTourInner() {
     setLayoutPlan({ ...layoutPlan, rooms, openings: autoOpenings(rooms) });
   }, [evidence, layoutPlan]);
 
-  const build = useCallback(async () => {
+  /**
+   * Everything from "here is my layout" to a house waiting to be confirmed.
+   *
+   * `drawn` is the layout, and it is an argument rather than state because the
+   * drawing stage calls this in the same tick it produces the rooms - state set
+   * a line earlier is not readable here yet. Null is the room-mode path, which
+   * has no layout to draw and never reaches the satellite step.
+   */
+  const build = useCallback(async (drawn: Room[] | null = null) => {
     setStage("gathering");
     setFailed(null);
     try {
@@ -1071,18 +1269,30 @@ function NewTourInner() {
       }
 
       /**
-       * Stop, and hand the house over.
+       * A drawing gives the arrangement; the building gives the size.
        *
-       * The canvas opens empty on purpose. Everything the packer would have
-       * guessed is still one button away, but it is a button rather than a
-       * default, so a machine's arrangement can never reach the built house
-       * wearing somebody's approval.
+       * The canvas used to open empty, and everything the packer would have
+       * guessed sat behind a button so that a machine's arrangement could never
+       * reach the built house wearing somebody's approval. That reasoning still
+       * holds and this does not break it - what lands on the canvas here is the
+       * user's own drawing, not a guess. Only the dimensions are given up, to
+       * the outline the map actually measured, which is the one thing a pen
+       * cannot know.
+       *
+       * When there is no outline the drawing is taken as it came; when the fit
+       * refuses, so is it, and the reason is said out loud rather than swallowed.
        */
+      const fitted =
+        found.footprint && drawn && drawn.length > 0
+          ? fitToBuilding(drawn, found.footprint, 0)
+          : { ok: true as const, rooms: drawn ?? [] };
+      const placed = fitted.ok ? fitted.rooms : (drawn ?? []);
       setLayoutPlan({
         scaleRef: { px: 1, meters: M_PER_FT },
-        rooms: [],
-        openings: [],
+        rooms: placed,
+        openings: autoOpenings(placed),
       });
+      setFitProblem(fitted.ok ? null : `${fitted.why} Using the drawing as it was drawn.`);
       setStep(null);
       setStage("layout");
     } catch (error) {
@@ -1091,10 +1301,13 @@ function NewTourInner() {
       // is mostly the media store refusing to open, and without this the page
       // sat on the building screen forever with nothing said and no way back.
       // The photographs are safe either way: they and the import record were
-      // written before any of this started.
+      // written before any of this started - and so is the drawing, which is
+      // why a failure on the way through goes back to the pen rather than to
+      // the photo screen. Sending somebody back past their own drawing to
+      // retry is how a slow network costs a ten-room plan.
       setFailed(error instanceof Error ? error.message : "Something went wrong building the house.");
       setStep(null);
-      setStage("photos");
+      setStage(drawn && drawn.length > 0 ? "draw" : "photos");
     }
   }, [photos, spec, sheet, mode, facts, footprint, listingSite, exterior, construct]);
 
@@ -1130,11 +1343,11 @@ function NewTourInner() {
                 Back
               </button>
               <button
-                onClick={() => void build()}
+                onClick={() => setStage("draw")}
                 data-testid="build-from-sheet"
                 className="rounded-lg bg-accent px-8 py-3 text-sm font-semibold text-ink-900 transition hover:brightness-110"
               >
-                Build the house
+                Next: draw the layout
               </button>
             </div>
           </div>
@@ -1250,62 +1463,183 @@ function NewTourInner() {
           </>
         )}
 
-        {stage === "layout" && layoutPlan && evidence && drawingFreehand && (
-          <div className="mx-auto flex h-[78vh] max-w-5xl flex-col">
+        {stage === "draw" && (
+          <div className="mx-auto flex h-[82vh] max-w-5xl flex-col">
             <div className="mb-3">
-              <h1 className="text-xl font-semibold tracking-tight">Draw the layout</h1>
+              <h1 className="text-xl font-semibold tracking-tight">
+                {drawLevels.length > 1
+                  ? `Draw the ${levelName(drawLevel).toLowerCase()}`
+                  : "Draw the layout"}
+              </h1>
               <p className="mt-1 text-sm text-mist-400">
                 One line per wall, roughly is fine &mdash; wobbly lines are straightened and
-                corners that miss each other are closed. Name each room when the walls are
-                round it.
+                corners that miss each other are closed. A space lights up as soon as its
+                walls close; switch to <span className="text-mist-200">Name a room</span> and
+                click it to say what it is.{" "}
+                {drawGuide
+                  ? "The dashed shape is this building as the map measured it — draw inside it and the sizes come out right on their own."
+                  : "Sizes come from the building later, so draw the arrangement and never mind the proportions."}
+                {drawLevels.length > 1 && " One floor at a time — the tabs above are the storeys the house sheet says it has."}
               </p>
             </div>
+            {drawLevels.length > 1 && (
+              <div className="mb-2 flex flex-wrap items-center gap-1.5">
+                {drawLevels.map((level) => (
+                  <button
+                    key={level}
+                    onClick={() => {
+                      setDrawLevel(level);
+                      setDrawProblem(null);
+                    }}
+                    data-testid="draw-floor"
+                    data-level={level}
+                    className={`rounded px-3 py-1.5 text-xs transition ${
+                      level === drawLevel
+                        ? "bg-accent text-ink-900"
+                        : "border border-ink-500 text-mist-200 hover:bg-ink-600"
+                    }`}
+                  >
+                    {levelName(level)}
+                    <span className="ml-1.5 opacity-60">
+                      {drawnByLevel[level] ? "✓" : "·"}
+                    </span>
+                  </button>
+                ))}
+              </div>
+            )}
             <DrawingBoard
-              onCancel={() => setDrawingFreehand(false)}
+              key={drawLevel}
+              strokes={pen[drawLevel]?.strokes ?? EMPTY_STROKES}
+              labels={pen[drawLevel]?.labels ?? EMPTY_LABELS}
+              onStrokes={(next) => {
+                // A wall has just moved, so a complaint about the last reading
+                // is about a drawing that no longer exists.
+                setDrawProblem(null);
+                setPen((current) => {
+                  const here = current[drawLevel] ?? { strokes: [], labels: [] };
+                  return {
+                    ...current,
+                    [drawLevel]: {
+                      ...here,
+                      strokes: typeof next === "function" ? next(here.strokes) : next,
+                    },
+                  };
+                });
+              }}
+              onLabels={(next) =>
+                setPen((current) => {
+                  const here = current[drawLevel] ?? { strokes: [], labels: [] };
+                  return {
+                    ...current,
+                    [drawLevel]: {
+                      ...here,
+                      labels: typeof next === "function" ? next(here.labels) : next,
+                    },
+                  };
+                })
+              }
+              wanted={wantedRooms}
+              guide={drawGuide}
+              targetGroundSqft={
+                sheet.sqft ? sheet.sqft / Math.max(1, Math.round(sheet.storeys)) : undefined
+              }
+              onDropWanted={dropWantedRoom}
+              onCancel={() => setStage("house-sheet")}
+              cancelLabel="Back"
+              cta={nextToDraw === null ? "Build the house" : `Next: ${levelName(nextToDraw)}`}
+              notice={drawProblem}
               onRooms={(rooms, adjustments) => {
                 /**
-                 * A drawing gives the arrangement; the building gives the size.
+                 * A storey with no way up it is not a storey.
                  *
-                 * The pen has no scale of its own, so when there is a measured
-                 * outline the rooms are fitted into it - which keeps what was
-                 * drawn and gives up only the dimensions, exactly as the
-                 * "fit" button does for a dragged layout. With no outline the
-                 * drawing is the only thing that knows the shape, so it is
-                 * taken as it came.
+                 * Stairs used to be placed by the packer, so nobody had to
+                 * think about them. They are drawn now, and a house whose
+                 * upstairs has no staircase is not visibly wrong anywhere -
+                 * the plan looks fine, the rooms are all there, and the only
+                 * symptom is walking the tour and finding no way up. That is
+                 * exactly the class of mistake this refuses rather than ships.
                  */
-                const fitted =
-                  evidence.footprint && rooms.length > 0
-                    ? fitToBuilding(rooms, evidence.footprint, 0)
-                    : { ok: true as const, rooms };
-                const next = fitted.ok ? fitted.rooms : rooms;
-                setLayoutPlan({
-                  scaleRef: { px: 1, meters: M_PER_FT },
-                  rooms: next,
-                  openings: autoOpenings(next),
-                });
-                setFitProblem(
-                  fitted.ok
-                    ? adjustments.join(" ")
-                    : `${fitted.why} Using the drawing as it was drawn.`,
+                if (drawLevels.length > 1 && !rooms.some((room) => isStairs(room.label))) {
+                  setDrawProblem(
+                    `This house has ${drawLevels.length} floors, so every floor needs a staircase — otherwise there is no way between them. Name one of these spaces Stairs.`,
+                  );
+                  return;
+                }
+                setDrawProblem(null);
+
+                // Rooms come off the board on level 0 whichever floor is being
+                // drawn, because the board does not know about floors.
+                const onLevel = rooms.map((room) => ({ ...room, level: drawLevel }));
+                const all = { ...drawnByLevel, [drawLevel]: onLevel };
+                setDrawnByLevel(all);
+                drawnNotesRef.current = adjustments;
+
+                const missing = drawLevels.find((level) => !all[level]);
+                if (missing !== undefined) {
+                  setDrawLevel(missing);
+                  return;
+                }
+
+                // Ids are unique per storey only, so they are made unique
+                // across the house here - photographs and grades are keyed by
+                // room id, and two rooms sharing one is how an upstairs
+                // bedroom ends up wearing the kitchen's photographs.
+                const together = drawLevels.flatMap((level) =>
+                  (all[level] ?? []).map((room) => ({ ...room, id: `L${level}${room.id}` })),
                 );
-                setDrawingFreehand(false);
+                setDrawnRooms(together);
+                void build(together).catch((error) => {
+                  setFailed(
+                    error instanceof Error
+                      ? error.message
+                      : "Something went wrong building the house.",
+                  );
+                  setStep(null);
+                  setStage("draw");
+                });
               }}
             />
+            {/* The other two ways a layout arrives already drawn - a photo of a
+                notepad, and a floor plan off a listing. Same destination as the
+                pen: rooms in the drawing's own metres, fitted to the building
+                afterwards. Hides itself when no key is configured. */}
+            <div className="mt-2">
+              <SketchImport
+                livingAreaSqft={sheet.sqft ?? facts?.sqft ?? undefined}
+                onPlan={(next, sketchNotes) => {
+                  setDrawnRooms(next.rooms);
+                  drawnNotesRef.current = sketchNotes;
+                  void build(next.rooms).catch((error) => {
+                    setFailed(
+                      error instanceof Error
+                        ? error.message
+                        : "Something went wrong building the house.",
+                    );
+                    setStep(null);
+                    setStage("draw");
+                  });
+                }}
+              />
+            </div>
           </div>
         )}
 
-        {stage === "layout" && layoutPlan && evidence && !drawingFreehand && (
+        {stage === "layout" && layoutPlan && evidence && (
           <div className="mx-auto max-w-4xl">
             <div className="mb-4">
-              <h1 className="text-xl font-semibold tracking-tight">Draw the layout</h1>
+              <h1 className="text-xl font-semibold tracking-tight">Does this look right?</h1>
               <p className="mt-1 text-sm text-mist-400">
-                {!boundary?.ok
-                  ? "Place each room, and drag them together — rooms that touch get a doorway."
-                  : evidence.shapeFrom === "map"
-                    ? "This is the building's outline as surveyed on the map. Place each room inside it, and drag them together — rooms that touch get a doorway."
+                {cameFromDrawing
+                  ? evidence.shapeFrom === "map"
+                    ? "Your drawing, fitted to the building as it is surveyed on the map. The arrangement is yours; only the sizes came from the outline. Nudge anything that looks wrong."
                     : evidence.shapeFrom === "traced"
-                      ? "No building is drawn on the map here, so this outline was read off the satellite image — check it against the roof before you trust it. Place each room inside it; rooms that touch get a doorway."
-                      : "Nothing measured this building, so the outline is a typical shape rather than this house's. Place each room inside it; rooms that touch get a doorway."}
+                      ? "Your drawing, fitted to the building as it looks from above — no outline is drawn on the map here, so check it against the roof before you trust it. Nudge anything that looks wrong."
+                      : evidence.shapeFrom === "invented"
+                        ? "Nothing measured this building, so the sizes are typical rather than this house's. The arrangement is the one you drew. Nudge anything that looks wrong."
+                        : "Your drawing, at the sizes it was drawn. Nudge anything that looks wrong."
+                  : !boundary?.ok
+                    ? "Place each room, and drag them together — rooms that touch get a doorway."
+                    : "This is the building's outline as measured. Place each room inside it, and drag them together — rooms that touch get a doorway."}
               </p>
               {boundary?.ok && boundary.note && (
                 <p className="mt-1 text-xs text-mist-400">{boundary.note}</p>
@@ -1331,11 +1665,11 @@ function NewTourInner() {
                 {suggesting ? "Working it out…" : "Suggest a layout"}
               </button>
               <button
-                onClick={() => setDrawingFreehand(true)}
+                onClick={() => setStage("draw")}
                 data-testid="draw-freehand"
                 className="rounded border border-ink-500 px-3 py-1.5 text-xs hover:bg-ink-600"
               >
-                Draw it by hand
+                Redraw it
               </button>
               <button
                 onClick={fitLayout}
@@ -1346,7 +1680,7 @@ function NewTourInner() {
                 Fit the rooms to the building
               </button>
               <span className="text-xs text-mist-400">
-                {evidence.rooms.length} rooms to place
+                {evidence.rooms.length} rooms
                 {evidence.addedByInventory.length > 0 &&
                   ` · ${evidence.addedByInventory.length} the listing implied but no photo showed`}
               </span>
@@ -1356,7 +1690,6 @@ function NewTourInner() {
               plan={layoutPlan}
               photoCounts={photoCounts}
               displayUnits="ft"
-              livingAreaSqft={facts?.sqft ?? undefined}
               boundary={boundary?.ok ? boundary.outline : null}
               check={layoutCheck}
               backdrop={backdrop}
@@ -1386,7 +1719,7 @@ function NewTourInner() {
               </button>
               <span className="text-xs text-mist-400">
                 {layoutPlan.rooms.length === 0
-                  ? "Place a room to begin, or ask for a suggestion."
+                  ? "Nothing landed. Redraw it, or ask for a suggestion."
                   : layoutCheck && !layoutCheck.ok
                     ? `${layoutCheck.why} Drag them together, or press “Fit the rooms to the building”.`
                     : `${layoutPlan.rooms.length} rooms, ${layoutPlan.openings.length} doorways.`}
@@ -1567,7 +1900,6 @@ function NewTourInner() {
               plan={plan}
               photoCounts={photoCounts}
               displayUnits="ft"
-              livingAreaSqft={facts?.sqft ?? undefined}
               onChange={(next) => {
                 setPlan(next);
                 // Re-place rather than carrying nodes over: a redrawn plan has
@@ -1599,7 +1931,7 @@ function NewTourInner() {
                 Fine-tune in the editor
               </a>
               <button
-                onClick={() => void build()}
+                onClick={() => void build(drawnRooms)}
                 className="rounded border border-ink-500 px-4 py-2 text-xs hover:bg-ink-600"
               >
                 Rebuild from the photos

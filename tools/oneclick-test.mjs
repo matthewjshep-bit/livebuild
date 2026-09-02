@@ -10,7 +10,7 @@
 import { chromium } from "playwright";
 import { readdirSync } from "node:fs";
 import { join } from "node:path";
-import { drawLayout, chooseMode } from "./lib/flow.mjs";
+import { build, chooseMode } from "./lib/flow.mjs";
 
 const base = process.env.BASE_URL ?? "http://localhost:3000";
 const dir = "public/properties/demo-house/photos";
@@ -40,11 +40,11 @@ const startedAt = Date.now();
 await page.setInputFiles('input[type="file"]', files);
 await page.waitForTimeout(2000);
 await page.screenshot({ path: "shots/C1-drop.png" });
-await page.getByRole("button", { name: "Build my tour" }).click();
-
-// The build stops to be drawn. "One click" now means one click plus accepting
-// the suggested layout, which is the same arrangement this test always got.
-const arrived = await drawLayout(page, { timeoutMs: 200_000 });
+// "One click" is now one click, a sheet and a drawing: the layout is asked for
+// before the build rather than dragged out of an empty canvas afterwards. The
+// shared helper does all three, so this suite keeps measuring the time from
+// dropping photos to a finished house rather than knowing the screens.
+const arrived = await build(page, { timeoutMs: 200_000 });
 const seconds = Math.round((Date.now() - startedAt) / 1000);
 await page.screenshot({ path: "shots/C2-review.png" });
 
@@ -91,7 +91,7 @@ console.log(
       verdict: ok
         ? `ONE CLICK WORKS - ${files.length} photos in, ${built.rooms} rooms and ` +
           `${built.doorways} doorways out in ${seconds}s, every photo placed and walkable, ` +
-          `with no typing or dragging`
+          `with nothing typed and nothing dragged`
         : `FAILED - arrived=${arrived} rooms=${built.rooms} nodes=${built.nodes}/${files.length} walkable=${walkable}`,
     },
     null,

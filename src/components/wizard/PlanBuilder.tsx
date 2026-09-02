@@ -3,12 +3,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { ROOM_PRESETS, autoOpenings, boundsOf, rectangle, typicalSize } from "@/lib/plan/autolayout";
-import { SketchImport } from "@/components/wizard/SketchImport";
 import { area, centroid, levelName, levelsOf } from "@/lib/plan/geometry";
 import { isStairs } from "@/lib/plan/room-kind";
 import type { DrawnCheck } from "@/lib/plan/drawn";
 import type { Plan, Room, Vec2 } from "@/lib/schema";
-import { M_PER_FT, formatArea } from "@/lib/units";
+import { M_PER_FT, formatArea, formatFeetInches, ftToM, mToFt } from "@/lib/units";
 
 /**
  * The layout builder.
@@ -26,10 +25,41 @@ const SNAP_M = 0.45;
 const NUDGE_M = M_PER_FT / 2;
 const MIN_ROOM_M = 1.2;
 
+/**
+ * Walls land on six inches, the way the rest of the plan already does.
+ *
+ * Dragging was free-form to a float, so no amount of care produced a wall at a
+ * number anybody would write down - a room came out 3.87 m wide because that is
+ * where the mouse stopped. The sketch solver has always rounded to this, and
+ * `prepareFootprint` snaps the building outline to two feet, so this is the
+ * plan agreeing with itself rather than a new opinion.
+ *
+ * Applied before the neighbour snap, never after: rooms touching exactly is
+ * what doorways are derived from, and a grid applied last would push them a
+ * few millimetres apart again.
+ */
+const GRID_M = M_PER_FT / 2;
+
+const onGrid = (value: number) => Math.round(value / GRID_M) * GRID_M;
+
 type Drag =
   | { kind: "move"; roomId: string; grabOffset: Vec2 }
   | { kind: "resize"; roomId: string }
   | null;
+
+/** Put a room's corners on the grid, keeping its shape a rectangle. */
+function snapToGrid(room: Room): Room {
+  const b = boundsOf(room.polygon);
+  return {
+    ...room,
+    polygon: rectangle(
+      onGrid(b.x0),
+      onGrid(b.y0),
+      Math.max(GRID_M, onGrid(b.x1 - b.x0)),
+      Math.max(GRID_M, onGrid(b.y1 - b.y0)),
+    ),
+  };
+}
 
 function snapToNeighbours(moved: Room, others: Room[]): Room {
   const b = boundsOf(moved.polygon);
@@ -68,6 +98,75 @@ function snapToNeighbours(moved: Room, others: Room[]): Room {
   return { ...moved, polygon: moved.polygon.map(([x, y]) => [x + dx, y + dy] as Vec2) };
 }
 
+/**
+ * A room's dimensions, in feet, typed.
+ *
+ * Held locally while it is being edited so that "1" on the way to "12" does not
+ * collapse the room to a foot wide and take its neighbours with it; committed
+ * on blur and on Enter, and re-synced whenever the room changes underneath -
+ * which it does on every drag.
+ */
+function Size({
+  room,
+  onChange,
+}: {
+  room: Room;
+  onChange: (widthM: number, depthM: number) => void;
+}) {
+  const b = boundsOf(room.polygon);
+  const asText = (m: number) => String(Math.round(mToFt(m) * 10) / 10);
+  const [draft, setDraft] = useState<{ w: string; d: string }>({
+    w: asText(b.x1 - b.x0),
+    d: asText(b.y1 - b.y0),
+  });
+
+  useEffect(() => {
+    const bounds = boundsOf(room.polygon);
+    setDraft({ w: asText(bounds.x1 - bounds.x0), d: asText(bounds.y1 - bounds.y0) });
+  }, [room]);
+
+  const commitSize = (next: { w: string; d: string }) => {
+    const width = Number(next.w);
+    const depth = Number(next.d);
+    if (!Number.isFinite(width) || !Number.isFinite(depth)) return;
+    onChange(Math.max(MIN_ROOM_M, ftToM(width)), Math.max(MIN_ROOM_M, ftToM(depth)));
+  };
+
+  const field =
+    "w-16 rounded border border-ink-600 bg-ink-700 px-2 py-1 text-sm tabular-nums outline-none focus:border-accent-dim";
+
+  return (
+    <span className="flex items-center gap-1 text-xs text-mist-400">
+      <input
+        type="number"
+        step={0.5}
+        min={1}
+        value={draft.w}
+        aria-label="Width in feet"
+        data-testid="room-width"
+        onChange={(e) => setDraft((d) => ({ ...d, w: e.target.value }))}
+        onBlur={() => commitSize(draft)}
+        onKeyDown={(e) => e.key === "Enter" && commitSize(draft)}
+        className={field}
+      />
+      <span aria-hidden>&times;</span>
+      <input
+        type="number"
+        step={0.5}
+        min={1}
+        value={draft.d}
+        aria-label="Depth in feet"
+        data-testid="room-depth"
+        onChange={(e) => setDraft((d) => ({ ...d, d: e.target.value }))}
+        onBlur={() => commitSize(draft)}
+        onKeyDown={(e) => e.key === "Enter" && commitSize(draft)}
+        className={field}
+      />
+      <span>ft</span>
+    </span>
+  );
+}
+
 /** Swap a room's width and height about its centre. */
 function rotated(room: Room): Room {
   const b = boundsOf(room.polygon);
@@ -93,7 +192,6 @@ export function PlanBuilder({
   plan,
   photoCounts,
   displayUnits,
-  livingAreaSqft,
   boundary,
   check,
   backdrop,
@@ -105,8 +203,6 @@ export function PlanBuilder({
   plan: Plan;
   photoCounts: Record<string, number>;
   displayUnits: "ft" | "m";
-  /** From a listing, if there was one — used to scale a drawing. */
-  livingAreaSqft?: number;
   /**
    * The building's measured outline, when there is one.
    *
@@ -150,7 +246,6 @@ export function PlanBuilder({
   const [selected, setSelected] = useState<string | null>(null);
   const [level, setLevel] = useState(0);
   const [showPalette, setShowPalette] = useState(false);
-  const [sketchNotes, setSketchNotes] = useState<string[]>([]);
   const history = useRef<Plan[]>([]);
 
   const levels = useMemo(() => {
@@ -291,7 +386,7 @@ export function PlanBuilder({
       // Only the gesture's first frame records undo, or a single drag would
       // fill the history with a hundred intermediate positions.
       commit(
-        plan.rooms.map((r) => (r.id === room.id ? snapToNeighbours(moved, others) : r)),
+        plan.rooms.map((r) => (r.id === room.id ? snapToNeighbours(snapToGrid(moved), others) : r)),
         false,
       );
       return;
@@ -307,7 +402,7 @@ export function PlanBuilder({
       ),
     };
     commit(
-      plan.rooms.map((r) => (r.id === room.id ? snapToNeighbours(resized, others) : r)),
+      plan.rooms.map((r) => (r.id === room.id ? snapToNeighbours(snapToGrid(resized), others) : r)),
       false,
     );
   };
@@ -384,16 +479,6 @@ export function PlanBuilder({
           >
             Mirror floor
           </button>
-          <SketchImport
-            livingAreaSqft={livingAreaSqft}
-            onPlan={(next, notes) => {
-              history.current.push(plan);
-              setSketchNotes(notes);
-              setLevel(0);
-              setSelected(null);
-              onChange(next);
-            }}
-          />
           <button
             onClick={() => setShowPalette((v) => !v)}
             className="rounded bg-ink-600 px-2.5 py-1.5 text-xs hover:bg-ink-500"
@@ -429,30 +514,6 @@ export function PlanBuilder({
         </button>
       </div>
 
-      {sketchNotes.length > 0 && (
-        <div className="mb-2 rounded-lg border border-ink-600 bg-ink-800 px-3 py-2">
-          <div className="flex items-start justify-between gap-3">
-            <div>
-              <p className="text-[11px] uppercase tracking-wide text-mist-400">
-                What it read from your drawing
-              </p>
-              <ul className="mt-1 space-y-0.5 text-xs text-mist-400">
-                {sketchNotes.map((note, i) => (
-                  <li key={i}>&middot; {note}</li>
-                ))}
-              </ul>
-            </div>
-            <button
-              onClick={() => setSketchNotes([])}
-              className="text-xs text-mist-400 hover:text-mist-200"
-              aria-label="Dismiss"
-            >
-              ×
-            </button>
-          </div>
-        </div>
-      )}
-
       {showPalette && (
         <div className="mb-2 rounded-lg border border-ink-600 bg-ink-800 p-2.5">
           <p className="mb-2 text-[11px] text-mist-400">
@@ -479,6 +540,21 @@ export function PlanBuilder({
             value={selectedRoom.label}
             onChange={(e) => patchRoom(selectedRoom.id, (r) => ({ ...r, label: e.target.value }))}
             className="w-44 rounded border border-ink-600 bg-ink-700 px-2 py-1 text-sm outline-none focus:border-accent-dim"
+          />
+          {/* A room is a size before it is a rectangle on a photograph.
+              Dragging can now only land on six inches, but "twelve and a half
+              feet" is still a thing to be typed rather than aimed at - and it
+              is how somebody transcribes a measurement they actually took. The
+              top-left corner is held so a room grows away from its neighbours
+              rather than sliding out from under them. */}
+          <Size
+            room={selectedRoom}
+            onChange={(width, depth) =>
+              patchRoom(selectedRoom.id, (r) => {
+                const b = boundsOf(r.polygon);
+                return { ...r, polygon: rectangle(b.x0, b.y0, width, depth) };
+              })
+            }
           />
           <button
             onClick={() => patchRoom(selectedRoom.id, rotated)}
@@ -666,6 +742,22 @@ export function PlanBuilder({
                 {formatArea(area(room.polygon), displayUnits)}
                 {count > 0 && ` · ${count} photo${count === 1 ? "" : "s"}`}
               </text>
+              {/* What the room measures, while it is being changed. Reading a
+                  size off the room you are dragging is how somebody hits a
+                  number on purpose; an area alone never tells you which of the
+                  two edges just moved. */}
+              {drag?.roomId === room.id && (
+                <text
+                  x={c[0]}
+                  y={b.y0 - view.size / 120}
+                  textAnchor="middle"
+                  fill="#4bb3fd"
+                  fontSize={view.size / 60}
+                  style={{ pointerEvents: "none", userSelect: "none" }}
+                >
+                  {formatFeetInches(b.x1 - b.x0)} × {formatFeetInches(b.y1 - b.y0)}
+                </text>
+              )}
 
               <rect
                 x={b.x1 - view.size / 55}

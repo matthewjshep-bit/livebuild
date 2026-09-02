@@ -77,6 +77,10 @@ check("offering a way back into it", /Continue building/.test(listing));
 // --- Reopening it by id brings the photographs back ---
 await page.goto(`${BASE}/new?id=${firstId}`, { waitUntil: "networkidle" });
 await page.waitForTimeout(2500);
+// Reopening lands on the mode choice like any other visit - the id restores the
+// work, not the screen - so this has to be answered before the photos are seen.
+await chooseMode(page);
+await page.waitForTimeout(1500);
 const resumed = await page.evaluate(() => document.querySelectorAll("img").length);
 check("reopening restores the photographs", resumed >= files.length, `${resumed} thumbnails`);
 

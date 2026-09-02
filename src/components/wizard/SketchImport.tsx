@@ -2,19 +2,24 @@
 
 import { useEffect, useRef, useState } from "react";
 
-import { SketchPad } from "@/components/wizard/SketchPad";
-
 import { type SketchReading, sketchToPlan } from "@/lib/plan/sketch";
 import type { Plan } from "@/lib/schema";
 import { M_PER_FT } from "@/lib/units";
 
 /**
- * Build the layout from a drawing instead of by dragging.
+ * A layout that already exists on paper.
  *
- * Dragging rectangles is the worst part of the builder, and no amount of
- * snapping fixes the underlying problem: the arrangement already exists in the
- * user's head and a mouse is a slow way to get it out. A sketch on a notepad
- * carries it in one gesture.
+ * Drawing on screen is the drawing stage's job now, and it does it without a
+ * request, without a key and with the rooms shown as they close. This is the
+ * other two ways a layout arrives already drawn: a sketch on a notepad, and a
+ * floor plan from a listing or an appraisal.
+ *
+ * It used to offer a third, "Draw it here", which opened a fixed 1400x1000
+ * canvas with no zoom whose eraser painted in the paper colour, flattened it to
+ * a JPEG and sent it away to be read. That was a second, worse answer to a
+ * question the drawing stage now asks properly - and it shipped under the same
+ * words, so the builder had two buttons labelled "Draw the layout" doing
+ * different things.
  */
 
 const MAX_EDGE = 1600;
@@ -49,15 +54,13 @@ export function SketchImport({
   const [error, setError] = useState<string | null>(null);
   const [preview, setPreview] = useState<string | null>(null);
   const [dragging, setDragging] = useState(false);
-  // Drawing is the default. Photographing paper works, but it assumes you are
-  // not already sitting at the machine you are building the tour on.
   /**
-   * "photo" and "floorplan" take the same picture down the same path and differ
-   * only in what the reader is told it is looking at - which is worth a mode of
-   * its own, because a printed plan carries written dimensions and a great deal
-   * of furniture drawn to a standard that makes it look structural.
+   * Both modes take the same picture down the same path and differ only in what
+   * the reader is told it is looking at - which is worth a mode of its own,
+   * because a printed plan carries written dimensions and a great deal of
+   * furniture drawn to a standard that makes it look structural.
    */
-  const [mode, setMode] = useState<"draw" | "photo" | "floorplan">("draw");
+  const [mode, setMode] = useState<"photo" | "floorplan">("photo");
   const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -118,9 +121,10 @@ export function SketchImport({
     return (
       <button
         onClick={() => setOpen(true)}
+        data-testid="import-sketch"
         className="rounded border border-accent-dim bg-accent/10 px-2.5 py-1.5 text-xs text-mist-200 hover:bg-accent/20"
       >
-        Draw the layout
+        I already have it on paper
       </button>
     );
   }
@@ -129,7 +133,7 @@ export function SketchImport({
     <div className="mt-3 rounded-lg border border-ink-600 bg-ink-800 p-4">
       <div className="flex items-start justify-between">
         <div>
-          <h3 className="text-sm font-medium">Draw the layout</h3>
+          <h3 className="text-sm font-medium">A layout you already have</h3>
           <p className="mt-1 text-xs leading-relaxed text-mist-400">
             A box per room with its name in it is all it needs. Write a size like{" "}
             <span className="text-mist-200">12x14</span> inside a room and everything else is
@@ -146,16 +150,6 @@ export function SketchImport({
       </div>
 
       <div className="mt-3 flex gap-1.5">
-        <button
-          onClick={() => setMode("draw")}
-          className={`rounded px-3 py-1.5 text-xs transition ${
-            mode === "draw"
-              ? "bg-accent text-ink-900"
-              : "border border-ink-500 text-mist-200 hover:bg-ink-600"
-          }`}
-        >
-          Draw it here
-        </button>
         <button
           onClick={() => setMode("photo")}
           className={`rounded px-3 py-1.5 text-xs transition ${
@@ -179,14 +173,6 @@ export function SketchImport({
         </button>
       </div>
 
-      {mode === "draw" && (
-        <div className="mt-3">
-          <SketchPad busy={busy} onRead={(dataUrl) => void interpret(dataUrl)} />
-          {error && <p className="mt-2 text-xs text-warn">{error}</p>}
-        </div>
-      )}
-
-      {(mode === "photo" || mode === "floorplan") && (
       <div
         onDragOver={(e) => {
           e.preventDefault();
@@ -238,9 +224,8 @@ export function SketchImport({
           }}
         />
       </div>
-      )}
 
-      {mode !== "draw" && error && <p className="mt-2 text-xs text-warn">{error}</p>}
+      {error && <p className="mt-2 text-xs text-warn">{error}</p>}
       <p className="mt-2 text-[11px] text-mist-400">
         This replaces the current layout. You can still drag and rotate afterwards.
       </p>

@@ -6,12 +6,17 @@
  * checks the label-tolerance path — the sketch says "Bath" and "Bedroom" while
  * the photos were tagged from a different vocabulary, which is exactly the
  * mismatch that used to drop photos silently.
+ *
+ * The photo of paper is an alternative to the pen rather than a replacement for
+ * a finished layout now, so this arrives at the drawing stage and hands it a
+ * photograph instead of drawing. The layout it produces is what the house is
+ * then built from, which is why this no longer rebuilds anything.
  */
 import { chromium } from "playwright";
 import { readdirSync } from "node:fs";
 import { join } from "node:path";
 
-import { addPhotos, build, freshStart, waitForHouse } from "./lib/flow.mjs";
+import { addPhotos, freshStart, waitForHouse } from "./lib/flow.mjs";
 
 const base = process.env.BASE_URL ?? "http://localhost:3000";
 const dir = "public/properties/demo-house/photos";
@@ -27,39 +32,34 @@ page.on("pageerror", (e) => errors.push(e.message));
 
 await freshStart(page, base);
 await addPhotos(page, photos);
-// Labels come from the build; this suite is about the drawing replacing the
-// layout underneath them, and about names not having to match.
-const arrivedFirst = await build(page);
+await page.getByTestId("continue-from-photos").click();
+await page.waitForTimeout(700);
+await page.getByTestId("build-from-sheet").click();
+await page.waitForTimeout(800);
+
+const arrivedFirst = (await page.getByTestId("drawing-board").count()) === 1;
 if (!arrivedFirst) {
-  console.log(JSON.stringify({ verdict: "FAILED - never reached the review screen" }, null, 2));
+  console.log(JSON.stringify({ verdict: "FAILED - never reached the drawing stage" }, null, 2));
   await browser.close();
   process.exit(1);
 }
 
-const before = await page.evaluate(() => {
-  const t = document.body.innerText;
-  return {
-    doorways: Number(t.match(/(\d+) doorways/)?.[1] ?? 0),
-    rooms: document.querySelectorAll("svg text").length,
-  };
-});
-
-await page.getByRole("button", { name: "Draw the layout" }).click();
+// The pen is the default; this suite covers the photo-of-paper route beside it.
+await page.getByTestId("import-sketch").click();
 await page.waitForTimeout(400);
-// Drawing is the default now; this suite covers the photo-of-paper route.
 await page.getByRole("button", { name: "Photo of paper" }).click();
 await page.waitForTimeout(300);
 await page.setInputFiles('input[accept="image/*"]', sketch);
+await page.screenshot({ path: "shots/A1-sketch-read.png" });
 
-// Reading a sketch is a high-effort vision call.
+// Reading a sketch is a high-effort vision call, and the whole build runs after
+// it. Landing on the fitted plan is the signal that the reading was accepted.
 let read = false;
-for (let i = 0; i < 40; i++) {
+for (let i = 0; i < 60; i++) {
   await page.waitForTimeout(3000);
-  // innerText reflects CSS text-transform, and this heading is uppercased.
-  read = await page.evaluate(() => /what it read from your drawing/i.test(document.body.innerText));
+  read = await page.evaluate(() => /Does this look right/.test(document.body.innerText));
   if (read) break;
 }
-await page.screenshot({ path: "shots/A1-sketch-read.png" });
 
 const after = await page.evaluate(() => {
   const t = document.body.innerText;
@@ -70,20 +70,20 @@ const after = await page.evaluate(() => {
     doorways: Number(t.match(/(\d+) doorways/)?.[1] ?? 0),
     labels: [...new Set(labels)],
     stranded: /not touching anything/.test(t),
-    notes: /what it read from your drawing/i.test(t),
   };
 });
 
-// No rebuild needed: replacing the layout re-places the photos into the
-// drawing's rooms, which is the behaviour actually under test here.
-await page.waitForTimeout(1500);
+// The layout is what the house is built from now, so finish the build and look
+// at what came out rather than at a layout swapped in underneath one.
+await page.getByTestId("build-from-layout").click();
+const finished = await waitForHouse(page);
 await page.screenshot({ path: "shots/A2-sketch-built.png" });
 
 const built = await page.evaluate(() => {
   const index = JSON.parse(localStorage.getItem("mattermatt:index") ?? "[]");
   const doc = JSON.parse(localStorage.getItem("mattermatt:property:" + index.pop()) ?? "null");
   return {
-    rebuilt: true,
+    rebuilt: finished,
     rooms: doc?.plan.rooms.map((r) => r.label) ?? [],
     nodes: doc?.nodes.length ?? 0,
     roomsWithPhotos: new Set((doc?.nodes ?? []).map((n) => n.roomId)).size,
@@ -96,12 +96,11 @@ const connected = after.doorways >= 6 && !after.stranded;
 // Every tagged photo must find a home despite the vocabulary mismatch.
 const photosPlaced = built.nodes >= 5;
 
-const ok = read && drewSixRooms && connected && photosPlaced;
+const ok = read && finished && drewSixRooms && connected && photosPlaced;
 
 console.log(
   JSON.stringify(
     {
-      beforeSketch: before,
       afterSketch: after,
       built,
       errors: errors.slice(0, 3),

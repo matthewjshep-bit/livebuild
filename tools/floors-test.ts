@@ -35,8 +35,6 @@ const node = (id: string, roomId: string, x: number, y: number): TourNode => ({
   pitch: 0,
   fovDeg: 78,
   photo: `${id}.jpg`,
-  depth: null,
-  parallaxBudget: 0.35,
   neighbors: [],
 });
 

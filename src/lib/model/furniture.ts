@@ -377,7 +377,11 @@ function garage(width: number, depth: number, doors: Vec2[]): Piece[] {
     width: 1.8,
     depth: 4.4,
   };
-  if (car.width > width - 0.6 || car.depth > depth - 0.6) return [];
+  // Every other builder asks this and this one never did, which made the
+  // garage the one room where the "nothing may block a doorway" rule was not
+  // enforced - on the largest object in the house, in the room most likely to
+  // have a side door onto a narrow wall.
+  if (car.width > width - 0.6 || car.depth > depth - 0.6 || blocksDoor(car, doors)) return [];
   return [
     {
       kind: "car",

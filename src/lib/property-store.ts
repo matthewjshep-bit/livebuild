@@ -238,7 +238,6 @@ export async function hydrateMedia(property: Property): Promise<Property> {
     property.nodes.map(async (node) => ({
       ...node,
       photo: (await resolveMediaUrl(node.photo)) ?? node.photo,
-      depth: node.depth ? await resolveMediaUrl(node.depth) : null,
     })),
   );
   return { ...property, nodes };

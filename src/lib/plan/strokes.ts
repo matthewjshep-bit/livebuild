@@ -60,9 +60,6 @@ const CORNER_RATIO = 0.93;
 /** How far apart two wall ends can be and still be the same corner. */
 const JOIN_PX = 14;
 
-/** Beyond this a gap is a gap, and is reported rather than closed. */
-const GAP_PX = 40;
-
 /** A face smaller than this is arithmetic left over from two crossing lines. */
 const SLIVER_FRACTION = 0.0008;
 

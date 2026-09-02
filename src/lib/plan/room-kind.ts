@@ -176,14 +176,3 @@ export function isLivingArea(label: string): boolean {
 export function isStairs(label: string): boolean {
   return roomKind(label) === "stairs";
 }
-
-/**
- * Rooms nobody photographs but everybody walks through.
- *
- * Used by the walk graph to decide what counts as a way through rather than a
- * destination.
- */
-export function isCirculation(label: string): boolean {
-  const kind = roomKind(label);
-  return kind === "hallway" || kind === "stairs" || kind === "entry";
-}

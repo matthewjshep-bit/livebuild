@@ -32,16 +32,8 @@ import {
 } from "@/lib/model/textures";
 import { type WallSolid, roomIsRectilinear, wallsForLevel } from "@/lib/model/walls";
 import { wallPiecesAround, windowsForLevel } from "@/lib/model/windows";
-import { boundsOf } from "@/lib/plan/autolayout";
-import {
-  area,
-  centroid,
-  levelBase,
-  levelsOf,
-  fromFrame,
-  signedArea,
-  wallSegmentsForRoom,
-} from "@/lib/plan/geometry";
+
+import { area, boundsOf, centroid, fromFrame, levelBase, levelsOf, signedArea, wallSegmentsForRoom } from "@/lib/plan/geometry";
 import { decompose } from "@/lib/plan/footprint";
 import type { HouseSpec } from "@/lib/spec/schema";
 import type { Plan, Room } from "@/lib/schema";
@@ -324,8 +316,6 @@ function LevelModel({
 
     for (const room of rooms) {
       const b = boundsOf(room.polygon);
-      const w = b.x1 - b.x0;
-      const d = b.y1 - b.y0;
 
       // The floor, decomposed from the room's own outline and then cut where
       // a staircase arrives.

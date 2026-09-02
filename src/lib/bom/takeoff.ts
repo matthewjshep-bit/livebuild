@@ -1,7 +1,7 @@
 import { DOOR_HEIGHT } from "@/lib/model/walls";
 import { HEAD_HEIGHT, SILL_HEIGHT, windowsForLevel } from "@/lib/model/windows";
-import { boundsOf } from "@/lib/plan/autolayout";
-import { area, dist, wallSegmentsForRoom } from "@/lib/plan/geometry";
+
+import { area, boundsOf, dist, wallSegmentsForRoom } from "@/lib/plan/geometry";
 import { type RoomKind, roomKind } from "@/lib/plan/room-kind";
 import type { Plan, Room } from "@/lib/schema";
 import { M_PER_FT } from "@/lib/units";

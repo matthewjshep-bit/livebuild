@@ -1,6 +1,7 @@
 "use client";
 
 import { use, useEffect, useState } from "react";
+import Link from "next/link";
 
 import { TourViewer } from "@/components/tour/TourViewer";
 import { resolveProperty } from "@/lib/property-store";
@@ -31,9 +32,9 @@ export default function TourPage({ params }: { params: Promise<{ id: string }> }
     return (
       <Centered>
         <p className="mb-3">No property called &ldquo;{id}&rdquo;.</p>
-        <a href="/" className="text-accent underline underline-offset-4">
+        <Link href="/" className="text-accent underline underline-offset-4">
           Back to properties
-        </a>
+        </Link>
       </Centered>
     );
   }

@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import Link from "next/link";
 
 import { usePlanView } from "@/components/editor/usePlanView";
 import { AddPhotos } from "@/components/editor/AddPhotos";
@@ -10,15 +11,13 @@ import {
   area,
   centroid,
   dist,
-  headingToPlanDir,
-  planDirToHeading,
   pointInPolygon,
   projectOnSegment,
 } from "@/lib/plan/geometry";
 import { buildWalkGraph, findOrphans } from "@/lib/plan/walkgraph";
 import { downloadProperty, saveProperty } from "@/lib/property-store";
 import type { Property, Room, Vec2 } from "@/lib/schema";
-import { M_PER_FT, formatArea, formatLength } from "@/lib/units";
+import { M_PER_FT, formatArea, formatLength, onWallGrid } from "@/lib/units";
 
 export type Tool = "select" | "room" | "door" | "camera";
 export type Selection =
@@ -27,12 +26,12 @@ export type Selection =
   | { kind: "node"; id: string }
   | null;
 
-/** Grid and snapping are in feet, because that is what the plan is drawn in. */
-const SNAP_M = M_PER_FT / 2;
+/** The grid the user sees. Two feet, because six inches is a hairline at zoom. */
 const GRID_M = M_PER_FT * 2;
 
+/** What a wall lands on, which is not the same as what is drawn behind it. */
 function snap(value: number, enabled: boolean): number {
-  return enabled ? Math.round(value / SNAP_M) * SNAP_M : value;
+  return enabled ? onWallGrid(value) : value;
 }
 
 function nextId(prefix: string, taken: Set<string>): string {
@@ -212,16 +211,16 @@ export function PlanEditor({
             id,
             roomId: room.id,
             position: point,
-            // The lens fields are vestigial: the schema still carries them so
-            // every saved and published document parses, and nothing reads
-            // them. A photograph is a record of a room now, not a camera.
+            // The lens fields are vestigial: the schema keeps them so every
+            // saved and published document parses, and nothing reads them. A
+            // photograph is a record of a room now, not a camera. `depth` and
+            // `parallaxBudget` went further and are gone - they existed only
+            // for the 2.5D shell.
             eyeHeight: 1.5,
             heading: 0,
             pitch: 0,
             fovDeg: 78,
             photo: "",
-            depth: null,
-            parallaxBudget: 0.35,
             neighbors: [],
           },
         ],
@@ -333,12 +332,12 @@ export function PlanEditor({
     <div className="app-shell">
       <header className="flex items-center justify-between gap-4 border-b border-ink-600 bg-ink-800 px-4 py-2.5">
         <div className="flex items-center gap-3">
-          <a
+          <Link
             href="/"
             className="shrink-0 whitespace-nowrap text-xs text-mist-400 underline underline-offset-4"
           >
             &larr; All properties
-          </a>
+          </Link>
           <input
             value={property.label}
             onChange={(e) => update({ ...property, label: e.target.value })}

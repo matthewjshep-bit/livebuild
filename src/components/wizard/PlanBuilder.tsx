@@ -2,12 +2,19 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import { ROOM_PRESETS, autoOpenings, boundsOf, rectangle, typicalSize } from "@/lib/plan/autolayout";
-import { area, centroid, levelName, levelsOf } from "@/lib/plan/geometry";
+import { ROOM_PRESETS, autoOpenings, typicalSize } from "@/lib/plan/autolayout";
+import { area, boundsOf, centroid, levelName, levelsOf, rectangle } from "@/lib/plan/geometry";
 import { isStairs } from "@/lib/plan/room-kind";
 import type { DrawnCheck } from "@/lib/plan/drawn";
 import type { Plan, Room, Vec2 } from "@/lib/schema";
-import { M_PER_FT, formatArea, formatFeetInches, ftToM, mToFt } from "@/lib/units";
+import {
+  WALL_GRID_M,
+  formatArea,
+  formatFeetInches,
+  ftToM,
+  mToFt,
+  onWallGrid,
+} from "@/lib/units";
 
 /**
  * The layout builder.
@@ -21,26 +28,13 @@ import { M_PER_FT, formatArea, formatFeetInches, ftToM, mToFt } from "@/lib/unit
  * so no edit can leave the plan unwalkable.
  */
 
+/** How close a dragged edge has to come before it takes a neighbour's line. */
 const SNAP_M = 0.45;
-const NUDGE_M = M_PER_FT / 2;
 const MIN_ROOM_M = 1.2;
 
-/**
- * Walls land on six inches, the way the rest of the plan already does.
- *
- * Dragging was free-form to a float, so no amount of care produced a wall at a
- * number anybody would write down - a room came out 3.87 m wide because that is
- * where the mouse stopped. The sketch solver has always rounded to this, and
- * `prepareFootprint` snaps the building outline to two feet, so this is the
- * plan agreeing with itself rather than a new opinion.
- *
- * Applied before the neighbour snap, never after: rooms touching exactly is
- * what doorways are derived from, and a grid applied last would push them a
- * few millimetres apart again.
- */
-const GRID_M = M_PER_FT / 2;
-
-const onGrid = (value: number) => Math.round(value / GRID_M) * GRID_M;
+// The wall grid is applied before the neighbour snap, never after: rooms
+// touching exactly is what doorways are derived from, and a grid applied last
+// would push them a few millimetres apart again.
 
 type Drag =
   | { kind: "move"; roomId: string; grabOffset: Vec2 }
@@ -53,10 +47,10 @@ function snapToGrid(room: Room): Room {
   return {
     ...room,
     polygon: rectangle(
-      onGrid(b.x0),
-      onGrid(b.y0),
-      Math.max(GRID_M, onGrid(b.x1 - b.x0)),
-      Math.max(GRID_M, onGrid(b.y1 - b.y0)),
+      onWallGrid(b.x0),
+      onWallGrid(b.y0),
+      Math.max(WALL_GRID_M, onWallGrid(b.x1 - b.x0)),
+      Math.max(WALL_GRID_M, onWallGrid(b.y1 - b.y0)),
     ),
   };
 }
@@ -429,10 +423,10 @@ export function PlanBuilder({
         setSelected(null);
       }
       const nudges: Record<string, Vec2> = {
-        ArrowLeft: [-NUDGE_M, 0],
-        ArrowRight: [NUDGE_M, 0],
-        ArrowUp: [0, -NUDGE_M],
-        ArrowDown: [0, NUDGE_M],
+        ArrowLeft: [-WALL_GRID_M, 0],
+        ArrowRight: [WALL_GRID_M, 0],
+        ArrowUp: [0, -WALL_GRID_M],
+        ArrowDown: [0, WALL_GRID_M],
       };
       const nudge = nudges[e.key];
       if (nudge) {

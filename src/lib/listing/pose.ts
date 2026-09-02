@@ -1,7 +1,8 @@
 "use client";
 
-import { boundsOf } from "@/lib/plan/autolayout";
+
 import { getMedia, refToKey } from "@/lib/media-store";
+import { boundsOf } from "@/lib/plan/geometry";
 import type { Plan, Room, TourNode, Vec2 } from "@/lib/schema";
 import { M_PER_FT } from "@/lib/units";
 
@@ -185,45 +186,4 @@ export async function refinePoses(
   });
 
   return { nodes: updated, refined, uncertain };
-}
-
-/**
- * The furthest the camera can see inside its own room.
- *
- * This is what turns relative depth into metres. The old anchor used the
- * distance to the room's furthest corner regardless of which way the camera
- * faced, which overestimates badly for anything not shot down the diagonal -
- * and an overestimated far plane pushes every wall too far away, so the shell
- * no longer meets the dollhouse.
- */
-export function farAnchorForPose(
-  room: Room,
-  position: Vec2,
-  headingDeg: number,
-  eyeHeight: number,
-): number {
-  const b = boundsOf(room.polygon);
-  const heading = (headingDeg * Math.PI) / 180;
-  const forward: Vec2 = [Math.sin(heading), Math.cos(heading)];
-
-  const corners: Vec2[] = [
-    [b.x0, b.y0],
-    [b.x1, b.y0],
-    [b.x1, b.y1],
-    [b.x0, b.y1],
-  ];
-
-  const rise = Math.max(room.ceilingHeight - eyeHeight, eyeHeight);
-  let furthest = 0;
-
-  for (const corner of corners) {
-    const dx = corner[0] - position[0];
-    const dy = corner[1] - position[1];
-    // Only corners actually in front of the camera can appear in the photo.
-    if (dx * forward[0] + dy * forward[1] <= 0) continue;
-    furthest = Math.max(furthest, Math.hypot(dx, dy, rise));
-  }
-
-  // Facing into a corner leaves nothing ahead; fall back to the room's diagonal.
-  return furthest > 0.5 ? furthest : Math.hypot(b.x1 - b.x0, b.y1 - b.y0, rise);
 }

@@ -79,11 +79,15 @@ await page.getByTestId("build-from-layout").click();
 const finished = await waitForHouse(page);
 await page.screenshot({ path: "shots/A2-sketch-built.png" });
 
+// `finished` stays on this side of the bridge. It used to be read inside this
+// closure, which the browser evaluates in its own scope - so every run threw
+// `ReferenceError: finished is not defined` and none of the checks below ever
+// ran. The suite reported a crash rather than a result, which is why it looked
+// like an infrastructure problem rather than a bug in itself.
 const built = await page.evaluate(() => {
   const index = JSON.parse(localStorage.getItem("mattermatt:index") ?? "[]");
   const doc = JSON.parse(localStorage.getItem("mattermatt:property:" + index.pop()) ?? "null");
   return {
-    rebuilt: finished,
     rooms: doc?.plan.rooms.map((r) => r.label) ?? [],
     nodes: doc?.nodes.length ?? 0,
     roomsWithPhotos: new Set((doc?.nodes ?? []).map((n) => n.roomId)).size,

@@ -1,4 +1,3 @@
-import { boundsOf } from "@/lib/plan/autolayout";
 import { levelBase, pointInPolygon } from "@/lib/plan/geometry";
 import { roomKind } from "@/lib/plan/room-kind";
 import type { Plan, Vec2 } from "@/lib/schema";

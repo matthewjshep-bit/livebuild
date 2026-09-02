@@ -6,9 +6,8 @@ import {
   packIntoFootprint,
   validatePackPlan,
 } from "@/lib/plan/footprint";
-import { pointInPolygon } from "@/lib/plan/geometry";
+import { boundsOf, pointInPolygon, snapAxis } from "@/lib/plan/geometry";
 import { outlineOf } from "@/lib/plan/outline";
-import { boundsOf } from "@/lib/plan/autolayout";
 import type { Room, Vec2 } from "@/lib/schema";
 import { M_PER_FT } from "@/lib/units";
 
@@ -73,47 +72,14 @@ export type DrawnCheck =
     };
 
 /**
- * Pull nearly-equal coordinates onto one line, with the outline winning.
+ * The tolerance this module hands `snapAxis`.
  *
- * Two walls a centimetre apart are one wall drawn twice, and left alone they
- * are a plan full of rooms nobody can walk between. `sketch.ts` solves the same
- * problem for a drawing whose scale is unknown, as a fraction of the page; here
- * the scale is metres and known, so the tolerance is absolute.
- *
- * Anchors are the outline's own coordinates and they do not move. That is what
- * "the footprint wins" means in code: a room drawn a few centimetres over the
- * boundary is pulled back onto it, and never the other way about.
+ * `sketch.ts` solves the same clustering problem for a drawing whose scale is
+ * unknown, as a fraction of the page; here the scale is metres and known, so
+ * the tolerance is absolute. The anchors it passes are the outline's own
+ * coordinates, which is what "the footprint wins" means in code: a room drawn a
+ * few centimetres over the boundary is pulled back onto it, never the reverse.
  */
-function snapAxis(values: number[], anchors: number[], tolerance: number): Map<number, number> {
-  const sorted = [...new Set([...values, ...anchors])].sort((a, b) => a - b);
-  const anchored = new Set(anchors);
-  const out = new Map<number, number>();
-
-  let cluster: number[] = [];
-  const flush = () => {
-    if (cluster.length === 0) return;
-    // An anchor in the cluster is the answer. Two of them means the outline has
-    // detail finer than the tolerance, and the nearest one is still right.
-    const fixed = cluster.filter((v) => anchored.has(v));
-    for (const value of cluster) {
-      out.set(
-        value,
-        fixed.length > 0
-          ? fixed.reduce((best, v) => (Math.abs(v - value) < Math.abs(best - value) ? v : best))
-          : cluster.reduce((s, v) => s + v, 0) / cluster.length,
-      );
-    }
-    cluster = [];
-  };
-
-  for (const value of sorted) {
-    if (cluster.length > 0 && value - cluster[cluster.length - 1] > tolerance) flush();
-    cluster.push(value);
-  }
-  flush();
-  return out;
-}
-
 /** Every distinct coordinate, in order, with duplicates collapsed. */
 function gridlines(values: number[]): number[] {
   const sorted = [...values].sort((a, b) => a - b);

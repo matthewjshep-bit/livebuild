@@ -9,8 +9,8 @@ import {
   EMPTY_ROOM_SPEC,
   outranks,
 } from "@/lib/spec/schema";
-import { roomAdjacency } from "@/lib/plan/geometry";
-import { boundsOf } from "@/lib/plan/autolayout";
+import { boundsOf, roomAdjacency } from "@/lib/plan/geometry";
+
 import type { Property, Room } from "@/lib/schema";
 import { policyFor } from "@/lib/ai/policy";
 

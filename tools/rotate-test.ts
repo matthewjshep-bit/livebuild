@@ -18,9 +18,9 @@
  *
  * Pure: no browser, no API key, no network.
  */
-import { autoOpenings, rectangle } from "../src/lib/plan/autolayout";
+import { autoOpenings } from "../src/lib/plan/autolayout";
 import { blocked, collidersFor, startingPoint } from "../src/lib/model/collide";
-import { area, roomAdjacency } from "../src/lib/plan/geometry";
+import { area, rectangle, roomAdjacency } from "../src/lib/plan/geometry";
 import { wallsForLevel } from "../src/lib/model/walls";
 import type { Plan, Room, Vec2 } from "../src/lib/schema";
 

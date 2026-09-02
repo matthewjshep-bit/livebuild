@@ -12,9 +12,10 @@
  * it is what the first version of this actually did.
  */
 import { FURNITURE_COLOURS } from "../src/lib/model/materials";
+import { rectangle } from "../src/lib/plan/geometry";
 import { SCHEMES, floorToneFor, recolour, schemeByName } from "../src/lib/model/schemes";
 import { furnishRoom } from "../src/lib/model/furniture";
-import { rectangle } from "../src/lib/plan/autolayout";
+
 import type { Plan } from "../src/lib/schema";
 
 let failures = 0;

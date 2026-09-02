@@ -2,8 +2,6 @@
 
 import { useCallback, useRef, useState } from "react";
 
-import type { ListingResult } from "@/lib/listing/types";
-
 export type ImportedPhoto = {
   id: string;
   name: string;

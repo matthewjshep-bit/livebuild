@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
 
 import { listPropertyIds, loadProperty } from "@/lib/property-store";
 import { type PublishedTour, listPublished } from "@/lib/cloud/sync";
@@ -123,24 +124,24 @@ export default function Home() {
       <header className="mx-auto flex max-w-5xl items-center justify-between px-6 py-6">
         <Wordmark />
         <nav className="flex items-center gap-1 text-sm">
-          <a
+          <Link
             href="/storage"
             className="hidden rounded-lg px-3 py-2 text-mist-400 transition hover:text-mist-200 sm:block"
           >
             Storage
-          </a>
+          </Link>
           <a
             href="#builds"
             className="hidden rounded-lg px-3 py-2 text-mist-400 transition hover:text-mist-200 sm:block"
           >
             Your builds
           </a>
-          <a
+          <Link
             href="/new"
             className="rounded-lg bg-accent px-4 py-2 font-medium text-ink-900 transition hover:brightness-110"
           >
             Start a build
-          </a>
+          </Link>
         </nav>
       </header>
 
@@ -175,19 +176,19 @@ export default function Home() {
           className="rise mt-9 flex flex-col items-center justify-center gap-3 sm:flex-row"
           style={{ animationDelay: "180ms" }}
         >
-          <a
+          <Link
             href="/new"
             className="group inline-flex w-full items-center justify-center gap-2 rounded-xl bg-accent px-6 py-3.5 text-base font-semibold text-ink-900 shadow-lg shadow-accent/20 transition hover:brightness-110 sm:w-auto"
           >
             Start a build
             <span className="transition-transform group-hover:translate-x-0.5">&rarr;</span>
-          </a>
-          <a
+          </Link>
+          <Link
             href="/tour/demo-house"
             className="inline-flex w-full items-center justify-center rounded-xl border border-ink-500 px-6 py-3.5 text-base text-mist-200 transition hover:border-mist-400 sm:w-auto"
           >
             Walk a sample house
-          </a>
+          </Link>
         </div>
 
         {/* The pipeline, said once in the shape it actually has: many kinds of
@@ -244,12 +245,12 @@ export default function Home() {
               Saved in this browser. Publish one to open it anywhere.
             </p>
           </div>
-          <a
+          <Link
             href="/new"
             className="rounded-lg border border-ink-500 px-4 py-2 text-sm text-mist-200 transition hover:border-accent hover:text-accent"
           >
             + New build
-          </a>
+          </Link>
         </div>
 
         <div className="mt-6 grid gap-3 sm:grid-cols-2">
@@ -317,12 +318,12 @@ export default function Home() {
           ))}
 
           {entries.length === 0 && (
-            <a
+            <Link
               href="/new"
               className="rounded-xl border border-dashed border-ink-600 px-4 py-10 text-center text-sm text-mist-400 transition hover:border-accent hover:text-accent sm:col-span-2"
             >
               Nothing here yet. Start your first build &rarr;
-            </a>
+            </Link>
           )}
         </div>
       </section>
@@ -379,12 +380,12 @@ export default function Home() {
       <footer className="mx-auto flex max-w-5xl flex-wrap items-center justify-between gap-4 border-t border-ink-700 px-6 py-8 text-xs text-mist-400">
         <Wordmark small />
         <div className="flex flex-wrap gap-4">
-          <a href="/storage" className="underline underline-offset-4 hover:text-mist-200">
+          <Link href="/storage" className="underline underline-offset-4 hover:text-mist-200">
             Storage &amp; backups
-          </a>
-          <a href="/editor" className="underline underline-offset-4 hover:text-mist-200">
+          </Link>
+          <Link href="/editor" className="underline underline-offset-4 hover:text-mist-200">
             Advanced: place rooms manually
-          </a>
+          </Link>
         </div>
       </footer>
     </main>
@@ -399,11 +400,11 @@ export default function Home() {
  */
 function Wordmark({ small = false }: { small?: boolean }) {
   return (
-    <a
+    <Link
       href="/"
       className={`font-semibold tracking-tight text-mist-200 ${small ? "text-sm" : "text-lg"}`}
     >
       Livebuild<span className="text-accent">.ai</span>
-    </a>
+    </Link>
   );
 }

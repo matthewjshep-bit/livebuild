@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import Link from "next/link";
 
 import { deleteMediaFor, mediaSizes } from "@/lib/media-store";
 import {
@@ -102,9 +103,9 @@ export default function StoragePanel() {
 
   return (
     <main className="mx-auto max-w-2xl px-6 py-14">
-      <a href="/" className="text-xs text-mist-400 underline underline-offset-4">
+      <Link href="/" className="text-xs text-mist-400 underline underline-offset-4">
         ← Back
-      </a>
+      </Link>
       <h1 className="mt-4 text-2xl font-semibold tracking-tight">Storage</h1>
       <p className="mt-2 text-sm leading-relaxed text-mist-400">
         Everything is saved in this browser &ndash; there is no account and nothing is

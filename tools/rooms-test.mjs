@@ -58,7 +58,6 @@ const fixture = {
     ],
   },
   nodes: [],
-  splats: [],
   condition: {},
   houseCondition: {},
   rates: {},

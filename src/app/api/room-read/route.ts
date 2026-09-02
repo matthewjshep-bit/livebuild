@@ -5,6 +5,7 @@ import { z } from "zod";
 
 import { SCALE_TOLERANCE, scaleError, snapTo } from "@/lib/spec/standards";
 import { quantiseColour } from "@/lib/spec/schema";
+import { M_PER_FT, onWallGrid } from "@/lib/units";
 
 /**
  * Read what a room is made of, from its photographs.
@@ -224,7 +225,6 @@ export async function POST(request: Request) {
 
   if (!room) return Response.json({ error: "nothing-to-do" }, { status: 400 });
 
-  const M_PER_FT = 0.3048;
   const context =
     `This is the ${room}. ` +
     (widthM && depthM
@@ -406,10 +406,14 @@ function reconcile(
             );
             return null;
           }
-          // Rounded to the nearest six inches, the way every other dimension
-          // here is, so a wall reads as deliberate rather than as arithmetic.
-          const round = (v: number) => Math.round(v / 0.1524) * 0.1524;
-          return { widthM: round(Math.max(w, d)), depthM: round(Math.min(w, d)) };
+          // On the wall grid, the way every other dimension here is, so a wall
+          // reads as deliberate rather than as arithmetic. This was `0.1524`
+          // spelled out, which is the same number by coincidence rather than by
+          // agreement.
+          return {
+            widthM: onWallGrid(Math.max(w, d)),
+            depthM: onWallGrid(Math.min(w, d)),
+          };
         })()
       : null;
 

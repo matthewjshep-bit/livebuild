@@ -53,7 +53,6 @@ const seed = async (id, exterior) => {
           openings: [],
         },
         nodes: [],
-        splats: [],
         condition: {},
         houseCondition: {},
         rates: {},

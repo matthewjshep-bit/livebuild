@@ -5,7 +5,7 @@ import { refinePoses } from "@/lib/listing/pose";
 import { getMedia, refToKey } from "@/lib/media-store";
 import { placeNodesInRoom } from "@/lib/plan/autolayout";
 import type { HouseSpec } from "@/lib/plan/describe";
-import type { Plan, Property, TourNode } from "@/lib/schema";
+import type { Plan, TourNode } from "@/lib/schema";
 
 /**
  * The steps between "here are some photographs" and "here is your house".

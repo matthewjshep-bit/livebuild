@@ -6,10 +6,10 @@ import * as THREE from "three";
 
 import { explodeLift, explodeOffset } from "@/lib/model/room-shell";
 import { windowsForLevel } from "@/lib/model/windows";
-import { levelBase, levelsOf, planToWorld } from "@/lib/plan/geometry";
+import { boundsOf, levelBase, levelsOf, planToWorld } from "@/lib/plan/geometry";
 import { sunState } from "@/lib/model/sun";
 import { EnvRig } from "@/components/tour/EnvRig";
-import { boundsOf } from "@/lib/plan/autolayout";
+
 import { interiorPoint } from "@/lib/model/tessellate";
 import { roomKind } from "@/lib/plan/room-kind";
 import { SHADOW_SIZE, type Quality } from "@/lib/render/quality";

@@ -10,8 +10,8 @@
  */
 import { checkDrawn, drawableBoundary, fitToBuilding } from "../src/lib/plan/drawn";
 import { decompose, prepareFootprint } from "../src/lib/plan/footprint";
-import { signedArea } from "../src/lib/plan/geometry";
-import { rectangle } from "../src/lib/plan/autolayout";
+import { rectangle, signedArea } from "../src/lib/plan/geometry";
+
 import type { Room, Vec2 } from "../src/lib/schema";
 
 let failures = 0;

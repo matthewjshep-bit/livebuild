@@ -6,8 +6,8 @@ import {
   EMPTY_ROOM_SPEC,
   outranks,
 } from "@/lib/spec/schema";
-import { roomAdjacency } from "@/lib/plan/geometry";
-import { boundsOf } from "@/lib/plan/autolayout";
+import { boundsOf, roomAdjacency } from "@/lib/plan/geometry";
+
 import { type RoomKind, roomKind, roomKinds } from "@/lib/plan/room-kind";
 import type { Plan, Room, Vec2 } from "@/lib/schema";
 

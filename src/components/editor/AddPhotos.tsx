@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useState } from "react";
 
 import { PhotoDrop, type ImportedPhoto } from "@/components/wizard/PhotoDrop";
 import { PhotoReview } from "@/components/wizard/PhotoReview";

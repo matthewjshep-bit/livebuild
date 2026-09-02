@@ -3,6 +3,7 @@
 import { Canvas, useFrame, useThree } from "@react-three/fiber";
 import * as THREE from "three";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import Link from "next/link";
 
 import { CameraRig, type ViewState } from "@/components/tour/CameraRig";
 import { Lighting } from "@/components/tour/Lighting";
@@ -740,12 +741,12 @@ export function TourViewer({
               published tour is somebody else's listing opened from a link;
               there is no property list of theirs to go back to. */}
           {onPropertyChange && (
-            <a
+            <Link
               href="/"
               className="shrink-0 whitespace-nowrap text-xs text-mist-400 transition hover:text-mist-200"
             >
               &larr; All properties
-            </a>
+            </Link>
           )}
           <span className="truncate text-sm font-semibold tracking-tight">
             {property.label || property.id}

@@ -50,8 +50,8 @@ function MediaThumb({ src }: { src: string }) {
   // announced, so leaving this decorative made the two states asymmetric: a
   // viewpoint with no photograph said so, and one with a photograph said
   // nothing at all, which reads as the same thing.
-  // eslint-disable-next-line @next/next/no-img-element
   return (
+    // eslint-disable-next-line @next/next/no-img-element
     <img
       src={url}
       alt="The photograph taken from this viewpoint"

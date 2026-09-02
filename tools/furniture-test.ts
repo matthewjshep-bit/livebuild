@@ -8,7 +8,8 @@
 import { readFileSync } from "node:fs";
 
 import { furnishRoom } from "../src/lib/model/furniture";
-import { autoOpenings, boundsOf } from "../src/lib/plan/autolayout";
+import { autoOpenings } from "../src/lib/plan/autolayout";
+import { boundsOf } from "../src/lib/plan/geometry";
 import { roomKind } from "../src/lib/plan/room-kind";
 import { parseProperty } from "../src/lib/schema";
 import type { Plan } from "../src/lib/schema";
@@ -116,9 +117,58 @@ check("rooms actually got furnished", furnishedRooms >= 6, `${furnishedRooms} ro
   check("a room too small gets no furniture", furnishRoom(tiny, tiny.rooms[0]).length === 0);
 }
 
+/**
+ * The garage, which is where the door rule was not being enforced.
+ *
+ * Every other builder refuses to place a piece across a doorway; `garage` took
+ * the doorways as an argument and never looked at them. It is the worst room to
+ * miss - a car is the largest object the model places, and a garage commonly
+ * has a side door onto a narrow wall.
+ *
+ * Two garages, differing only in width. The car is 1.8m wide and centred, so a
+ * side door is 1.6m clear of it in a 5m bay and 0.6m from it in a 3m one -
+ * either side of the 0.75m clearance every other room is held to.
+ */
+{
+  const garageOfWidth = (width: number): Plan => ({
+    scaleRef: { px: 1, meters: 0.3048 },
+    rooms: [
+      {
+        id: "g1",
+        label: "Garage",
+        polygon: [[0, 0], [width, 0], [width, 6], [0, 6]],
+        ceilingHeight: 2.7,
+        level: 0,
+      },
+      // Something for the doorway to lead to, so it is a door and not a wall.
+      {
+        id: "g2",
+        label: "Hallway",
+        polygon: [[width, 0], [width + 3, 0], [width + 3, 6], [width, 6]],
+        ceilingHeight: 2.7,
+        level: 0,
+      },
+    ],
+    openings: [
+      { id: "o1", kind: "door", between: ["g1", "g2"], at: [width, 3], width: 0.9 },
+    ],
+  });
+
+  const roomy = garageOfWidth(5);
+  const narrow = garageOfWidth(3);
+  check(
+    "a garage with room beside the car still gets one",
+    furnishRoom(roomy, roomy.rooms[0]).length > 0,
+  );
+  check(
+    "and a garage whose side door the car would block gets none",
+    furnishRoom(narrow, narrow.rooms[0]).length === 0,
+  );
+}
+
 console.log(
   failures === 0
-    ? `FURNITURE OK - ${totalPieces} pieces across ${furnishedRooms} rooms, all inside their room and clear of every doorway`
+    ? `FURNITURE OK - ${totalPieces} pieces across ${furnishedRooms} rooms, all inside their room and clear of every doorway - the garage included`
     : `FURNITURE BROKEN - ${failures} failures`,
 );
 process.exit(failures === 0 ? 0 : 1);

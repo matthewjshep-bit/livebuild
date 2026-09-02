@@ -62,6 +62,10 @@ export function useSiteTile(
       cancelled = true;
       if (objectUrl) URL.revokeObjectURL(objectUrl);
     };
+    // The coordinates, not the object holding them. A caller that builds
+    // `{ lat, lon, extentM }` inline hands over a new object every render, and
+    // depending on it would refetch the satellite tile on each one.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [place?.lat, place?.lon, place?.extentM]);
 
   return tile;

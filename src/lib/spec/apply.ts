@@ -90,22 +90,6 @@ export function applySpec(plan: Plan, spec: HouseSpec | null | undefined): Plan 
 }
 
 /**
- * Whether an opening reaches the ceiling rather than having wall above it.
- *
- * Read by the wall builder to decide if a header belongs over the gap. It is
- * the one line that separates "a door between two rooms" from "these two rooms
- * are one space", and it has to be asked of the spec rather than of the plan,
- * because `Opening` has never had anywhere to record it.
- */
-export function isFullHeight(spec: HouseSpec | null | undefined, opening: Opening): boolean {
-  if (!spec || opening.kind === "stairs") return false;
-  const [a, b] = opening.between;
-  return [spec.rooms[a]?.openings[b], spec.rooms[b]?.openings[a]].some(
-    (side) => side?.kind === "open",
-  );
-}
-
-/**
  * How much wall two rooms share, as a ceiling on how wide their opening can be.
  *
  * Without it a spec that claims a four-metre archway between rooms that touch

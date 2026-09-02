@@ -306,13 +306,76 @@ export function levelName(level: number): string {
 }
 
 /**
- * Floor height under a node, from the storey of the room it stands in.
+ * One-dimensional clustering: coordinates that meant to be the same line.
  *
- * Nodes store a 2D position and an eye height, deliberately: a viewpoint's
- * storey is a property of its room, not of the photo, so moving a room upstairs
- * takes its photos with it and cannot leave them floating on the old floor.
+ * Run separately on the vertical and horizontal edges of a set of rooms. Both
+ * the sketch reader and the drawing checker need it, and both had written it -
+ * identically apart from the tie-break, which is the whole of the difference:
+ * with no anchors a cluster collapses to its mean, and with anchors the nearest
+ * anchor wins and does not move.
+ *
+ * It matters more than it sounds. Doorways are derived from adjacency, so rooms
+ * that *almost* touch produce a plan nobody can walk through - and an anchor
+ * that gives way is a room escaping the building it was drawn inside.
  */
-export function nodeBaseY(plan: Plan, node: { roomId: string }): number {
-  const room = plan.rooms.find((r) => r.id === node.roomId);
-  return room ? levelBase(plan, room.level) : 0;
+export function snapAxis(
+  values: number[],
+  anchors: number[],
+  tolerance: number,
+): Map<number, number> {
+  const sorted = [...new Set([...values, ...anchors])].sort((a, b) => a - b);
+  const anchored = new Set(anchors);
+  const out = new Map<number, number>();
+
+  let cluster: number[] = [];
+  const flush = () => {
+    if (cluster.length === 0) return;
+    // An anchor in the cluster is the answer. Two of them means the outline has
+    // detail finer than the tolerance, and the nearest one is still right.
+    const fixed = cluster.filter((v) => anchored.has(v));
+    for (const value of cluster) {
+      out.set(
+        value,
+        fixed.length > 0
+          ? fixed.reduce((best, v) => (Math.abs(v - value) < Math.abs(best - value) ? v : best))
+          : cluster.reduce((s, v) => s + v, 0) / cluster.length,
+      );
+    }
+    cluster = [];
+  };
+
+  for (const value of sorted) {
+    if (cluster.length > 0 && value - cluster[cluster.length - 1] > tolerance) flush();
+    cluster.push(value);
+  }
+  flush();
+  return out;
+}
+
+/**
+ * An axis-aligned rectangle, wound the way the schema documents.
+ *
+ * This and `boundsOf` lived in `autolayout.ts`, which is why that module had
+ * twenty-four importers: most of them do not pack anything and only ever wanted
+ * one of these two. They are plan geometry and nothing else.
+ */
+export function rectangle(x: number, y: number, w: number, h: number): Vec2[] {
+  return [
+    [x, y],
+    [x + w, y],
+    [x + w, y + h],
+    [x, y + h],
+  ];
+}
+
+/** The axis-aligned box a polygon fits inside. */
+export function boundsOf(polygon: Vec2[]): { x0: number; y0: number; x1: number; y1: number } {
+  const xs = polygon.map((p) => p[0]);
+  const ys = polygon.map((p) => p[1]);
+  return {
+    x0: Math.min(...xs),
+    y0: Math.min(...ys),
+    x1: Math.max(...xs),
+    y1: Math.max(...ys),
+  };
 }

@@ -25,8 +25,8 @@ import {
   stairRuns,
   subtractRects,
 } from "../src/lib/model/stairs";
-import { boundsOf } from "../src/lib/plan/autolayout";
-import { levelBase } from "../src/lib/plan/geometry";
+
+import { boundsOf, levelBase } from "../src/lib/plan/geometry";
 import { type Plan, parseProperty } from "../src/lib/schema";
 
 let failures = 0;

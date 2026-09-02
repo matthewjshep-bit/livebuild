@@ -1,6 +1,7 @@
 import { autoOpenings, typicalSize } from "@/lib/plan/autolayout";
+import { snapAxis } from "@/lib/plan/geometry";
 import type { Opening, Room, Vec2 } from "@/lib/schema";
-import { M_PER_FT, sqftToM2 } from "@/lib/units";
+import { M_PER_FT, onWallGrid, sqftToM2 } from "@/lib/units";
 
 /**
  * Turn a hand-drawn floor plan into a real one.
@@ -42,35 +43,7 @@ export type SketchReading = {
  */
 const SNAP_FRACTION = 0.035;
 
-/**
- * Pull nearly-equal coordinates onto a single value.
- *
- * One-dimensional clustering, run separately on the vertical and horizontal
- * edges. Without it, a sketch produces rooms that *almost* touch - and since
- * doorways are derived from adjacency, almost-touching means a plan full of
- * rooms nobody can walk between.
- */
-function snapAxis(values: number[], tolerance: number): Map<number, number> {
-  const sorted = [...new Set(values)].sort((a, b) => a - b);
-  const snapped = new Map<number, number>();
-
-  let cluster: number[] = [];
-  const flush = () => {
-    if (cluster.length === 0) return;
-    const mean = cluster.reduce((s, v) => s + v, 0) / cluster.length;
-    for (const value of cluster) snapped.set(value, mean);
-    cluster = [];
-  };
-
-  for (const value of sorted) {
-    if (cluster.length > 0 && value - cluster[cluster.length - 1] > tolerance) flush();
-    cluster.push(value);
-  }
-  flush();
-
-  return snapped;
-}
-
+/** Pull every nearly-equal edge in a storey onto one line. */
 function alignEdges(rooms: SketchRoom[], gridWidth: number, gridHeight: number): SketchRoom[] {
   // Levels are aligned independently: an upstairs wall has no reason to line up
   // with a ground-floor one, and forcing it would distort both.
@@ -82,8 +55,10 @@ function alignEdges(rooms: SketchRoom[], gridWidth: number, gridHeight: number):
     const xTolerance = gridWidth * SNAP_FRACTION;
     const yTolerance = gridHeight * SNAP_FRACTION;
 
-    const xs = snapAxis(onLevel.flatMap((r) => [r.x, r.x + r.width]), xTolerance);
-    const ys = snapAxis(onLevel.flatMap((r) => [r.y, r.y + r.height]), yTolerance);
+    // No anchors: a sketch has no surveyed outline to be held to, so every
+    // cluster collapses to its own mean.
+    const xs = snapAxis(onLevel.flatMap((r) => [r.x, r.x + r.width]), [], xTolerance);
+    const ys = snapAxis(onLevel.flatMap((r) => [r.y, r.y + r.height]), [], yTolerance);
 
     for (const room of onLevel) {
       const x0 = xs.get(room.x) ?? room.x;
@@ -190,9 +165,6 @@ function toGrid(rooms: SketchRoom[]): { xs: number[]; ys: number[]; spans: Span[
   return { xs, ys, spans };
 }
 
-/** Final dimensions land on multiples of this, so walls read as deliberate. */
-const ROUND_TO_M = M_PER_FT / 2;
-
 /** A written dimension outranks a typical one by this much when they disagree. */
 const WRITTEN_WEIGHT = 10;
 const TYPICAL_WEIGHT = 1;
@@ -282,7 +254,7 @@ function solveBands(
       }
       if (moved < 0.001) break;
     }
-    return bands.map((b) => Math.max(MIN_BAND_M, Math.round(b / ROUND_TO_M) * ROUND_TO_M));
+    return bands.map((b) => Math.max(MIN_BAND_M, onWallGrid(b)));
   };
 
   return {

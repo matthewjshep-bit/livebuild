@@ -427,7 +427,7 @@ export function floorSurface(finish: FloorFinish, tone: string): Surface {
       } else {
         // Keep the noise stream in step with the albedo pass, so the speckle
         // below lands in the same places in both.
-        for (let i = 0; i < 60; i++) rand(), rand(), rand();
+        for (let i = 0; i < 180; i++) rand();
       }
       for (let i = 0; i < 6000; i++) {
         g.fillStyle = paint((rand() - 0.5) * 30, (rand() - 0.5) * 60);

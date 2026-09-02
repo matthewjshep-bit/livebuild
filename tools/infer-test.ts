@@ -15,7 +15,8 @@
  */
 import { inferHouse } from "../src/lib/spec/infer";
 import { HouseSpec, type RoomSpec } from "../src/lib/spec/schema";
-import { autoOpenings, rectangle } from "../src/lib/plan/autolayout";
+import { autoOpenings } from "../src/lib/plan/autolayout";
+import { rectangle } from "../src/lib/plan/geometry";
 import type { Plan, Room } from "../src/lib/schema";
 
 let failures = 0;

@@ -10,9 +10,10 @@
  * one angle, and every one of these faults hides from most angles.
  */
 import { readFileSync } from "node:fs";
+import { boundsOf, rectangle } from "../src/lib/plan/geometry";
 
 import { wallsForLevel } from "../src/lib/model/walls";
-import { boundsOf, rectangle } from "../src/lib/plan/autolayout";
+
 import { layoutFromFootprint, prepareFootprint } from "../src/lib/plan/footprint";
 import { layoutFromSpec } from "../src/lib/plan/autolayout";
 import { roomKind } from "../src/lib/plan/room-kind";

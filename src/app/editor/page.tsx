@@ -16,7 +16,6 @@ function emptyProperty(id: string): Property {
     displayUnits: "ft",
     plan: { scaleRef: { px: 1, meters: M_PER_FT }, rooms: [], openings: [] },
     nodes: [],
-    splats: [],
     // Filled in once someone grades the property; the BOM treats an empty
     // map as 'nothing seen yet' rather than 'nothing needed'.
     condition: {},

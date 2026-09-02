@@ -1,4 +1,5 @@
-import { autoOpenings, rectangle, typicalSize } from "@/lib/plan/autolayout";
+import { autoOpenings, typicalSize } from "@/lib/plan/autolayout";
+import { rectangle } from "@/lib/plan/geometry";
 import { isStairs, roomKind } from "@/lib/plan/room-kind";
 import type { Opening, Room, Vec2 } from "@/lib/schema";
 import { M_PER_FT } from "@/lib/units";

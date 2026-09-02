@@ -3,16 +3,19 @@ import { z } from "zod";
 import { HouseSpec } from "@/lib/spec/schema";
 
 /**
- * The property document is the contract between every phase of the pipeline:
- * the editor writes it, the tour viewer reads it, and the Python depth/splat
- * steps only ever add optional fields. Keeping the phases decoupled depends on
- * nothing outside this file knowing the on-disk shape.
+ * The property document is the contract between every phase: the wizard writes
+ * it, the editor edits it, the tour viewer reads it, and the bill of materials
+ * is derived from it. Keeping those decoupled depends on nothing outside this
+ * file knowing the on-disk shape.
  *
  * Coordinates. The hand-drawn floor plan is the canonical metric world frame.
  * Plan-space is 2D [x, y] in metres on the floor plane; the viewer lifts it to
- * three.js Y-up via `planToWorld`. Everything else — camera nodes, splats —
- * registers into that frame, which is what lets a Phase 3 splat drop straight
- * into a scene built in Phase 1.
+ * three.js Y-up via `planToWorld`. Camera nodes register into that frame.
+ *
+ * Fields are removed from here the same way they are added: a document that
+ * still carries an old one parses fine and simply drops it, because these are
+ * not strict objects. That is what made taking the depth pass out a deletion
+ * rather than a migration.
  */
 
 export const Vec2 = z.tuple([z.number(), z.number()]);
@@ -73,9 +76,12 @@ export const Plan = z.object({
 export type Plan = z.infer<typeof Plan>;
 
 /**
- * One photo, posed inside the plan. `depth` and `parallaxBudget` are written by
- * the Phase 0/2 depth pass; when `depth` is null the renderer falls back to a
- * flat billboard, which is why a tour still works before any GPU has run.
+ * One photo, posed inside the plan.
+ *
+ * It carried `depth` and `parallaxBudget` for the 2.5D shell renderer, which
+ * has been gone since the photographs came off the model. Nothing read either
+ * one; they were written on every build, resolved to object URLs on every load,
+ * and stored on every document, for a renderer that no longer exists.
  */
 export const TourNode = z.object({
   id: z.string().min(1),
@@ -88,23 +94,9 @@ export const TourNode = z.object({
   pitch: z.number().default(0),
   fovDeg: z.number().positive().default(78),
   photo: z.string().min(1),
-  depth: z.string().nullable().default(null),
-  /**
-   * How far the camera may drift from the node before the 2.5D shell's tearing
-   * at depth discontinuities becomes visible. Derived from depth-map quality by
-   * the Phase 2 pass; the small value is the entire trick that sells the effect.
-   */
-  parallaxBudget: z.number().nonnegative().default(0.35),
   neighbors: z.array(z.string()).default([]),
 });
 export type TourNode = z.infer<typeof TourNode>;
-
-/** Phase 3 only. A trained splat, plus the transform that lands it in plan-space. */
-export const SplatRef = z.object({
-  url: z.string().min(1),
-  transform: z.array(z.number()).length(16),
-});
-export type SplatRef = z.infer<typeof SplatRef>;
 
 /**
  * Condition and rates, the only parts of the bill of materials that are stored.
@@ -219,7 +211,6 @@ export const Property = z.object({
   displayUnits: z.enum(["ft", "m"]).default("ft"),
   plan: Plan,
   nodes: z.array(TourNode).default([]),
-  splats: z.array(SplatRef).default([]),
   /** Per-room condition, keyed by room id then by element. */
   condition: z.record(z.string(), z.record(z.string(), Grade)).default({}),
   /** Roof, systems and exterior - things belonging to no single room. */

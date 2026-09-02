@@ -12,7 +12,8 @@ import { joineryFor } from "../src/lib/model/joinery";
 import { piecesFor } from "../src/lib/model/staging";
 import { inferHouse } from "../src/lib/spec/infer";
 import { HouseSpec, type RoomSpec } from "../src/lib/spec/schema";
-import { autoOpenings, boundsOf, rectangle } from "../src/lib/plan/autolayout";
+import { autoOpenings } from "../src/lib/plan/autolayout";
+import { boundsOf, rectangle } from "../src/lib/plan/geometry";
 import { elementForPiece } from "../src/lib/bom/pickable";
 import type { Plan, Room } from "../src/lib/schema";
 

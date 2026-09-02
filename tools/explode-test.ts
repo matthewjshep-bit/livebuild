@@ -12,8 +12,8 @@
 import { readFileSync } from "node:fs";
 
 import { explodeLift, explodeOffset, roomShell } from "../src/lib/model/room-shell";
-import { boundsOf } from "../src/lib/plan/autolayout";
-import { dist } from "../src/lib/plan/geometry";
+
+import { boundsOf, dist } from "../src/lib/plan/geometry";
 import { type Plan, parseProperty } from "../src/lib/schema";
 
 let failures = 0;

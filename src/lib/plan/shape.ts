@@ -3,7 +3,7 @@ import { outlineOf } from "@/lib/plan/outline";
 import { subtractRects } from "@/lib/model/stairs";
 import { area } from "@/lib/plan/geometry";
 import type { ShapeEdit } from "@/lib/spec/schema";
-import type { Plan, Room } from "@/lib/schema";
+import type { Plan } from "@/lib/schema";
 
 /**
  * Changing the shape of a room without changing the shape of the house.

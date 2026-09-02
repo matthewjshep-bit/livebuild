@@ -1,6 +1,5 @@
-import { boundsOf } from "@/lib/plan/autolayout";
 import { interiorPoint } from "@/lib/model/tessellate";
-import { levelBase } from "@/lib/plan/geometry";
+import { boundsOf, levelBase } from "@/lib/plan/geometry";
 import { blocked, collidersFor, startingPoint } from "@/lib/model/collide";
 import { roomCentre } from "@/lib/model/room-shell";
 import type { Plan, Room, Vec2 } from "@/lib/schema";

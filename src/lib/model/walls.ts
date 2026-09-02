@@ -1,4 +1,3 @@
-import { boundsOf } from "@/lib/plan/autolayout";
 import { signedArea } from "@/lib/plan/geometry";
 import type { Opening, Plan, Room, Vec2 } from "@/lib/schema";
 

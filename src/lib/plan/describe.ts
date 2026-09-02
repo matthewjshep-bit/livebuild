@@ -201,9 +201,3 @@ export function roomOptionsFor(spec: HouseSpec | null): string[] {
   }
   return [...fromSpec, ...ROOM_PRESETS.filter((preset) => !fromSpec.includes(preset))];
 }
-
-export const EXAMPLE_DESCRIPTIONS = [
-  "3 bed, 2 bath single storey with an open plan kitchen and living room, plus a 2 car garage",
-  "Two storey 4 bedroom 2.5 bath. Primary bedroom upstairs with an ensuite. Dining room, office and laundry downstairs.",
-  "Small 2 bed 1 bath cottage with a kitchen, living room and a back deck",
-];

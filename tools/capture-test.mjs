@@ -26,30 +26,41 @@ page.on("pageerror", (e) => errors.push(e.message));
 await page.goto(`${base}/tour/demo-house`, { waitUntil: "networkidle" });
 await page.waitForFunction(() => typeof window.__capture === "function", { timeout: 20_000 });
 
-// Wait for the camera to stop moving before taking the reference frame.
-//
-// The opening flight is driven per frame and headless chromium has no GPU, so
-// a fixed sleep leaves it mid-move - and the "before" and "after" frames then
-// differ because the camera travelled between them, which is
-// indistinguishable from the capture having broken the viewer.
-await page.waitForFunction(
-  () => {
-    const c = window.__camera;
-    if (!c) return false;
-    const last = window.__settleLast;
-    window.__settleLast = c.position;
-    if (!last) return false;
-    return Math.hypot(
-      c.position[0] - last[0],
-      c.position[1] - last[1],
-      c.position[2] - last[2],
-    ) < 0.002;
-  },
-  { timeout: 45_000, polling: 350 },
-);
-await page.waitForTimeout(1200);
+/**
+ * Wait for the camera to stop moving, then take a frame.
+ *
+ * The opening flight is driven per frame and headless chromium has no GPU, so
+ * a fixed sleep leaves it mid-move - and the "before" and "after" frames then
+ * differ because the camera travelled between them, which is
+ * indistinguishable from the capture having broken the viewer.
+ *
+ * This settled before the first frame and merely slept before the second,
+ * which is exactly the asymmetry the paragraph above warns about: the failure
+ * looked like a broken viewer about one run in eight, on a loaded machine, and
+ * never on an idle one. Both frames wait on the same state now.
+ */
+async function settledFrame() {
+  await page.evaluate(() => delete window.__settleLast);
+  await page.waitForFunction(
+    () => {
+      const c = window.__camera;
+      if (!c) return false;
+      const last = window.__settleLast;
+      window.__settleLast = c.position;
+      if (!last) return false;
+      return Math.hypot(
+        c.position[0] - last[0],
+        c.position[1] - last[1],
+        c.position[2] - last[2],
+      ) < 0.002;
+    },
+    { timeout: 45_000, polling: 350 },
+  );
+  await page.waitForTimeout(1200);
+  return PNG.sync.read(await page.locator("canvas").screenshot());
+}
 
-const beforeShot = PNG.sync.read(await page.locator("canvas").screenshot());
+const beforeShot = await settledFrame();
 
 // The pose of the demo house's first photograph, in world terms.
 const shot = await page.evaluate(() => {
@@ -66,8 +77,7 @@ const shot = await page.evaluate(() => {
   return { url: window.__capture(pose), pose };
 });
 
-await page.waitForTimeout(1200);
-const afterShot = PNG.sync.read(await page.locator("canvas").screenshot());
+const afterShot = await settledFrame();
 
 let failures = 0;
 const check = (name, ok, detail = "") => {

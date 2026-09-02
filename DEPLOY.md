@@ -72,8 +72,8 @@ paste the passphrase. You get `livebuild.ai/t/<slug>` — send that to anyone.
 ## What runs where
 
 ```
-Browser        drafting, photos, depth estimation (WASM/WebGPU)
-Vercel         the app; /api/describe; signing upload URLs
+Browser        drafting, drawing, photos, the whole 3D model
+Vercel         the app; the read/classify/layout routes; signing upload URLs
 Supabase       published tours (Postgres) + their photos (Storage)
 Cloudflare     DNS only
 ```
@@ -84,9 +84,10 @@ is tens of megabytes.
 
 ## Two things to expect
 
-**First-time creators download ~30MB.** The depth model is fetched from Hugging
-Face on first use and cached by the browser afterwards. **Viewers never download
-it** — published tours carry pre-computed depth maps.
+**Nothing is downloaded to build a house.** There used to be a ~30MB depth model
+fetched from Hugging Face on first use; the 2.5D shell renderer it fed is gone,
+and the model is built from the plan with procedural textures. The only bytes
+that move are the photographs.
 
 **Free-tier storage is the real limit.** 1GB, and a published house is roughly
 8–12MB after downscaling, so on the order of 80–120 houses. The database rows

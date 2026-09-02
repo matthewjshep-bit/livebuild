@@ -1,6 +1,13 @@
 import { M_PER_FT } from "@/lib/units";
-import type { Opening, Plan, Room, TourNode, Vec2 } from "@/lib/schema";
-import { area, centroid, planDirToHeading, signedArea } from "@/lib/plan/geometry";
+import type { Opening, Room, TourNode, Vec2 } from "@/lib/schema";
+import {
+  area,
+  boundsOf,
+  centroid,
+  planDirToHeading,
+  rectangle,
+  signedArea,
+} from "@/lib/plan/geometry";
 import { type RoomKind, isLivingArea, isStairs, roomKind } from "@/lib/plan/room-kind";
 
 /**
@@ -68,26 +75,6 @@ export const ROOM_PRESETS = [
 export function typicalSize(label: string): Vec2 {
   const [w, h] = TYPICAL_SIZE_FT[roomKind(label)] ?? DEFAULT_SIZE_FT;
   return [w * M_PER_FT, h * M_PER_FT];
-}
-
-export function rectangle(x: number, y: number, w: number, h: number): Vec2[] {
-  return [
-    [x, y],
-    [x + w, y],
-    [x + w, y + h],
-    [x, y + h],
-  ];
-}
-
-export function boundsOf(polygon: Vec2[]): { x0: number; y0: number; x1: number; y1: number } {
-  const xs = polygon.map((p) => p[0]);
-  const ys = polygon.map((p) => p[1]);
-  return {
-    x0: Math.min(...xs),
-    y0: Math.min(...ys),
-    x1: Math.max(...xs),
-    y1: Math.max(...ys),
-  };
 }
 
 /** Heights are stretched to fill a row, but only so far - a stretched bathroom
@@ -542,8 +529,6 @@ export function placeNodesInRoom(
       pitch: 0,
       fovDeg: 78,
       photo: photo.photo,
-      depth: photo.depth ?? null,
-      parallaxBudget: 0.35,
       neighbors: [],
     };
   });
@@ -638,9 +623,4 @@ export function scaleToLivingArea(rooms: Room[], targetSquareMetres: number): Ro
     ...room,
     polygon: room.polygon.map(([x, y]) => [x * factor, y * factor] as Vec2),
   }));
-}
-
-/** Rebuild doorways after the user drags rooms around. */
-export function withDerivedOpenings(plan: Plan): Plan {
-  return { ...plan, openings: autoOpenings(plan.rooms) };
 }

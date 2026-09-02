@@ -66,6 +66,14 @@ npm run dev          # http://localhost:3000
 
 Then click **Make a tour**.
 
+Before pushing anything:
+
+```bash
+npm run typecheck
+npm run lint
+npm test             # the pure suites, about four seconds
+```
+
 ## Scope of work and costs
 
 `/bom/<id>` — an indented bill of materials per room, totalling the rehab work
@@ -423,6 +431,45 @@ browser. **Only the description text is sent - never a photo.**
 Either way you can see exactly what was understood, split by floor, before
 anything is built.
 
+## Reading the rooms
+
+The plan says where the walls are. The **spec** says what they are made of, and
+it is the difference between a house and *this* house. It is read out of the
+photographs after the tour is already on screen, one request per room, and
+stored against the property keyed by room id.
+
+`src/lib/spec/` holds it, and four rules do most of the work.
+
+**It hangs off `Property`, never off `Room`.** A re-layout regenerates
+`Plan.rooms` wholesale, so anything stored on a room is destroyed by a rebuild
+with no error at all. `condition` had already solved this; the spec takes the
+same path.
+
+**Every value knows where it came from.** A field read off a photograph, a field
+a person typed and a field the house merely assumed are three different kinds of
+claim. `source` ranks them, so a re-read cannot quietly overwrite a correction.
+
+**The model says what, the standards say how big.** A vision model recognises
+well and measures badly, and a wrong dimension is wrong by a constant factor
+while looking entirely self-consistent. So a reading within tolerance of a stock
+size - a 140mm skirting board, a 2.44m ceiling - becomes that size, and a
+reading outside every tolerance is kept exactly as it came and flagged, because
+a house genuinely can have a 2.2m ceiling.
+
+**The rooms nobody photographed are reasoned about, not defaulted.** A listing
+set covers what sells a house and misses the landing, the second bathroom and
+the fourth bedroom - and those have to be built too. Defaults are per-room and a
+house is not: a landing in generic oak between two rooms in a specific walnut
+reads as a mistake rather than as an unphotographed landing. So `infer.ts` works
+out the house's own conventions from what was seen and applies those.
+
+And the loop that checks a render against the photograph it came from is bounded
+by arithmetic rather than by good behaviour - a round is kept only if the score
+improves, a field that oscillates is frozen, anything a person touched is final,
+and it stops. A model looking at two images will always find something to say,
+and a loop that acts on all of it walks a correct room steadily away from
+correct.
+
 ## Publishing
 
 Drafting is local by design - tagging thirty photos should not wait on a network,
@@ -505,27 +552,47 @@ src/
   app/new/              # the wizard - photos, sheet, pen, confirm
   lib/
     schema.ts           # the property document - the contract between phases
+    units.ts            # metres are canonical; also the grid every wall lands on
     plan/strokes.ts     # pen strokes to rooms - straighten, weld, walk the faces
     plan/drawn.ts       # check a drawing, and fit its arrangement to a building
     plan/autolayout.ts  # build a plan from room names; derive doorways
     plan/geometry.ts    # extrusion, wall/doorway subtraction, plan<->world
     plan/walkgraph.ts   # which rooms connect, derived from doorways
+    build/arrange.ts    # where the rooms go when nobody drew them
+    spec/               # what each room is made of - read, reasoned, verified
     model/textures.ts   # colour and height, drawn to a canvas at runtime
     model/maps.ts       # normal / occlusion / roughness, derived from height
     render/quality.ts   # what this machine can afford to render
     media-store.ts      # photos in IndexedDB, referenced as idb:<key>
   components/
     wizard/             # drop photos, say what is in it, draw it, confirm
-    editor/             # advanced: draw the plan by hand
+    wizard/useDrawing   # the drawing, across every storey - one concern, one place
+    editor/             # advanced: adjust a finished plan, place cameras, reshape
     tour/               # dollhouse, walk, lighting, post, camera rig, minimap
-pipeline/               # Python. Optional now - see below.
-tools/                  # headless-browser verification
+pipeline/               # Python. One fixture generator, and nothing at request time.
+tools/                  # the suites - `npm test`, and `--browser` for the rest
 ```
 
 ## Verifying it
 
 WebGL cannot be checked by asserting a route returns 200 - the scene is built
-entirely on the client. These drive a real browser:
+entirely on the client. So half of the suites drive a real browser, and half are
+pure and do not.
+
+```bash
+npm test          # the pure half - no browser, no network, about four seconds
+npm run test:browser   # the browser half - needs `npm run dev` running
+npm run test:all       # both
+npm test -- plan       # anything whose name matches
+```
+
+Both halves used to be runnable only one file at a time, from a list here that
+had drifted to a third of what is in `tools/`. Nobody ran them, and four suites
+were failing on `main` at once - each since whichever change broke it. Every
+suite now gets a deadline too, because a run that hangs is worse than one that
+fails: it gets killed, and then nobody knows what passed.
+
+The ones worth knowing by name:
 
 ```bash
 npx tsx tools/takeoff-test.ts    # quantities derived from the model hold together
@@ -583,20 +650,24 @@ one - which is how both walk tests were flaky before they waited on state.
   sun instead of six shadow maps; windows as real area lights; bevelled edges
   on everything that is an object; SMAA, occlusion and a restrained bloom
   behind a three-tier quality setting.
-- **The interior spec** - not started. A per-room record read out of the
-  photographs - finishes, openings, fittings, furniture, lighting - stored
-  against the property and keyed by room, so it survives a re-layout the way
-  `condition` already does. This is what turns "a house" into "this house".
+- **The interior spec** - done, and described above. Read per room, reasoned
+  across the house for the rooms nobody photographed, snapped to the sizes
+  things are actually built to, and checked against the photographs it came
+  from. What remains is breadth - more fields, read more reliably - rather than
+  a thing that does not exist.
 - **The parts library** - not started. Cabinetry with doors and handles, lathe
   sanitaryware, real window assemblies with reveals and mullions, replacing the
-  one-to-three-slab builders in `src/lib/model/furniture.ts`.
+  one-to-three-slab builders in `src/lib/model/furniture.ts`. This is now the
+  limit: the spec can say a kitchen has shaker doors in a particular green, and
+  the model draws a slab.
 - **The outside** - not started. Google Solar for real roof planes, Elevation
   for terrain, a harder Street View read for the facade.
 
 ## The next thing to do
 
-Read the rooms out of the photographs. Everything above is a house built from a
-footprint and a room list; the photographs are still only being used to work out
-which room is which. The interior spec is what makes it a replica of a
-particular house rather than a plausible one, and it is the reason the
-photographs are being kept.
+Build what the spec can already describe. The reading pass got ahead of the
+geometry: a room can now report its worktop material, its door style and its
+skirting profile, and `furniture.ts` will draw between one and three boxes for
+each of them. Every improvement to the parts library improves every tour already
+built, because furniture is derived and never stored - the same property that
+made walls and windows cheap to get right.

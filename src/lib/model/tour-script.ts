@@ -1,5 +1,4 @@
-import { boundsOf } from "@/lib/plan/autolayout";
-import { levelBase } from "@/lib/plan/geometry";
+import { boundsOf, levelBase } from "@/lib/plan/geometry";
 import { roomKind } from "@/lib/plan/room-kind";
 import type { Plan } from "@/lib/schema";
 import { formatArea } from "@/lib/units";

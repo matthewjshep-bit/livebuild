@@ -9,7 +9,8 @@
 import { readFileSync } from "node:fs";
 
 import { DOOR_HEIGHT, EXTERIOR_THICKNESS, INTERIOR_THICKNESS, wallsForLevel } from "../src/lib/model/walls";
-import { autoOpenings, boundsOf } from "../src/lib/plan/autolayout";
+import { autoOpenings } from "../src/lib/plan/autolayout";
+import { boundsOf } from "../src/lib/plan/geometry";
 import { parseProperty } from "../src/lib/schema";
 import type { Plan } from "../src/lib/schema";
 

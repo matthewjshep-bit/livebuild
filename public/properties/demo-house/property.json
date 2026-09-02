@@ -200,8 +200,6 @@
       "pitch": 0,
       "fovDeg": 78.0,
       "photo": "/properties/demo-house/photos/living-01.jpg",
-      "depth": "/properties/demo-house/depth/living-01.png",
-      "parallaxBudget": 0.45,
       "neighbors": []
     },
     {
@@ -216,8 +214,6 @@
       "pitch": 0,
       "fovDeg": 78.0,
       "photo": "/properties/demo-house/photos/living-02.jpg",
-      "depth": "/properties/demo-house/depth/living-02.png",
-      "parallaxBudget": 0.45,
       "neighbors": []
     },
     {
@@ -232,8 +228,6 @@
       "pitch": 0,
       "fovDeg": 78.0,
       "photo": "/properties/demo-house/photos/kitchen-01.jpg",
-      "depth": "/properties/demo-house/depth/kitchen-01.png",
-      "parallaxBudget": 0.45,
       "neighbors": []
     },
     {
@@ -248,8 +242,6 @@
       "pitch": 0,
       "fovDeg": 78.0,
       "photo": "/properties/demo-house/photos/hall-01.jpg",
-      "depth": "/properties/demo-house/depth/hall-01.png",
-      "parallaxBudget": 0.45,
       "neighbors": []
     },
     {
@@ -264,8 +256,6 @@
       "pitch": 0,
       "fovDeg": 78.0,
       "photo": "/properties/demo-house/photos/bedroom-01.jpg",
-      "depth": "/properties/demo-house/depth/bedroom-01.png",
-      "parallaxBudget": 0.45,
       "neighbors": []
     },
     {
@@ -280,10 +270,7 @@
       "pitch": 0,
       "fovDeg": 78.0,
       "photo": "/properties/demo-house/photos/bath-01.jpg",
-      "depth": "/properties/demo-house/depth/bath-01.png",
-      "parallaxBudget": 0.45,
       "neighbors": []
     }
-  ],
-  "splats": []
+  ]
 }

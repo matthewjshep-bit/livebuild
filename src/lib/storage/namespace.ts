@@ -32,3 +32,29 @@ export const INDEX_KEY = `${STORAGE_NS}:index`;
  * prompt that will not stay answered.
  */
 export const ADMIN_KEY_STORAGE = `${STORAGE_NS}:admin-key`;
+
+/**
+ * A readable id for a property, that will not collide.
+ *
+ * The date sorts sensibly and stays legible in a URL; the suffix is what makes
+ * it an identifier rather than a timestamp. Two tours started in the same
+ * minute used to share a document, a photo prefix and each other's fate.
+ *
+ * The suffix was `Math.random().toString(36).slice(2, 7)` - about 60 million
+ * values, which sounds ample and is not: five hundred of them collide in three
+ * runs out of a thousand. The comment above it read "an id that cannot
+ * collide", and `storage-test` asserted exactly that, so the suite failed a run
+ * every few hundred for a reason nobody could reproduce. Eight hex characters
+ * is four billion, which makes the same assertion true rather than usually
+ * true.
+ *
+ * It lives here, beside the storage keys it is a key for, so the wizard and the
+ * suite that checks it are looking at one function. They were two copies, and a
+ * test that reimplements what it is testing can only ever check itself.
+ */
+export function newPropertyId(now = new Date()): string {
+  const day = now.toISOString().slice(0, 10);
+  const clock = `${String(now.getHours()).padStart(2, "0")}${String(now.getMinutes()).padStart(2, "0")}`;
+  const unique = crypto.randomUUID().replace(/-/g, "").slice(0, 8);
+  return `home-${day}-${clock}-${unique}`;
+}

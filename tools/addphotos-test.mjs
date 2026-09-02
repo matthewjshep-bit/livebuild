@@ -58,7 +58,6 @@ await page.evaluate((id) => {
       openings: [],
     },
     nodes: [],
-    splats: [],
     condition: { r1: { flooring: "poor" } },
     houseCondition: {},
     rates: {},

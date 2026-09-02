@@ -19,9 +19,9 @@ import {
 import { subtractRects } from "../src/lib/model/stairs";
 import { roomAt } from "../src/lib/model/collide";
 import { decompose } from "../src/lib/plan/footprint";
-import { area, pointInPolygon, wallSegmentsForRoom } from "../src/lib/plan/geometry";
+import { area, pointInPolygon, rectangle, wallSegmentsForRoom } from "../src/lib/plan/geometry";
 import { takeoffForRoom } from "../src/lib/bom/takeoff";
-import { rectangle } from "../src/lib/plan/autolayout";
+
 import { M_PER_FT } from "../src/lib/units";
 import type { Plan, Room, Vec2 } from "../src/lib/schema";
 

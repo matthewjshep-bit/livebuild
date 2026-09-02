@@ -23,7 +23,8 @@ import {
   recoverOrphanedKeys,
   saveProperty,
 } from "../src/lib/property-store";
-import type { Property } from "../src/lib/schema";
+import { newPropertyId } from "../src/lib/storage/namespace";
+import { Property } from "../src/lib/schema";
 import { M_PER_FT } from "../src/lib/units";
 
 let failures = 0;
@@ -40,7 +41,6 @@ const property = (id: string, label = id): Property => ({
   displayUnits: "ft",
   plan: { scaleRef: { px: 1, meters: M_PER_FT }, rooms: [], openings: [] },
   nodes: [],
-  splats: [],
   condition: {},
   houseCondition: {},
   rates: {},
@@ -98,20 +98,60 @@ check("nor is any key that is not a plain id", !listed.some((id) => id.includes(
 
 // --- Ids must not collide ---
 //
-// The generator lives in the wizard, so this checks the property it has to
-// have rather than importing a component.
+// The real generator, not a copy of it. This used to reimplement the wizard's
+// id inline "rather than importing a component" - so it was checking itself,
+// and would have gone on passing had the wizard's version changed.
+const minute = new Date("2026-09-02T10:14:00Z");
 const ids = new Set<string>();
-for (let i = 0; i < 500; i++) {
-  const now = new Date();
-  const day = now.toISOString().slice(0, 10);
-  const clock = `${String(now.getHours()).padStart(2, "0")}${String(now.getMinutes()).padStart(2, "0")}`;
-  ids.add(`home-${day}-${clock}-${Math.random().toString(36).slice(2, 7)}`);
-}
+for (let i = 0; i < 500; i++) ids.add(newPropertyId(minute));
 check("500 ids minted in the same minute are all different", ids.size === 500, `${ids.size}`);
+check("and they carry the minute they were made in", [...ids].every((id) => id.startsWith("home-2026-09-02-")));
 check(
   "and none of them contains a path separator",
   [...ids].every((id) => !id.includes("/") && !id.includes(":")),
 );
+
+// --- A document written before a field was removed still opens ---
+//
+// The 2.5D shell renderer's `depth`, `parallaxBudget` and `splats` were taken
+// out of the schema. Nothing read them, but people's saved houses still carry
+// them, and "the field is gone" has to mean the document loses a field rather
+// than the tour. Zod objects are not strict, so removal is a deletion and not a
+// migration - this is the assertion that keeps that true.
+const legacy = {
+  id: "written-before",
+  label: "Before",
+  displayUnits: "ft",
+  plan: { scaleRef: { px: 1, meters: M_PER_FT }, rooms: [], openings: [] },
+  nodes: [
+    {
+      id: "n1",
+      roomId: "r1",
+      position: [0, 0],
+      eyeHeight: 1.5,
+      heading: 0,
+      pitch: 0,
+      fovDeg: 78,
+      photo: "idb:written-before/n1/photo",
+      depth: "idb:written-before/n1/depth",
+      parallaxBudget: 0.45,
+      neighbors: [],
+    },
+  ],
+  splats: [{ url: "cloud.ply", transform: Array(16).fill(0) }],
+  condition: {}, houseCondition: {}, rates: {},
+};
+
+const reopened = Property.safeParse(legacy);
+check("a document written before the depth pass was removed still parses", reopened.success,
+  reopened.success ? "" : reopened.error.message.slice(0, 200));
+if (reopened.success) {
+  const node = reopened.data.nodes[0] as unknown as Record<string, unknown>;
+  check("its photograph survives", node.photo === "idb:written-before/n1/photo");
+  check("and the fields nothing reads are simply dropped",
+    !("depth" in node) && !("parallaxBudget" in node) &&
+      !("splats" in (reopened.data as unknown as Record<string, unknown>)));
+}
 
 // --- A photo prefix must not reach into a neighbour ---
 //
@@ -141,7 +181,6 @@ check(
     displayUnits: "ft",
     plan: { scaleRef: { px: 1, meters: M_PER_FT }, rooms: [], openings: [] },
     nodes: [],
-    splats: [],
     condition: {},
     houseCondition: {},
     rates: {},
@@ -178,7 +217,6 @@ check(
     displayUnits: "ft",
     plan: { scaleRef: { px: 1, meters: M_PER_FT }, rooms: [], openings: [] },
     nodes: [],
-    splats: [],
     condition: {},
     houseCondition: {},
     rates: {},
@@ -200,7 +238,7 @@ check(
 
 console.log(
   failures === 0
-    ? "STORAGE OK - a corrupt index loses no tours, a tour stranded by the rename comes back without clobbering newer work, ids do not collide"
+    ? "STORAGE OK - a corrupt index loses no tours, a stranded tour comes back without clobbering newer work, ids do not collide, and a document written before the depth pass was removed still opens"
     : `STORAGE BROKEN - ${failures} check(s) failed`,
 );
 process.exit(failures === 0 ? 0 : 1);

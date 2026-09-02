@@ -13,8 +13,9 @@
  * of floating rectangles.
  */
 import { ceilingParts } from "../src/lib/model/ceiling";
+import { rectangle } from "../src/lib/plan/geometry";
 import { CeilingSpec } from "../src/lib/spec/schema";
-import { rectangle } from "../src/lib/plan/autolayout";
+
 import type { Room } from "../src/lib/schema";
 
 let failures = 0;

@@ -1,7 +1,7 @@
 import type { Box, Piece } from "@/lib/model/furniture";
 import { FURNITURE_COLOURS } from "@/lib/model/materials";
-import { boundsOf } from "@/lib/plan/autolayout";
-import { levelBase, levelsOf } from "@/lib/plan/geometry";
+
+import { boundsOf, levelBase, levelsOf } from "@/lib/plan/geometry";
 import { isStairs } from "@/lib/plan/room-kind";
 import type { Plan, Room, Vec2 } from "@/lib/schema";
 

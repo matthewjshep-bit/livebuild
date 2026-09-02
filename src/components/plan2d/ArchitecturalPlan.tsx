@@ -9,8 +9,8 @@ import type { HouseSpec } from "@/lib/spec/schema";
 import { runsAtLevel, stairSymbol } from "@/lib/model/stairs";
 import { wallsForLevel } from "@/lib/model/walls";
 import { windowsForLevel } from "@/lib/model/windows";
-import { boundsOf } from "@/lib/plan/autolayout";
-import { area, centroid, fromFrame, levelName } from "@/lib/plan/geometry";
+
+import { area, boundsOf, centroid, fromFrame, levelName } from "@/lib/plan/geometry";
 import { planFromBearing } from "@/lib/model/sun";
 import type { Plan, Site, Vec2 } from "@/lib/schema";
 import { formatArea } from "@/lib/units";
@@ -78,7 +78,7 @@ export function ArchitecturalPlan({
   /** So the drawing suppresses the same duplicates the model does. */
   spec?: HouseSpec | null;
 }) {
-  const { svgRef, view, toPlan, zoomAt, panBy, fit } = usePlanView(plan);
+  const { svgRef, view, zoomAt, panBy, fit } = usePlanView(plan);
   const dragging = useRef(false);
   const last = useRef({ x: 0, y: 0 });
   const [hover, setHover] = useState<string | null>(null);

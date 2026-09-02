@@ -134,10 +134,3 @@ function collinear(loop: Vec2[]): Vec2[] {
 function orient(loop: Vec2[]): Vec2[] {
   return signedArea(loop) < 0 ? [...loop].reverse() : loop;
 }
-
-/** Whether a set of rectangles covers the same ground as another, exactly. */
-export function sameGround(a: Rect[], b: Rect[]): boolean {
-  const area = (rects: Rect[]) =>
-    rects.reduce((sum, r) => sum + (r.x1 - r.x0) * (r.y1 - r.y0), 0);
-  return Math.abs(area(a) - area(b)) < 1e-6;
-}

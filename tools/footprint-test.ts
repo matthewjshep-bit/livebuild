@@ -7,7 +7,8 @@
  * room can express. A test on a tidy rectangle would prove none of it.
  */
 import { readFileSync } from "node:fs";
-import { autoOpenings, boundsOf } from "../src/lib/plan/autolayout";
+import { autoOpenings } from "../src/lib/plan/autolayout";
+import { boundsOf } from "../src/lib/plan/geometry";
 import {
   decompose,
   dominantAngle,

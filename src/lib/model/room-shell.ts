@@ -1,6 +1,6 @@
 import { EXTERIOR_THICKNESS } from "@/lib/model/walls";
-import { boundsOf } from "@/lib/plan/autolayout";
-import { dist, wallSegmentsForRoom } from "@/lib/plan/geometry";
+
+import { boundsOf, dist, wallSegmentsForRoom } from "@/lib/plan/geometry";
 import type { Plan, Room, Vec2 } from "@/lib/schema";
 
 /**

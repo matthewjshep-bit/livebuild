@@ -10,10 +10,10 @@ import { buildBom } from "../src/lib/bom/build";
 import { roomScope } from "../src/lib/bom/pickable";
 import { blocked, collidersFor } from "../src/lib/model/collide";
 import { frameRoom, walkStartFor } from "../src/lib/model/focus";
-import { boundsOf } from "../src/lib/plan/autolayout";
+
 import { layoutFromSpec } from "../src/lib/plan/autolayout";
-import { pointInPolygon } from "../src/lib/plan/geometry";
-import type { Plan } from "../src/lib/schema";
+import { boundsOf, pointInPolygon } from "../src/lib/plan/geometry";
+import type { Plan, Room } from "../src/lib/schema";
 import { M_PER_FT } from "../src/lib/units";
 
 let failures = 0;
@@ -55,10 +55,18 @@ for (const label of ["Living Room", "Bathroom", "Primary Bedroom"]) {
   const framing = frameRoom(plan, r);
   const b = boundsOf(r.polygon);
 
+  /**
+   * Inside the room, which is the promise - not the middle of its bounding box.
+   *
+   * This asserted the bounding-box centre to 1e-9 and went on asserting it after
+   * `frameRoom` deliberately stopped using one. A box centre sits in the notch
+   * of an L-shaped room, so the camera orbited a point in the room next door;
+   * `interiorPoint` was the fix, and pinning the old arithmetic made the test
+   * fail *because* the bug had been fixed. The L below is the case that matters.
+   */
   check(
-    `${label}: the camera looks at the middle of the room`,
-    Math.abs(framing.center[0] - (b.x0 + b.x1) / 2) < 1e-9 &&
-      Math.abs(framing.center[2] - (b.y0 + b.y1) / 2) < 1e-9,
+    `${label}: the camera looks at a point inside the room`,
+    pointInPolygon([framing.center[0], framing.center[2]], r.polygon),
     `${framing.center}`,
   );
   check(`${label}: it looks above the floor, not at it`, framing.center[1] > 0);
@@ -71,6 +79,43 @@ for (const label of ["Living Room", "Bathroom", "Primary Bedroom"]) {
   );
   check(`${label}: it looks down, not up`, framing.elevation > 0 && framing.elevation < Math.PI / 2);
 }
+
+/**
+ * An L-shaped room, where the two rules disagree.
+ *
+ * The box centre of this L falls in the missing corner - outside the room
+ * entirely - so a camera aimed there orbits whatever is next door. Nothing in
+ * the generated plans above is L-shaped, which is exactly why the regression
+ * survived the suite.
+ */
+const ell: Room = {
+  id: "ell",
+  label: "Family Room",
+  level: 0,
+  ceilingHeight: 2.4,
+  polygon: [
+    [0, 0],
+    [8, 0],
+    [8, 4],
+    [4, 4],
+    [4, 8],
+    [0, 8],
+  ],
+};
+const ellFraming = frameRoom({ ...plan, rooms: [ell] }, ell);
+const ellBounds = boundsOf(ell.polygon);
+check(
+  "an L-shaped room is framed on a point inside it",
+  pointInPolygon([ellFraming.center[0], ellFraming.center[2]], ell.polygon),
+  `${ellFraming.center}`,
+);
+check(
+  "and its bounding-box centre would have missed",
+  !pointInPolygon(
+    [(ellBounds.x0 + ellBounds.x1) / 2, (ellBounds.y0 + ellBounds.y1) / 2],
+    ell.polygon,
+  ),
+);
 
 const living = frameRoom(plan, room("Living Room"));
 const bath = frameRoom(plan, room("Bathroom"));

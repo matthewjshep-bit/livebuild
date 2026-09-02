@@ -86,7 +86,6 @@ function fixture() {
       { id: "n2", roomId: "r4", photo: "idb:bed1", position: [2, 6], heading: 0 },
       { id: "n3", roomId: "outside", photo: "idb:front", position: [6, 14], heading: 0 },
     ],
-    splats: [],
     condition: {
       r2: { cabinets: "dated", flooring: "fair" },
       r4: { flooring: "good" },

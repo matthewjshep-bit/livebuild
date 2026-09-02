@@ -5,7 +5,7 @@ import { useState } from "react";
 import { verifyRoom, type VerifyOutcome } from "@/lib/spec/verify-client";
 import type { CapturePose } from "@/lib/render/capture";
 
-import { type HouseSpec, type Source } from "@/lib/spec/schema";
+import { type Source } from "@/lib/spec/schema";
 import { ftToM, mToFt } from "@/lib/units";
 import type { Property } from "@/lib/schema";
 
@@ -357,13 +357,5 @@ export function RoomSpecPanel({
         </div>
       )}
     </div>
-  );
-}
-
-/** Every room's spec, for the panel to key off. Exported for the browser suite. */
-export function specSummary(spec: HouseSpec | null | undefined): Record<string, number> {
-  if (!spec) return {};
-  return Object.fromEntries(
-    Object.entries(spec.rooms).map(([id, room]) => [id, Object.keys(room.source).length]),
   );
 }

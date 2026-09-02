@@ -73,7 +73,6 @@ const nodes: TourNode[] = nodeSpecs.map(([id, roomId, x, y, heading, stem]) => (
   fovDeg: 78,
   photo: `${SRC}/photos/${stem}.jpg`,
   depth: `${SRC}/depth/${stem}.png`,
-  parallaxBudget: 0.45,
   neighbors: [],
 }));
 
@@ -85,7 +84,6 @@ const property: Property = {
   displayUnits: "ft",
   plan: { scaleRef: { px: 1, meters: 0.3048 }, rooms, openings },
   nodes,
-  splats: [],
   // Filled in once someone grades the property; the BOM treats an empty
   // map as 'nothing seen yet' rather than 'nothing needed'.
   condition: {},

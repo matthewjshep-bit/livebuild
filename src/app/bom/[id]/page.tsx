@@ -1,6 +1,7 @@
 "use client";
 
 import { use, useCallback, useEffect, useMemo, useState } from "react";
+import Link from "next/link";
 
 import { BomTree } from "@/components/bom/BomTree";
 import { bomToCsv, buildBom } from "@/lib/bom/build";
@@ -118,9 +119,9 @@ export default function BomPage({ params }: { params: Promise<{ id: string }> })
     return (
       <Centered>
         <p className="mb-3">No property called &ldquo;{id}&rdquo;.</p>
-        <a href="/" className="text-accent underline underline-offset-4">
+        <Link href="/" className="text-accent underline underline-offset-4">
           Back
-        </a>
+        </Link>
       </Centered>
     );
   }
@@ -131,9 +132,9 @@ export default function BomPage({ params }: { params: Promise<{ id: string }> })
     <main className="mx-auto max-w-4xl px-6 py-10">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <a href="/" className="text-xs text-mist-400 underline underline-offset-4">
+          <Link href="/" className="text-xs text-mist-400 underline underline-offset-4">
             ← All properties
-          </a>
+          </Link>
           <h1 className="mt-2 text-2xl font-semibold tracking-tight">
             {property.label || property.id}
           </h1>

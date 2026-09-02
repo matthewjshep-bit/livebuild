@@ -19,7 +19,7 @@
  * real address, and they stay assertions.
  */
 import { chromium } from "playwright";
-import { drawLayout, chooseMode } from "./lib/flow.mjs";
+import { drawLayout, drawRooms, chooseMode } from "./lib/flow.mjs";
 
 const BASE = process.env.BASE_URL ?? "http://localhost:3000";
 const ADDRESS = "902 23rd Avenue East, Seattle, WA 98112";
@@ -139,8 +139,13 @@ if (await buildButton.count()) {
   // Through the house sheet, accepting what it assumed - the point of this test
   // is that a bare address is buildable at all, not what is in the house.
   await page.getByTestId("build-from-sheet").click();
-  // The build stops to be drawn. The suggested layout is accepted here for the
-  // same reason.
+  // The sheet leads to the pen, and a house cannot be built without one. This
+  // used to go straight to `drawLayout`, which then waited out its whole
+  // timeout for a layout screen that was never coming - the drawing board was
+  // on screen the entire time, waiting to be drawn on.
+  await drawRooms(page);
+  // The layout arrives already fitted to the building, so it is accepted as it
+  // stands - the point of this test is that a bare address is buildable at all.
   const built = await drawLayout(page, { timeoutMs: 200_000 });
   check("a house was built from the address alone", built);
 

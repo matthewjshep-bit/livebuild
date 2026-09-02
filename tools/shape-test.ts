@@ -17,8 +17,8 @@
 import { applyShapeEdits, exteriorFingerprint, MIN_ROOM_M } from "../src/lib/plan/shape";
 import { outlineOf } from "../src/lib/plan/outline";
 import { decompose } from "../src/lib/plan/footprint";
-import { area, pointInPolygon } from "../src/lib/plan/geometry";
-import { rectangle } from "../src/lib/plan/autolayout";
+import { area, pointInPolygon, rectangle } from "../src/lib/plan/geometry";
+
 import { roomIsRectilinear } from "../src/lib/model/walls";
 import type { Plan, Room, Vec2 } from "../src/lib/schema";
 

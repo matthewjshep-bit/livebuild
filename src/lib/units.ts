@@ -37,3 +37,25 @@ export const M2_PER_SQFT = M_PER_FT * M_PER_FT;
 export function sqftToM2(sqft: number): number {
   return sqft * M2_PER_SQFT;
 }
+
+/**
+ * The increment every wall in this app lands on.
+ *
+ * Six inches, and it was written down five times before it was written down
+ * once: `GRID_M` and `NUDGE_M` in the layout builder, `SNAP_M` in the editor,
+ * `ROUND_TO_M` in the sketch solver, and `0.1524` spelled out in the room
+ * reader. Four names and a magic number for one decision, which is the shape
+ * `room-kind.ts` already describes and already paid three bugs for.
+ *
+ * The number is not arbitrary and is not tidiness. Dragging a rectangle over a
+ * photograph lands on a float - a room comes out 3.87m wide because that is
+ * where the mouse stopped - and no amount of care produces a dimension anybody
+ * would write on a drawing. Rounding is what turns a gesture into a
+ * measurement.
+ */
+export const WALL_GRID_M = M_PER_FT / 2;
+
+/** The nearest wall increment. */
+export function onWallGrid(meters: number): number {
+  return Math.round(meters / WALL_GRID_M) * WALL_GRID_M;
+}

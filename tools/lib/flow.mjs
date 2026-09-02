@@ -38,9 +38,28 @@ export async function chooseMode(page, mode = "house") {
 }
 
 export async function addPhotos(page, files) {
+  const before = await page.getByTestId("photo-thumb").count();
   await page.setInputFiles('input[type="file"]', files);
-  // Photos are written to storage on drop, which takes a moment for a full set.
-  await page.waitForTimeout(400 + files.length * 300);
+
+  /**
+   * Wait for the photographs, not for a number of milliseconds.
+   *
+   * This slept `400 + 300 per file`, which was enough while a drop was a write
+   * to storage and stopped being enough the moment every file started being
+   * decoded and re-encoded on the way in. The suites then failed one step
+   * later, looking for a button that only appears once there are photos - which
+   * is a long way from the thing that was actually not finished yet.
+   *
+   * The README already draws this lesson about the walk tests: a test that
+   * sleeps and hopes passes on a fast machine and fails on a slow one.
+   */
+  const deadline = Date.now() + 60_000;
+  while (Date.now() < deadline) {
+    if ((await page.getByTestId("photo-thumb").count()) >= before + files.length) break;
+    await page.waitForTimeout(200);
+  }
+  // A beat for the debounced write to storage that follows the render.
+  await page.waitForTimeout(400);
 }
 
 /**

@@ -13,6 +13,7 @@ import { boundsOf, roomAdjacency } from "@/lib/plan/geometry";
 
 import type { Property, Room } from "@/lib/schema";
 import { policyFor } from "@/lib/ai/policy";
+import { toJpegDataUrl } from "@/lib/photos/decode";
 
 /**
  * Read every photographed room, then reason about the ones nobody shot.
@@ -48,25 +49,7 @@ const BATCH = 2;
 
 export type ReadProgress = { room: string; done: number; total: number };
 
-async function thumbnail(blob: Blob): Promise<string | null> {
-  try {
-    const bitmap = await createImageBitmap(blob);
-    const scale = Math.min(1, EDGE / Math.max(bitmap.width, bitmap.height));
-    const canvas = document.createElement("canvas");
-    canvas.width = Math.max(1, Math.round(bitmap.width * scale));
-    canvas.height = Math.max(1, Math.round(bitmap.height * scale));
-    const ctx = canvas.getContext("2d");
-    if (!ctx) {
-      bitmap.close();
-      return null;
-    }
-    ctx.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
-    bitmap.close();
-    return canvas.toDataURL("image/jpeg", QUALITY);
-  } catch {
-    return null;
-  }
-}
+const thumbnail = (blob: Blob) => toJpegDataUrl(blob, EDGE, QUALITY);
 
 /**
  * How big each room is, read off its own photographs.

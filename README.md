@@ -401,6 +401,45 @@ Photos are fetched through `/api/listing/photo`, an allowlisted proxy. Zillow
 serves images happily but sends no CORS headers, so the browser cannot otherwise
 read the bytes to store them.
 
+## Getting the photographs in
+
+Every photo taken on an iPhone since 2017 is HEIC, and a Mac's Photos library
+hands them over as HEIC. Two separate things were wrong with that, and the
+second was much the worse.
+
+**The picker would not let them be chosen.** `accept="image/*"` leaves the Open
+button greyed out in the Photos source of the macOS panel: the panel allows what
+the browser told it to allow, and the browser's expansion of the wildcard does
+not include `public.heic`. So the photographs were visible, selectable, and
+could not be opened, with nothing on screen saying why. Naming the extensions
+alongside the wildcard lets the selection through.
+
+**And had one got through, it vanished.** The drop zone filtered on a MIME
+whitelist that did not include HEIC and returned with no message at all — select
+thirty photos, watch nothing happen, learn nothing. Which is the worst answer
+available, and it applied to a plain drag-and-drop too.
+
+So a file is now **decoded on the way in** rather than filtered by what it claims
+to be. The type is a hint — a macOS picker sometimes reports none at all, and
+`image/heic` is a perfectly good type for a file the browser still cannot open —
+so whether it decodes is the only question that matters, and it is answered by
+trying. What decodes is re-encoded to JPEG at 2048px, which fixes three things
+at once: the thumbnails render, the vision passes get a format their API
+accepts, and thirty 12-megapixel photos stop being a hundred megabytes of
+IndexedDB for images nothing renders above a thousand pixels.
+
+What does not decode is **named, with the reason and what to do about it**.
+`tools/photo-import-test.mjs` runs a real HEIC through both engines, because the
+whole design rests on a claim about them worth measuring rather than believing:
+**Chromium cannot decode HEIC and Safari can.**
+
+One trap worth recording. The drop zone lives inside a `<details>` that is open
+only while there are photos — so a notice rendered beside it appears exactly
+when nobody can see it, because the first import is the one with no photos yet
+and also the one most likely to be a folder of HEICs. The message is held by the
+page and drawn outside that panel, and the panel is kept open while there is
+something to say.
+
 ## Attaching photos to rooms
 
 A photograph belongs to a room, and that is now the whole of the relationship.
@@ -674,6 +713,7 @@ node tools/floors-walk-test.mjs  # you can actually get upstairs, two ways
 node tools/builder-test.mjs      # add a room, rotate it, type its size, add a storey
 node tools/author-test.mjs       # the advanced editor still works
 node tools/model-test.mjs        # the model renders on both sample plans
+node tools/photo-import-test.mjs # a HEIC off a Mac is named rather than silently dropped
 node tools/freehand-test.mjs     # draw a house with a pointer; spaces light up, walls weld, the plan turns
 node tools/layout-stage-test.mjs # the drawing arrives fitted, and a hole still refuses to build
 node tools/oneclick-test.mjs     # photos in, walkable tour out

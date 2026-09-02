@@ -215,6 +215,15 @@ function NewTourInner() {
    * restoring - the same shape of bug as the missing stage guard that started
    * all of this.
    */
+  /**
+   * A photo that could not be read, said where it can be seen.
+   *
+   * Held here rather than in `PhotoDrop` because the drop zone sits inside a
+   * `<details>` that is open only while there are photos - so the first import,
+   * which is the one most likely to be a folder of HEICs off a Mac, is exactly
+   * the one whose message would render inside a collapsed panel.
+   */
+  const [photoProblem, setPhotoProblem] = useState<string | null>(null);
   const [restoring, setRestoring] = useState(true);
   const [failed, setFailed] = useState<string | null>(null);
 
@@ -1269,7 +1278,9 @@ function NewTourInner() {
                 way to fill the house in. Folded away until wanted either way. */}
             <details
               className="mx-auto mt-5 max-w-2xl rounded-lg border border-ink-600 bg-ink-800"
-              open={photos.length > 0}
+              // Held open while there is something to say, or the notice below
+              // arrives at the same moment this shuts on top of it.
+              open={photos.length > 0 || photoProblem !== null}
             >
               <summary className="cursor-pointer px-4 py-3 text-sm text-mist-200">
                 {photos.length > 0
@@ -1285,6 +1296,7 @@ function NewTourInner() {
                 <PhotoDrop
                   photos={photos}
                   onAdd={addPhotos}
+                  onProblem={setPhotoProblem}
                   onRemove={(id) => {
                     const photo = photos.find((p) => p.id === id);
                     setPhotos((c) => c.filter((p) => p.id !== id));
@@ -1297,6 +1309,15 @@ function NewTourInner() {
                 <DriveImport onFiles={addPhotos} busy={stage !== "photos"} />
               </div>
             </details>
+
+            {photoProblem && (
+              <p
+                data-testid="photo-refused"
+                className="mx-auto mt-3 max-w-2xl rounded-lg border border-warn/40 bg-warn/10 px-3 py-2 text-xs text-warn"
+              >
+                {photoProblem}
+              </p>
+            )}
 
             {canBuild && (
               <>

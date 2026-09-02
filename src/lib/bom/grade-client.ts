@@ -11,6 +11,7 @@ import { getMedia, isManagedRef, refToKey } from "@/lib/media-store";
 import { roomKind } from "@/lib/plan/room-kind";
 import type { Property } from "@/lib/schema";
 import { policyFor } from "@/lib/ai/policy";
+import { toJpegDataUrl } from "@/lib/photos/decode";
 
 /**
  * Grade every room from its own photos.
@@ -24,27 +25,11 @@ import { policyFor } from "@/lib/ai/policy";
 const GRADE_EDGE = policyFor("condition").imageEdge;
 const MAX_PER_ROOM = 4;
 
-async function thumbnail(blob: Blob): Promise<string | null> {
-  try {
-    const bitmap = await createImageBitmap(blob);
-    const scale = Math.min(1, GRADE_EDGE / Math.max(bitmap.width, bitmap.height));
-    const canvas = document.createElement("canvas");
-    canvas.width = Math.max(1, Math.round(bitmap.width * scale));
-    canvas.height = Math.max(1, Math.round(bitmap.height * scale));
-    const ctx = canvas.getContext("2d");
-    if (!ctx) {
-      bitmap.close();
-      return null;
-    }
-    ctx.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
-    bitmap.close();
-    // Higher quality than the classification pass uses. Telling a chipped tile
-    // from a clean one is exactly the sort of detail JPEG throws away first.
-    return canvas.toDataURL("image/jpeg", 0.85);
-  } catch {
-    return null;
-  }
-}
+/**
+ * Higher quality than the classification pass uses. Telling a chipped tile
+ * from a clean one is exactly the sort of detail JPEG throws away first.
+ */
+const thumbnail = (blob: Blob) => toJpegDataUrl(blob, GRADE_EDGE, 0.85);
 
 export type GradeProgress = { room: string; done: number; total: number };
 

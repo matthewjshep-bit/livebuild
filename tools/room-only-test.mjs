@@ -83,6 +83,14 @@ const doc = await page.evaluate(() => {
     nodes: d.nodes.length,
     placed: d.nodes.filter((n) => n.roomId).length,
     id: d.id,
+    // Sizes, so a measured room can be told from a typical one.
+    sizes: d.plan.rooms.map((r) => {
+      const xs = r.polygon.map((p) => p[0]);
+      const ys = r.polygon.map((p) => p[1]);
+      const w = Math.max(...xs) - Math.min(...xs);
+      const h = Math.max(...ys) - Math.min(...ys);
+      return { label: r.label, sqft: Math.round(w * h * 10.7639) };
+    }),
   };
 });
 
@@ -94,6 +102,19 @@ check("a few spaces at most, not a house",
 check("no bedrooms were invented",
   !(doc?.rooms ?? []).some((r) => /Bedroom/i.test(r)) || (doc?.rooms ?? []).length <= 3,
   (doc?.rooms ?? []).join(", "));
+// `typicalSize` gives a kitchen 12ft x 12ft and a living room 16ft x 14ft, to
+// the foot. A room measured from its own photographs will not land on those
+// numbers, and a room that does is one the reading refused.
+const typicalSqft = { Kitchen: 144, "Living Room": 224, Bathroom: 56, Hallway: 64 };
+const measuredSome = (doc?.sizes ?? []).some(
+  (r) => typicalSqft[r.label] === undefined || Math.abs(r.sqft - typicalSqft[r.label]) > 4,
+);
+check("at least one room was measured rather than assumed", measuredSome,
+  (doc?.sizes ?? []).map((r) => `${r.label} ${r.sqft}sqft`).join(", "));
+check("and every room is a plausible size",
+  (doc?.sizes ?? []).every((r) => r.sqft >= 25 && r.sqft <= 900),
+  (doc?.sizes ?? []).map((r) => `${r.label} ${r.sqft}sqft`).join(", "));
+
 check("every photograph landed somewhere", (doc?.placed ?? 0) === (doc?.nodes ?? -1),
   `${doc?.placed} of ${doc?.nodes}`);
 

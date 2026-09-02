@@ -31,7 +31,7 @@ import {
   type ListingResult,
 } from "@/lib/listing/types";
 import { deleteMedia, mediaKeys, mediaRef, refToKey, resolveMediaUrl } from "@/lib/media-store";
-import { autoOpenings, layoutFromSpec } from "@/lib/plan/autolayout";
+import { autoOpenings, layoutFromSpec, rectangle, typicalSize } from "@/lib/plan/autolayout";
 import { type PackPlan, layoutFromFootprint } from "@/lib/plan/footprint";
 import { arrangeRooms } from "@/lib/plan/layout-client";
 import { checkDrawn, drawableBoundary, fitToBuilding } from "@/lib/plan/drawn";
@@ -45,7 +45,7 @@ import { type GradeProgress, gradeProperty } from "@/lib/bom/grade-client";
 import { canSync, rememberAdminKey, syncBlocker, syncProperty } from "@/lib/cloud/sync";
 import { loadProperty, saveProperty } from "@/lib/property-store";
 import { inferHouse } from "@/lib/spec/infer";
-import { type ReadProgress, readRooms } from "@/lib/spec/read-client";
+import { type ReadProgress, measureRooms, readRooms } from "@/lib/spec/read-client";
 // Aliased: `HouseSpec` is already taken here by the room-list type that
 // `describe` produces, which is a different thing entirely.
 import { HouseSpec as RoomSpecDoc } from "@/lib/spec/schema";
@@ -664,7 +664,7 @@ function NewTourInner() {
    * thing that will start passing a plan in.
    */
   const construct = useCallback(
-    async (evidence: BuildEvidence, drawn: Plan | null) => {
+    async (evidence: BuildEvidence, drawn: Plan | null, kind: BuildMode = "house") => {
       const gathered = [...evidence.notes];
       const { footprint: prepared, adjacency, rooms } = evidence;
       const labelled = evidence.photos;
@@ -742,15 +742,17 @@ function NewTourInner() {
         id: propertyId,
         label: label || "My home",
         /**
-         * What this document is, said rather than worked out later.
+         * What this document is, passed in rather than deduced.
          *
-         * "No site and not many rooms" describes a single room and also
-         * describes a house somebody drew by hand, and guessing between them
-         * would put house-sized rehab advice on a kitchen's scope of work with
-         * nothing to point at. A room is a build that was never drawn and never
-         * had an outline.
+         * This was worked out from "never drawn, no outline, not many rooms",
+         * with a comment alongside it saying that guessing between a single
+         * room and a hand-drawn house would put house-sized rehab advice on a
+         * kitchen. It then guessed anyway - and stopped being true the moment a
+         * room build started handing over a plan of its own, at which point
+         * every room was filed as a house. The caller knows which it is,
+         * because the user said so on the first screen.
          */
-        kind: drawn === null && !prepared && rooms.length <= 3 ? "room" : "house",
+        kind,
         displayUnits: "ft",
         plan: nextPlan,
         nodes: placed.nodes,
@@ -1004,7 +1006,67 @@ function NewTourInner() {
           return;
         }
         setStage("building");
-        await construct(found, null);
+
+        /**
+         * How big is it, actually.
+         *
+         * Nothing else knows. There is no footprint, no map and no listing, so
+         * without this every kitchen is the same kitchen - `typicalSize`'s
+         * twelve foot square - and the photographs the whole mode is built
+         * around have said nothing about the one dimension that decides how the
+         * room feels to stand in.
+         *
+         * Fails soft: a room the reading refuses keeps its typical size, which
+         * is exactly where it was before.
+         */
+        setStep({ label: "Measuring the room", done: 0, total: found.rooms.length });
+        const grouped = found.rooms.map((room) => ({
+          label: room.label,
+          photos: labelled
+            .filter((photo) => photo.roomLabel === room.label)
+            .map((photo) => photo.file)
+            .filter((file): file is File => file instanceof File),
+        }));
+        const measured = await measureRooms(grouped, (done, total) =>
+          setStep({ label: "Measuring the room", done, total }),
+        );
+
+        /**
+         * Laid out side by side, touching, so doorways derive between them.
+         *
+         * There is no arrangement to solve for one to three spaces that were
+         * photographed together - they are adjacent by the fact of having been
+         * photographed together - and a packer would only invent a shape to
+         * pack them into.
+         */
+        let x = 0;
+        const rooms = found.rooms.map((entry, i) => {
+          const size = measured.get(entry.label);
+          const [tw, td] = typicalSize(entry.label);
+          const w = size?.widthM ?? tw;
+          const d = size?.depthM ?? td;
+          const room = {
+            id: `r${i + 1}`,
+            label: entry.label,
+            polygon: rectangle(x, 0, w, d),
+            ceilingHeight: 2.7,
+            level: 0,
+          };
+          x += w;
+          return room;
+        });
+        const drawn: Plan = {
+          scaleRef: { px: 1, meters: M_PER_FT },
+          rooms,
+          openings: autoOpenings(rooms),
+        };
+        if (measured.size > 0) {
+          found.notes.push(
+            `Measured ${measured.size} room${measured.size === 1 ? "" : "s"} from the photographs.`,
+          );
+        }
+
+        await construct(found, drawn, "room");
         return;
       }
 

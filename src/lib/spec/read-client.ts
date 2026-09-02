@@ -68,6 +68,59 @@ async function thumbnail(blob: Blob): Promise<string | null> {
   }
 }
 
+/**
+ * How big each room is, read off its own photographs.
+ *
+ * Used before anything is built, and only where nothing else could know - a
+ * room built from photographs alone has no footprint, no map and no plan, so
+ * the alternative is `typicalSize`, which gives every kitchen the same kitchen.
+ *
+ * Fails soft in every direction. A room the reading refuses, a request that
+ * errors, no key at all: the caller gets nothing back for that room and falls
+ * through to the typical size, which is exactly where it was before. The
+ * measurement can make a room right; it is never the difference between a room
+ * and no room.
+ */
+export async function measureRooms(
+  byRoom: Array<{ label: string; photos: Blob[] }>,
+  onProgress?: (done: number, total: number) => void,
+): Promise<Map<string, { widthM: number; depthM: number }>> {
+  const out = new Map<string, { widthM: number; depthM: number }>();
+  let done = 0;
+
+  for (const room of byRoom) {
+    const shots = (
+      await Promise.all(room.photos.slice(0, MAX_PER_ROOM).map((blob) => thumbnail(blob)))
+    ).filter((p): p is string => Boolean(p));
+
+    if (shots.length > 0) {
+      try {
+        const response = await fetch("/api/room-read", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          // Deliberately no width or depth: their absence is what asks the
+          // question, and the route says so in as many words.
+          body: JSON.stringify({ room: room.label, photos: shots, neighbours: [] }),
+        });
+        if (response.ok) {
+          const data = await response.json();
+          if (data?.measured?.widthM > 0 && data?.measured?.depthM > 0) {
+            out.set(room.label, {
+              widthM: data.measured.widthM,
+              depthM: data.measured.depthM,
+            });
+          }
+        }
+      } catch {
+        // Nothing to do but use a typical room, which is what happens anyway.
+      }
+    }
+    onProgress?.(++done, byRoom.length);
+  }
+
+  return out;
+}
+
 /** A room's photographs, from the store or from a bundled sample's folder. */
 async function photosForRoom(property: Property, roomId: string): Promise<string[]> {
   const nodes = property.nodes.filter((n) => n.roomId === roomId).slice(0, MAX_PER_ROOM);

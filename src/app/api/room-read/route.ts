@@ -89,6 +89,30 @@ const ReadSchema = z.object({
     .boolean()
     .describe("Does the room you can see match the dimensions you were told it has"),
 
+  /**
+   * How big the room is, when nobody has already measured it.
+   *
+   * Asked only where there is no survey to defer to - a single room built from
+   * photographs alone has no footprint, no map and no plan, so this is the only
+   * thing that knows. Measured against the ruler declared above and checked
+   * against it on the way back, exactly as the ceiling height is: a reading
+   * taken against an object whose real size the model got wrong is thrown away
+   * rather than believed, because a room of confidently the wrong size looks
+   * exactly like a room of the right one.
+   */
+  measuredWidthM: z
+    .number()
+    .nullable()
+    .describe(
+      "Only when you were NOT given dimensions: how wide the room is along its longer floor direction, in metres, counted against your scale reference. null if you cannot tell.",
+    ),
+  measuredDepthM: z
+    .number()
+    .nullable()
+    .describe(
+      "Only when you were NOT given dimensions: the other floor direction, in metres. null if you cannot tell.",
+    ),
+
   floorMaterial: z.enum(FLOOR_MATERIALS).nullable().describe("null if the floor is not visible"),
   floorColour: z.string().nullable().describe("#rrggbb of the floor, or null"),
 
@@ -153,7 +177,9 @@ You are describing the *building*, not its contents. Ignore furniture, rugs, cur
 
 Start with scaleRef. Name one thing in the photograph whose real size you are confident of, and state that size. An interior door leaf is 0.81m wide, a light switch plate 0.086m, a kitchen base unit 0.6m deep and 0.87m to the worktop, a standard floor tile 0.3m or 0.6m. Every dimension you give afterwards should be a multiple of that object, measured against it in the image. Do not estimate dimensions any other way.
 
-You will be told the room's real width and depth. If what you see cannot be that size, set fitsGivenDimensions false and still answer using the dimensions you were given - they come from a survey and you do not.
+Usually you will be told the room's real width and depth. If what you see cannot be that size, set fitsGivenDimensions false and still answer using the dimensions you were given - they come from a survey and you do not. Leave measuredWidthM and measuredDepthM null in that case; you were not asked.
+
+Where you are **not** given dimensions, nothing else has measured this room and you are the only thing that can. Fill in measuredWidthM and measuredDepthM by counting your scale reference across the floor - a 0.81m door leaf laid end to end along the wall, a 0.6m base unit, a 0.3m tile. Say null rather than guess: a room of confidently the wrong size is indistinguishable from a room of the right one, and a refusal costs only a typical room instead of a wrong one.
 
 Rules that matter more than the rest:
 
@@ -205,7 +231,15 @@ export async function POST(request: Request) {
       ? `It measures ${(widthM / M_PER_FT).toFixed(0)}ft by ${(depthM / M_PER_FT).toFixed(0)}ft ` +
         `(${widthM.toFixed(2)}m by ${depthM.toFixed(2)}m), and its walls are therefore ` +
         `${widthM.toFixed(1)}m and ${depthM.toFixed(1)}m long. `
-      : "") +
+      : // Said here as well as in the system prompt, because the absence of a
+        // sentence is not an instruction. Told only that dimensions were
+        // missing, the model returned null for them and, being unsure of the
+        // scale, went on to return null for the ceiling height too - so the
+        // silence cost both measurements rather than one.
+        "**Nobody has measured this room.** There is no survey, no floor plan and no " +
+        "map - you are the only thing that can size it. Fill in measuredWidthM and " +
+        "measuredDepthM by counting your scale reference across the floor, and set " +
+        "fitsGivenDimensions true since there is nothing to disagree with. ") +
     (neighbours.length > 0
       ? `It opens onto: ${neighbours.join(", ")}. Report an opening only for the ones you can see. `
       : "") +
@@ -324,14 +358,60 @@ function reconcile(
   const error = known
     ? Math.min(...known[1].map((size) => scaleError(parsed.scaleRef.assumedWidthM, size)))
     : 0;
-  const trustDimensions = error <= SCALE_TOLERANCE && parsed.fitsGivenDimensions;
+  const rulerHolds = error <= SCALE_TOLERANCE;
+
+  /**
+   * Two different questions that used to be one.
+   *
+   * `fitsGivenDimensions` asks whether the room matches a survey, and it is
+   * meaningless where there is no survey - a single room built from
+   * photographs has no footprint and no plan, so nothing was given to fit. Left
+   * folded together, a dimension-less call would answer "no, it does not fit
+   * the dimensions I was not given" and silently throw away the ceiling height
+   * and the skirting, which for that room are the only two measurements there
+   * are.
+   *
+   * So the ruler is checked on its own, and the survey only where one exists.
+   */
+  const hadDimensions = room.widthM > 0 && room.depthM > 0;
+  const trustDimensions = rulerHolds && (!hadDimensions || parsed.fitsGivenDimensions);
   if (!trustDimensions) {
     dropped.push(
-      known && error > SCALE_TOLERANCE
+      known && !rulerHolds
         ? `measured against a "${parsed.scaleRef.object}" it called ${parsed.scaleRef.assumedWidthM}m, which is no size one comes in`
         : "the room it described is not the size the survey says it is",
     );
   }
+
+  /**
+   * The room's own size, where nothing else knew it.
+   *
+   * Through the same gate as everything else: a reading taken against an object
+   * whose real size the model got wrong is thrown away rather than believed.
+   * Then banded, because the failure this is guarding against is not a metre
+   * out - it is an order of magnitude, from counting the wrong object - and a
+   * two-metre-square living room or a forty-metre bedroom is a scale error that
+   * got through rather than a room.
+   */
+  const measured =
+    !hadDimensions && rulerHolds
+      ? (() => {
+          const w = parsed.measuredWidthM;
+          const d = parsed.measuredDepthM;
+          if (!w || !d) return null;
+          const plausible = (v: number) => v >= 1.2 && v <= 20;
+          if (!plausible(w) || !plausible(d)) {
+            dropped.push(
+              `it measured the room at ${w.toFixed(1)}m by ${d.toFixed(1)}m, which is not a room`,
+            );
+            return null;
+          }
+          // Rounded to the nearest six inches, the way every other dimension
+          // here is, so a wall reads as deliberate rather than as arithmetic.
+          const round = (v: number) => Math.round(v / 0.1524) * 0.1524;
+          return { widthM: round(Math.max(w, d)), depthM: round(Math.min(w, d)) };
+        })()
+      : null;
 
   const ceiling = trustDimensions ? snapTo(parsed.ceilingHeightM, "ceilingM") : null;
   const baseboard = trustDimensions ? snapTo(parsed.baseboardM, "baseboardM") : null;
@@ -380,6 +460,8 @@ function reconcile(
       colour: quantiseColour(parsed.trimColour),
     },
     openings,
+    /** How big the room is, when nothing else had measured it. Null otherwise. */
+    measured,
     /** Sizes that matched no stock size. Shown as "unusual, worth checking". */
     offStandard: [
       ceiling && !ceiling.snapped && plausibleCeiling ? "ceiling height" : null,

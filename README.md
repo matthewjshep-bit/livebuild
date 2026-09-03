@@ -659,6 +659,21 @@ the fireplace's wall when the reader found one. The porch has posts and a
 roof over the door, and a fence read as picket, or white, is pickets. All
 of it is boxes, pure, and tested without a browser.
 
+**And the inside.** A doorway was a gap with a header over it; now it has
+a frame, casing on both faces and a six-panel leaf standing open into the
+room the plan names first (`src/lib/model/door-leaves.ts`). There is a
+switch plate on the latch side of every door and an outlet every few
+metres along the skirting (`switches.ts`), and under every lamp a ceiling
+rose with a pendant on a cord in the rooms people sit in, or a flush shade
+elsewhere (`pendants.ts`) - the bulb is the one thing on the model that
+glows, only when the lamps are on, and the readout counts it as `lit`
+apart from `emissive`, which still means nothing is faking light. The
+furniture has the parts it is recognised by: a sofa has arms, cushions and
+legs; a bed has legs, a duvet and pillows; tables and chairs stand on
+legs; a fridge has two doors with handles; a basin is a vanity on the
+floor with doors, a top, a bowl and a tap; a wardrobe has doors. Furniture
+takes a softer bevel than joinery.
+
 **A sky, soft shadows, and a graded frame.** A sited house stands under
 three's analytic sky now - a scattering model with the sun in it, driven by
 the same solar position as the light and the shadows, so the disc is where

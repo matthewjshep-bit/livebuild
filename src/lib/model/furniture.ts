@@ -135,6 +135,52 @@ export function slab(
   };
 }
 
+/** Four legs under a piece, one at each corner, from the floor up to `height`. */
+function legs(place: Placement, height: number, colour: string, size = 0.05, inset = 0.04): Box[] {
+  const out: Box[] = [];
+  for (const x of [place.x + inset, place.x + place.width - inset - size]) {
+    for (const y of [place.y + inset, place.y + place.depth - inset - size]) {
+      out.push(slab({ x, y, width: size, depth: size }, 0, height, colour));
+    }
+  }
+  return out;
+}
+
+/** The strip along a piece's front - the side away from the wall it stands against - this thick. */
+function frontOf(wall: Wall, place: Placement, thickness: number): Placement {
+  switch (wall) {
+    case "north":
+      return { ...place, y: place.y + place.depth - thickness, depth: thickness };
+    case "south":
+      return { ...place, depth: thickness };
+    case "west":
+      return { ...place, x: place.x + place.width - thickness, width: thickness };
+    case "east":
+      return { ...place, width: thickness };
+  }
+}
+
+/** Two doors across a piece's front, a gap between them, a handle on each by the gap. */
+function doorsOn(wall: Wall, place: Placement, from: number, to: number, colour: string, handle: string): Box[] {
+  const along = wall === "north" || wall === "south";
+  const face = frontOf(wall, place, 0.02);
+  const span = along ? face.width : face.depth;
+  const half = span / 2 - 0.01;
+  const out: Box[] = [];
+  for (const side of [0, 1]) {
+    const leaf: Placement = along
+      ? { ...face, x: face.x + side * (half + 0.02), width: half }
+      : { ...face, y: face.y + side * (half + 0.02), depth: half };
+    out.push(slab(leaf, from, to, colour));
+    // The handle sits by the gap, a little proud of the door.
+    const grip: Placement = along
+      ? { x: face.x + span / 2 + (side === 0 ? -0.06 : 0.04), y: wall === "north" ? face.y + 0.02 : face.y - 0.02, width: 0.02, depth: 0.02 }
+      : { x: wall === "west" ? face.x + 0.02 : face.x - 0.02, y: face.y + span / 2 + (side === 0 ? -0.06 : 0.04), width: 0.02, depth: 0.02 };
+    out.push(slab(grip, (from + to) / 2 - 0.15, (from + to) / 2 + 0.15, handle, { roughness: 0.35, metalness: 0.8 }));
+  }
+  return out;
+}
+
 /** A colour nudged darker, for the shadowed part of one piece. */
 export function darker(hex: string, amount: number): string {
   const n = parseInt(hex.replace("#", ""), 16);
@@ -200,19 +246,32 @@ function bedroom(
   const seen = spec?.furnishings?.find((f) => f.kind === "bed");
   const head = seen?.colour ?? C.soft;
 
+  // The head end is against the wall; the duvet runs from the foot most of
+  // the way up, and the pillows lie between it and the headboard.
+  const along = wall === "north" || wall === "south";
+  const mattress: Placement = { x: bed.x + 0.04, y: bed.y + 0.04, width: bed.width - 0.08, depth: bed.depth - 0.08 };
+  const duvet: Placement = along
+    ? { ...mattress, y: wall === "north" ? mattress.y + 0.7 : mattress.y, depth: mattress.depth - 0.7 }
+    : { ...mattress, x: wall === "west" ? mattress.x + 0.7 : mattress.x, width: mattress.width - 0.7 };
+  const pillows: Box[] = [];
+  const pillowCount = bed.width > 1.2 ? 2 : 1;
+  for (let i = 0; i < pillowCount; i++) {
+    const p: Placement = along
+      ? { x: mattress.x + 0.08 + i * ((mattress.width - 0.16) / pillowCount), y: wall === "north" ? mattress.y + 0.12 : mattress.y + mattress.depth - 0.52, width: (mattress.width - 0.16) / pillowCount - 0.06, depth: 0.4 }
+      : { x: wall === "west" ? mattress.x + 0.12 : mattress.x + mattress.width - 0.52, y: mattress.y + 0.08 + i * ((mattress.depth - 0.16) / pillowCount), width: 0.4, depth: (mattress.depth - 0.16) / pillowCount - 0.06 };
+    pillows.push(slab(p, 0.62, 0.74, C.white));
+  }
   pieces.push({
     kind: "bed",
     boxes: [
+      ...legs(bed, 0.1, C.timberDark),
       slab(bed, 0.1, 0.4, C.timberDark),
       // Mattress inset, so the base reads as a frame rather than one block.
+      slab(mattress, 0.4, 0.62, C.white),
+      slab(duvet, 0.62, 0.72, seen?.colour ? darker(seen.colour, -30) : C.soft),
+      ...pillows,
       slab(
-        { x: bed.x + 0.04, y: bed.y + 0.04, width: bed.width - 0.08, depth: bed.depth - 0.08 },
-        0.4,
-        0.62,
-        C.white,
-      ),
-      slab(
-        wall === "north" || wall === "south"
+        along
           ? { x: bed.x + 0.1, y: wall === "north" ? bed.y + 0.08 : bed.y + bed.depth - 0.45, width: bed.width - 0.2, depth: 0.37 }
           : { x: wall === "west" ? bed.x + 0.08 : bed.x + bed.width - 0.45, y: bed.y + 0.1, width: 0.37, depth: bed.depth - 0.2 },
         0.62,
@@ -227,7 +286,10 @@ function bedroom(
     wall === "north" ? "south" : wall === "south" ? "north" : wall === "west" ? "east" : "west";
   const wardrobe = againstWall(opposite, width, depth, [Math.min(1.6, width * 0.5), 0.6]);
   if (!blocksDoor(wardrobe, doors) && depth > 3 && width > 2.6) {
-    pieces.push({ kind: "wardrobe", boxes: [slab(wardrobe, 0, 2.0, C.white)] });
+    pieces.push({
+      kind: "wardrobe",
+      boxes: [slab(wardrobe, 0, 2.0, C.white), ...doorsOn(opposite, wardrobe, 0.02, 1.98, C.white, C.metal)],
+    });
   }
 
   return pieces;
@@ -254,10 +316,30 @@ function livingRoom(width: number, depth: number, doors: Vec2[], spec?: RoomSpec
   const finish: Box["finish"] | undefined =
     seen?.material === "leather" ? { roughness: 0.5, metalness: 0 } : undefined;
 
+  // Arms at the two ends, cushions along the seat, legs under it: the
+  // parts a sofa is recognised by from across a room. One slab with a
+  // slab on it was a bench.
+  const across = wall === "north" || wall === "south";
+  const arms: Placement[] = across
+    ? [{ ...sofa, width: 0.2 }, { ...sofa, x: sofa.x + sofa.width - 0.2, width: 0.2 }]
+    : [{ ...sofa, depth: 0.2 }, { ...sofa, y: sofa.y + sofa.depth - 0.2, depth: 0.2 }];
+  const span = (across ? sofa.width : sofa.depth) - 0.4;
+  const cushionCount = Math.max(2, Math.round(span / 0.7));
+  const cushions: Box[] = [];
+  for (let i = 0; i < cushionCount; i++) {
+    const each = span / cushionCount;
+    const c: Placement = across
+      ? { x: sofa.x + 0.2 + i * each + 0.015, y: wall === "north" ? sofa.y + 0.2 : sofa.y + 0.03, width: each - 0.03, depth: sofa.depth - 0.23 }
+      : { x: wall === "west" ? sofa.x + 0.2 : sofa.x + 0.03, y: sofa.y + 0.2 + i * each + 0.015, width: sofa.width - 0.23, depth: each - 0.03 };
+    cushions.push(slab(c, 0.42, 0.52, seat, finish));
+  }
   pieces.push({
     kind: "sofa",
     boxes: [
+      ...legs(sofa, 0.1, C.timberDark, 0.05, 0.06),
       slab(sofa, 0.1, 0.42, seat, finish),
+      ...arms.map((arm) => slab(arm, 0.1, 0.64, back, finish)),
+      ...cushions,
       slab(
         wall === "north"
           ? { ...sofa, depth: 0.2 }
@@ -281,7 +363,7 @@ function livingRoom(width: number, depth: number, doors: Vec2[], spec?: RoomSpec
     depth: 0.7,
   };
   if (!blocksDoor(table, doors) && width > 2.6 && depth > 2.6) {
-    pieces.push({ kind: "coffee-table", boxes: [slab(table, 0.34, 0.42, C.timber)] });
+    pieces.push({ kind: "coffee-table", boxes: [slab(table, 0.34, 0.42, C.timber), ...legs(table, 0.34, C.timberDark, 0.05, 0.05)] });
   }
 
   const opposite: Wall =
@@ -322,9 +404,30 @@ function kitchen(width: number, depth: number, doors: Vec2[]): Piece[] {
     });
   }
 
-  const fridge = againstWall(runWall === "north" ? "east" : "south", width, depth, [0.75, 0.7]);
+  const fridgeWall: Wall = runWall === "north" ? "east" : "south";
+  const fridge = againstWall(fridgeWall, width, depth, [0.75, 0.7]);
   if (!blocksDoor(fridge, doors)) {
-    pieces.push({ kind: "fridge", boxes: [slab(fridge, 0, 1.8, C.metal)] });
+    // A freezer door below, a fridge door above, a handle on each.
+    const face = frontOf(fridgeWall, fridge, 0.02);
+    // The fridge stands on the east or the south wall, so its front faces
+    // west or north, and the handle sits a little proud of that face.
+    const handle = (from: number, to: number): Box => {
+      const grip: Placement =
+        fridgeWall === "south"
+          ? { x: face.x + 0.06, y: face.y - 0.02, width: 0.02, depth: 0.02 }
+          : { x: face.x - 0.02, y: face.y + 0.06, width: 0.02, depth: 0.02 };
+      return slab(grip, from, to, C.dark, { roughness: 0.4, metalness: 0.6 });
+    };
+    pieces.push({
+      kind: "fridge",
+      boxes: [
+        slab(fridge, 0, 1.8, C.metal),
+        slab(face, 0.02, 0.62, C.metal),
+        slab(face, 0.66, 1.78, C.metal),
+        handle(0.2, 0.55),
+        handle(0.8, 1.4),
+      ],
+    });
   }
 
   return pieces;
@@ -341,10 +444,8 @@ function dining(width: number, depth: number, doors: Vec2[]): Piece[] {
   };
   if (blocksDoor(table, doors)) return [];
 
-  const boxes: Box[] = [
-    slab(table, 0.68, 0.76, C.timber),
-    slab({ ...table, x: table.x + 0.08, y: table.y + 0.08, width: table.width - 0.16, depth: table.depth - 0.16 }, 0, 0.68, C.timberDark),
-  ];
+  // A top on four legs, not a top on a plinth.
+  const boxes: Box[] = [slab(table, 0.68, 0.76, C.timber), ...legs(table, 0.68, C.timberDark, 0.06, 0.06)];
 
   // Chairs down the long sides only; ends look cluttered at this scale.
   const seats = Math.max(2, Math.min(3, Math.floor(tableW / 0.6)));
@@ -353,10 +454,31 @@ function dining(width: number, depth: number, doors: Vec2[]): Piece[] {
     for (const y of [table.y - 0.5, table.y + table.depth + 0.1]) {
       boxes.push(slab({ x, y, width: 0.4, depth: 0.4 }, 0.3, 0.46, C.soft));
       boxes.push(slab({ x, y, width: 0.4, depth: 0.08 }, 0.46, 0.92, C.softDark));
+      boxes.push(...legs({ x, y, width: 0.4, depth: 0.4 }, 0.3, C.timberDark, 0.03, 0.03));
     }
   }
 
   return [{ kind: "dining-set", boxes }];
+}
+
+/**
+ * A basin as fitted: a vanity cabinet on the floor with doors, a top, the
+ * bowl set into it, and a tap at the wall. The basin was a slab floating
+ * at waist height, which read as exactly that.
+ */
+function vanity(wall: Wall, place: Placement): Box[] {
+  const across = wall === "north" || wall === "south";
+  const bowl: Placement = { x: place.x + 0.1, y: place.y + 0.08, width: place.width - 0.2, depth: place.depth - 0.16 };
+  const tap: Placement = across
+    ? { x: place.x + place.width / 2 - 0.015, y: wall === "north" ? place.y + 0.03 : place.y + place.depth - 0.06, width: 0.03, depth: 0.03 }
+    : { x: wall === "west" ? place.x + 0.03 : place.x + place.width - 0.06, y: place.y + place.depth / 2 - 0.015, width: 0.03, depth: 0.03 };
+  return [
+    slab(place, 0, 0.82, C.white),
+    ...doorsOn(wall, place, 0.08, 0.78, C.white, C.metal),
+    slab({ ...place, x: place.x - 0.01, y: place.y - 0.01, width: place.width + 0.02, depth: place.depth + 0.02 }, 0.82, 0.86, C.white),
+    slab(bowl, 0.86, 0.9, C.glassy),
+    slab(tap, 0.86, 1.02, C.metal, { roughness: 0.3, metalness: 0.85 }),
+  ];
 }
 
 function bathroom(width: number, depth: number, doors: Vec2[]): Piece[] {
@@ -377,7 +499,7 @@ function bathroom(width: number, depth: number, doors: Vec2[]): Piece[] {
   const basinWall: Wall = wall === "north" ? "south" : wall === "south" ? "north" : wall === "west" ? "east" : "west";
   const basin = againstWall(basinWall, width, depth, [0.6, 0.45]);
   if (!blocksDoor(basin, doors)) {
-    pieces.push({ kind: "basin", boxes: [slab(basin, 0.55, 0.88, C.white)] });
+    pieces.push({ kind: "basin", boxes: vanity(basinWall, basin) });
   }
 
   const wc = againstWall(basinWall, width, depth, [0.4, 0.62]);
@@ -394,7 +516,7 @@ function powder(width: number, depth: number, doors: Vec2[]): Piece[] {
   const basin = againstWall(wall, width, depth, [0.5, 0.4]);
   const wc = againstWall(wall === "north" ? "south" : "north", width, depth, [0.4, 0.6]);
   const pieces: Piece[] = [];
-  if (!blocksDoor(basin, doors)) pieces.push({ kind: "basin", boxes: [slab(basin, 0.55, 0.85, C.white)] });
+  if (!blocksDoor(basin, doors)) pieces.push({ kind: "basin", boxes: vanity(wall, basin) });
   if (!blocksDoor(wc, doors)) pieces.push({ kind: "wc", boxes: [slab(wc, 0, 0.4, C.white)] });
   return pieces;
 }

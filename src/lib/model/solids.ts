@@ -115,11 +115,13 @@ export function solid(
   center: [number, number, number],
   size: [number, number, number],
   rotationY = 0,
+  /** The fillet's radius. Furniture asks for more than joinery: a sofa arm is not a worktop edge. */
+  bevel = BEVEL_M,
 ): THREE.BufferGeometry {
   // A fillet cannot be more than half the thinnest dimension, or the box
   // inverts. Thin parts - a worktop, a tread, a pillow - simply get a smaller
   // one, which is also what a real thin edge looks like.
-  const radius = Math.min(BEVEL_M, Math.min(size[0], size[1], size[2]) * 0.3);
+  const radius = Math.min(bevel, Math.min(size[0], size[1], size[2]) * 0.3);
   const geometry: THREE.BufferGeometry =
     radius > 0.0002
       ? new RoundedBoxGeometry(size[0], size[1], size[2], 1, radius)

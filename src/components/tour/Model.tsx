@@ -13,6 +13,9 @@ import type { Wall } from "@/lib/model/furniture";
 import { chimney, cornerBoards, foundationBand } from "@/lib/model/facade-trim";
 import { roofTrim } from "@/lib/model/roof-trim";
 import { windowAssembly } from "@/lib/model/window-assembly";
+import { interiorDoors } from "@/lib/model/door-leaves";
+import { switchesFor } from "@/lib/model/switches";
+import { pendantsFor } from "@/lib/model/pendants";
 import { roofFor, roofGeometry, thickenFaces } from "@/lib/model/roof";
 import { assetForBox, assetForFloor, assetForRoof, assetForSiding, assetForWall, type BoxMaterial } from "@/lib/model/assets";
 import { assetSurface, useAssetsVersion } from "@/lib/model/asset-surfaces";
@@ -453,6 +456,8 @@ function LevelModel({
   furnished,
   walking,
   frontWall = null,
+  /** The lamps are on, so the bulbs glow. */
+  lit = false,
   // Bound under another name: `solid` is also the box helper this builds with.
   solid: facadesSolid = walking,
   scheme,
@@ -482,6 +487,7 @@ function LevelModel({
   walking: boolean;
   /** The wall facing the street: a fireplace keeps off it, since the front door is there. */
   frontWall?: Wall | null;
+  lit?: boolean;
   scheme: Scheme;
   explode: number;
   pick: Pick | null;
@@ -923,7 +929,8 @@ function LevelModel({
               room.id,
               element ?? "floor",
               recolour(box.colour, scheme),
-              solid([at[0], baseY + box.center[1], at[1]], box.size, turn),
+              // A softer edge than joinery: upholstery and timber, not laminate.
+              solid([at[0], baseY + box.center[1], at[1]], box.size, turn, 0.008),
               true,
               undefined,
               materialForBox(piece.kind, box),
@@ -962,6 +969,17 @@ function LevelModel({
     // of foundation a clad house shows.
     const cornerParts = cornerBoards(exterior, baseY, PALETTE.frame).map(partGeometry);
     const foundationParts = level === 0 ? foundationBand(exterior, "#8d8a84").map(partGeometry) : [];
+    // Inside: a door in every doorway, a switch by each and outlets along
+    // the walls, and a fitting where every lamp is. A doorway was a gap
+    // with a header; a room lit from nowhere had nothing to light it.
+    const doorParts = interiorDoors(plan, level, walls, baseY, { frame: scheme.trim, leaf: scheme.trim });
+    const doorJoinery = doorParts.filter((p) => p.part !== "handle").map(partGeometry);
+    const doorHandles = doorParts.filter((p) => p.part === "handle").map(partGeometry);
+    const plates = switchesFor(plan, level, walls, baseY).map(partGeometry);
+    const fittingParts = pendantsFor(plan, level);
+    const fittings = fittingParts.filter((p) => p.part === "rose" || p.part === "shade").map(partGeometry);
+    const cords = fittingParts.filter((p) => p.part === "cord").map(partGeometry);
+    const bulbs = fittingParts.filter((p) => p.part === "bulb").map(partGeometry);
 
     /**
      * The house's wall colour, and a surface for it.
@@ -1047,6 +1065,12 @@ function LevelModel({
       frames: merged(frameParts),
       corners: merged(cornerParts),
       foundation: merged(foundationParts),
+      doors: merged(doorJoinery),
+      doorHandles: merged(doorHandles),
+      plates: merged(plates),
+      fittings: merged(fittings),
+      cords: merged(cords),
+      bulbs: merged(bulbs),
       glass: merged(glassParts),
     };
     // `assetsVersion` is not read: it changes when a scan lands, which is
@@ -1240,6 +1264,45 @@ function LevelModel({
           <meshStandardMaterial color="#8d8a84" roughness={0.95} metalness={0} transparent={ghosted} opacity={dimmed} />
         </mesh>
       )}
+      {!exploded && built.doors && (
+        <mesh geometry={built.doors} castShadow receiveShadow userData={{ element: "door" }}>
+          <meshStandardMaterial color={scheme.trim} roughness={0.5} metalness={0} transparent={ghosted} opacity={dimmed} />
+        </mesh>
+      )}
+      {!exploded && built.doorHandles && (
+        <mesh geometry={built.doorHandles} castShadow userData={{ element: "door" }}>
+          <meshStandardMaterial color="#b8b6ae" roughness={0.3} metalness={0.85} transparent={ghosted} opacity={dimmed} />
+        </mesh>
+      )}
+      {!exploded && built.plates && (
+        <mesh geometry={built.plates} receiveShadow userData={{ element: "electrical" }}>
+          <meshStandardMaterial color="#f2f1ee" roughness={0.6} metalness={0} transparent={ghosted} opacity={dimmed} />
+        </mesh>
+      )}
+      {!exploded && built.fittings && (
+        <mesh geometry={built.fittings} castShadow receiveShadow userData={{ element: "lighting" }}>
+          <meshStandardMaterial color="#efe9dd" roughness={0.7} metalness={0} transparent={ghosted} opacity={dimmed} />
+        </mesh>
+      )}
+      {!exploded && built.cords && (
+        <mesh geometry={built.cords} userData={{ element: "lighting" }}>
+          <meshStandardMaterial color="#2a2a2c" roughness={0.8} metalness={0} transparent={ghosted} opacity={dimmed} />
+        </mesh>
+      )}
+      {!exploded && built.bulbs && (
+        <mesh geometry={built.bulbs} userData={{ element: "lighting" }}>
+          {/* The one thing on the model that glows, and only when the lamps are on. */}
+          <meshStandardMaterial
+            color="#fff4d6"
+            emissive="#ffd9a0"
+            emissiveIntensity={lit ? 1.6 : 0}
+            roughness={0.4}
+            metalness={0}
+            transparent={ghosted}
+            opacity={dimmed}
+          />
+        </mesh>
+      )}
       {!exploded && built.glass && (
         <mesh geometry={built.glass} userData={{ element: "glass" }}>
           {/*
@@ -1288,6 +1351,7 @@ export function Model({
   onHover,
   onMeasurePoint,
   walking = false,
+  lit = false,
   frontWall = null,
   scheme = DEFAULT_SCHEME,
   explode = 0,
@@ -1326,6 +1390,8 @@ export function Model({
    * from inside there is nothing in the way to fade.
    */
   walking?: boolean;
+  /** The lamps are on: the fittings' bulbs glow. */
+  lit?: boolean;
   /** Which of the house's walls faces the street, when the house has one. */
   frontWall?: Wall | null;
   /** What is currently selected, so it can be lit. */
@@ -1416,6 +1482,7 @@ export function Model({
           furnished={furnished}
           walking={walking}
           frontWall={frontWall}
+          lit={lit}
           scheme={scheme}
           explode={explode}
           siding={siding}

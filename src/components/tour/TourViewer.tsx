@@ -85,6 +85,7 @@ function SceneReadout({ mode, furnished }: { mode: ViewState["mode"]; furnished:
     const markerAt: Array<[number, number]> = [];
     const bySurface: Record<string, number> = {};
     let emissive = 0;
+    let lit = 0;
     // Every distinct colour map in use. Two rooms in two wall materials have
     // two; a house whose every wall is plaster has one - which is how a suite
     // can tell that `walls.material` reached a mesh without reading pixels.
@@ -113,7 +114,11 @@ function SceneReadout({ mode, furnished }: { mode: ViewState["mode"]; furnished:
       // once made every ceiling in the house blue, and it survived turning off
       // every light in the scene while I looked for the cause.
       const material = mesh.material as THREE.MeshStandardMaterial;
-      if (material?.emissiveIntensity > 0 && material.emissive?.getHex?.() !== 0) emissive++;
+      if (material?.emissiveIntensity > 0 && material.emissive?.getHex?.() !== 0) {
+        // A bulb in a fitting is meant to glow; anything else glowing is a fake.
+        if (element === "lighting") lit++;
+        else emissive++;
+      }
 
       if (geometry?.type === "RingGeometry") {
         // Where the marker is on screen, as a fraction of the canvas.
@@ -178,6 +183,7 @@ function SceneReadout({ mode, furnished }: { mode: ViewState["mode"]; furnished:
       markerAt,
       bySurface,
       emissive,
+      lit,
       photoTextures,
       bundledTextures,
       // Scans asked for and not yet landed. A screenshot taken at zero is
@@ -303,6 +309,10 @@ function Scene({
     };
   }, [property.plan, property.site, property.exterior, planSite]);
   const walkState = useRef<WalkState>({ x: 0, y: 0, level: 0, yaw: 0 });
+  // Lit indoors, and after dark whatever the view. Nobody wants a dollhouse
+  // glowing from inside at midday. The same switch lights the lamps and the
+  // bulbs in the fittings under them.
+  const lampsOn = view.mode === "walk" || hour < 7.5 || hour > 18.5;
 
   // The scans load only on a tier that can afford them, and this is where
   // the tier is known and the renderer can say how much anisotropy it has.
@@ -321,7 +331,7 @@ function Scene({
         plan={property.plan}
         // Lit indoors, and after dark whatever the view. Nobody wants a
         // dollhouse glowing from inside at midday.
-        lamps={view.mode === "walk" || hour < 7.5 || hour > 18.5}
+        lamps={lampsOn}
         explode={explode}
         // The storey underfoot, which is the only one whose windows can reach
         // you. It changes on the stairs without being asked.
@@ -344,6 +354,7 @@ function Scene({
       />
 
       <Model
+        lit={lampsOn}
         frontWall={ground?.front ?? null}
         plan={property.plan}
         spec={property.spec}

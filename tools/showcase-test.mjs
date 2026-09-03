@@ -88,6 +88,12 @@ const walk = await page.evaluate(() => window.__scene);
 check("on foot the kitchen has its cabinets", (walk.bySurface?.cabinets ?? 0) > 0, JSON.stringify(walk.bySurface));
 check("and a ceiling over it", (walk.bySurface?.ceiling ?? 0) > 0, JSON.stringify(walk.bySurface));
 check("and its appliances", (walk.bySurface?.appliances ?? 0) > 0);
+// The interior assembly on foot: a door in the doorway, a switch by it, a
+// fitting overhead with a bulb that glows - and nothing else glowing.
+check("a door hangs in the doorway", (walk.bySurface?.door ?? 0) > 0, JSON.stringify(walk.bySurface));
+check("a switch by it", (walk.bySurface?.electrical ?? 0) > 0, JSON.stringify(walk.bySurface));
+check("a fitting overhead, lit", (walk.bySurface?.lighting ?? 0) > 0 && (walk.lit ?? 0) > 0, JSON.stringify({ lighting: walk.bySurface?.lighting, lit: walk.lit }));
+check("and nothing else glows", walk.emissive === 0, `${walk.emissive}`);
 await page.screenshot({ path: "shots/SC3-showcase-kitchen.png" });
 
 check("no page errors", errors.length === 0, errors.slice(0, 2).join(" | "));

@@ -1564,12 +1564,37 @@ function NewTourInner() {
                   {notes.join(" ")} Change anything that looks wrong &ndash; or just open it.
                 </p>
               </div>
-              <a
-                href={`/tour/${propertyId}`}
-                className="rounded-lg bg-accent px-6 py-2.5 text-sm font-semibold text-ink-900"
-              >
-                Walk through it
-              </a>
+              {/*
+                Held until the photographs have been read.
+
+                This was a link the whole time, and it was a same-tab link - so
+                clicking it unmounted this page and abandoned the read that was
+                still running. Anyone who opened the tour within a minute or two
+                of building it saw the default scheme, whose own description is
+                "the default new-build look", and the rooms not yet read stayed
+                that way for good. The wait is one to two minutes on a house of
+                six rooms, once, and what it opens is the house the photographs
+                describe rather than the one the room list guessed at.
+              */}
+              {reading ? (
+                <button
+                  type="button"
+                  disabled
+                  data-testid="walk-through"
+                  className="cursor-wait rounded-lg bg-accent px-6 py-2.5 text-sm font-semibold text-ink-900 opacity-60"
+                >
+                  Reading the photographs
+                  {reading.room ? ` · ${reading.room}` : ""} · {reading.done}/{reading.total}
+                </button>
+              ) : (
+                <a
+                  href={`/tour/${propertyId}`}
+                  data-testid="walk-through"
+                  className="rounded-lg bg-accent px-6 py-2.5 text-sm font-semibold text-ink-900"
+                >
+                  Walk through it
+                </a>
+              )}
             </div>
 
             {/* The scope, as it fills in.
@@ -1688,7 +1713,7 @@ function NewTourInner() {
                     {reading.room ? ` · ${reading.room}` : ""} · {reading.done}/
                     {reading.total}
                   </span>
-                  <span>The tour is ready now; the detail fills in as it goes</span>
+                  <span>The tour opens when this finishes &mdash; leaving now would stop it</span>
                 </div>
                 <div className="mt-1.5 h-1 overflow-hidden rounded-full bg-ink-600">
                   <div

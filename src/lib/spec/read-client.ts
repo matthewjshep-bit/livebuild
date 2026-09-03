@@ -213,6 +213,29 @@ export async function readRooms(
   );
   const total = withPhotos.length;
 
+  /** A refusal about the whole setup is said once, not once per room. */
+  let houseWide: string | null = null;
+  const explain = (label: string, status: number, why: string | null) => {
+    const whole =
+      why === "no-api-key"
+        ? "The photographs were not read: no API key is configured on the server, so the house is built from its room list alone."
+        : why === "bad-key"
+          ? "The photographs were not read: the server's API key was rejected."
+          : why === "rate-limited" || status === 429
+            ? "The photographs were only partly read: the model is rate-limited. Building again in a minute will read the rest."
+            : null;
+    if (whole) {
+      if (!houseWide) notes.push(whole);
+      houseWide = whole;
+      return;
+    }
+    notes.push(
+      why === "refused"
+        ? `${label}: the model declined to read these photographs.`
+        : `${label}: the photographs could not be read (${why ?? status}).`,
+    );
+  };
+
   const one = async (room: Room) => {
     const photos = await photosForRoom(property, room.id);
     if (photos.length === 0) return;
@@ -236,10 +259,25 @@ export async function readRooms(
           photos,
         }),
       });
-      if (response.ok) result = (await response.json()) as ReadResult;
+      if (response.ok) {
+        result = (await response.json()) as ReadResult;
+      } else {
+        /**
+         * Said, not swallowed.
+         *
+         * This dropped every non-OK response on the floor, including the
+         * route's own "no API key" - so a house whose photographs were never
+         * read looked exactly like one whose photographs had been read and
+         * found to be a white box, and there was no way to tell which had
+         * happened. A default house needs a sentence beside it.
+         */
+        const why = await response.json().then((j) => j?.error as string).catch(() => null);
+        explain(room.label, response.status, why);
+      }
     } catch {
       // One room failing is one room the inference will fill in. The pass as a
       // whole must not stop for it - it runs after the tour is already up.
+      notes.push(`${room.label}: the photographs could not be sent to be read.`);
       result = null;
     }
     if (!result) return;

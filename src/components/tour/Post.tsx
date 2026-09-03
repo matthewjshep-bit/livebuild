@@ -41,7 +41,12 @@ export function Post({ quality }: { quality: Quality }) {
   // not, so the low tier keeps the antialiasing and drops the rest. That
   // ordering matters: dropping SMAA to save the AO would trade a subtle
   // improvement for an obvious regression.
-  const occlusion = quality === "high";
+  //
+  // Medium gets occlusion too. It was high-only, and medium is what a
+  // four-core laptop detects as - so most machines rendered a house with no
+  // contact shadow at all, which is most of the difference between a room and
+  // a box. It runs at half resolution there, which is the cheap half.
+  const occlusion = quality !== "low";
   const bloom = quality !== "low";
 
   return (

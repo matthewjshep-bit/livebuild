@@ -122,6 +122,33 @@ const MAR = dayOfYear(3, 20);
   check("midday is brighter than evening", noon.intensity > evening.intensity);
 }
 
+// The sky is three colours, and the ground is not one of the blue ones.
+//
+// The environment map used to take one saturated blue and paint it into the
+// zenith, the horizon and the ground at three gains, which multiplied every
+// surface in the house by blue. Tan walls came back grey; oak came back cold.
+// Overhead is allowed to be blue. Underfoot is a lit floor, and floors are warm.
+{
+  let coldGround = 0;
+  let greyZenith = 0;
+  let loudHorizon = 0;
+  for (let hour = 8; hour <= 17; hour++) {
+    const { sky } = sunState(seattle, JUN, hour);
+    if (!(sky.ground[0] > sky.ground[2])) coldGround++;
+    if (!(sky.zenith[2] > sky.zenith[0])) greyZenith++;
+    const spread = Math.max(...sky.horizon) - Math.min(...sky.horizon);
+    if (spread > 0.14) loudHorizon++;
+  }
+  check("the ground is warmer than it is blue at every daylight hour", coldGround === 0, `${coldGround} cold`);
+  check("and overhead is still blue", greyZenith === 0, `${greyZenith} not blue`);
+  check("and the horizon is close to neutral", loudHorizon === 0, `${loudHorizon} saturated`);
+
+  // Down to something, not to black: ACES turns near-black into blue, and a
+  // blue-grey ceiling at night was the bug being replaced.
+  const night = sunState(seattle, DEC, 0);
+  check("night keeps a dim warm ground rather than none", night.sky.ground[0] > 0.1, `${night.sky.ground[0].toFixed(2)}`);
+}
+
 // Bearings map into plan space. Plan +y points south, because the footprint is
 // projected that way - so north must come out as -y.
 {

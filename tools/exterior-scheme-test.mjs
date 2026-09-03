@@ -108,7 +108,7 @@ await seed(`ext-no-${Date.now().toString(36)}`, null);
 const plain = await schemeState();
 check("an untagged house offers only the canned schemes", plain.options.length === 4, `${plain.options.length}`);
 check("'This house' is not offered", !plain.options.includes("This house"));
-check("the old default still wins", plain.selected === "Cool contemporary", plain.selected);
+check("the default still wins", plain.selected === "Warm minimal", plain.selected);
 
 check("no page errors", errors.length === 0, errors.slice(0, 2).join(" | "));
 

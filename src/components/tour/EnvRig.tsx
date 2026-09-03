@@ -52,23 +52,26 @@ function paint(sun: SunState | null): HTMLCanvasElement {
   // Neutral, not blue. A house with no site has no sky, and giving it one
   // tints every upward-facing surface: the first version of this used a
   // blue-grey and the floors came back visibly cold, which reads as a colour
-  // management bug rather than as weather. Where the house *does* know where
-  // it is, the sun's own sky colour is the right answer and is used.
-  const zenith = sun ? rgb(sun.sky, 1.0) : "#8a8a89";
-  const horizon = sun ? rgb(sun.sky, 1.45) : "#a3a2a0";
-  // The lower half is not sky, it is what the room stands on - and indoors
-  // that is a lit floor rather than outdoor earth.
+  // management bug rather than as weather.
   //
-  // This was much darker, on the reasoning that ground is dimmer than sky. It
-  // is, outdoors. Indoors it is the single thing a ceiling can see: the sun
-  // never reaches a ceiling's underside, the hemisphere light gives it its
-  // ground colour, and image-based lighting is the only other thing pointing
-  // upward. With the lower hemisphere near-black a ceiling came back at almost
-  // zero luminance - and ACES renders near-black as a distinct blue, so every
-  // interior had a blue-grey ceiling that no amount of changing its paint
-  // colour would shift. A floor bounces a good deal of what lands on it, and
-  // this is that bounce.
-  const ground = sun ? rgb(sun.sky, 0.62) : "#6b6862";
+  // The sited path used to revert to exactly that failure. It took the sun's
+  // one sky colour - a saturated blue - and painted it into all three stops
+  // at three gains, so the dome was blue overhead, blue at the horizon and
+  // blue underfoot, and every surface in the house was multiplied by blue.
+  // `sunState` now says what each stop is, and the three are not the same
+  // colour: blue overhead, a warm neutral at the horizon, and a lit floor
+  // below.
+  //
+  // On that lower half: it is not sky, it is what the room stands on. It was
+  // much darker once, on the reasoning that ground is dimmer than sky - true
+  // outdoors, and indoors it is the single thing a ceiling can see. The sun
+  // never reaches a ceiling's underside, so with the lower hemisphere near
+  // black a ceiling came back at almost zero luminance, and ACES renders
+  // near-black as a distinct blue. A floor bounces a good deal of what lands
+  // on it, and this is that bounce - warm, because floors are.
+  const zenith = sun ? rgb(sun.sky.zenith, 1.0) : "#8a8a89";
+  const horizon = sun ? rgb(sun.sky.horizon, 1.0) : "#a3a2a0";
+  const ground = sun ? rgb(sun.sky.ground, 1.0) : "#6b6862";
 
   const sky = g.createLinearGradient(0, 0, 0, HEIGHT / 2);
   sky.addColorStop(0, zenith);

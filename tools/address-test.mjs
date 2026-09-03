@@ -19,7 +19,7 @@
  * real address, and they stay assertions.
  */
 import { chromium } from "playwright";
-import { drawLayout, drawRooms, chooseMode } from "./lib/flow.mjs";
+import { drawLayout, drawRooms, chooseMode, waitForWalkThrough } from "./lib/flow.mjs";
 
 const BASE = process.env.BASE_URL ?? "http://localhost:3000";
 const ADDRESS = "902 23rd Avenue East, Seattle, WA 98112";
@@ -164,6 +164,10 @@ if (await buildButton.count()) {
     // "A house was built" must mean a model, not a document. The review screen
     // links to the tour, so following its own link is both the check and the
     // thing a user would actually do.
+    // The link is held back until the photographs have been read, which is
+    // the point of it - so wait for that rather than looking the instant the
+    // house appears and finding the gate instead.
+    check("the tour opens once the photographs are read", await waitForWalkThrough(page));
     const walk = page.getByRole("link", { name: "Walk through it" });
     check("the finished house links to its tour", await walk.count() === 1);
     if (await walk.count()) {

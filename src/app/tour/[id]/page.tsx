@@ -24,6 +24,26 @@ export default function TourPage({ params }: { params: Promise<{ id: string }> }
     };
   }, [id]);
 
+  /**
+   * Pick up the photographs as they are read.
+   *
+   * The read runs on the page that built the house and writes each room to
+   * storage as it lands. A tour open in another tab loaded once and never
+   * looked again, so it showed the room list's guess for as long as it stayed
+   * open. `storage` fires in every *other* tab on a write, which is exactly
+   * the tab this is.
+   */
+  useEffect(() => {
+    const refresh = (event: StorageEvent) => {
+      if (event.key && !event.key.includes(id)) return;
+      resolveProperty(id).then((found) => {
+        if (found) setProperty(found);
+      });
+    };
+    window.addEventListener("storage", refresh);
+    return () => window.removeEventListener("storage", refresh);
+  }, [id]);
+
   if (state === "loading") {
     return <Centered>Loading tour...</Centered>;
   }

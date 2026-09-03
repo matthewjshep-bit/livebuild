@@ -533,8 +533,18 @@ anything is built.
 
 The plan says where the walls are. The **spec** says what they are made of, and
 it is the difference between a house and *this* house. It is read out of the
-photographs after the tour is already on screen, one request per room, and
-stored against the property keyed by room id.
+photographs once the house is built, one request per room, and stored against
+the property keyed by room id.
+
+**The tour waits for it.** The read is a minute or two on a six-room house, and
+for a while "Walk through it" was a link the whole time - a same-tab link, so
+pressing it unmounted the page doing the reading and abandoned it. Anyone who
+opened the tour within a couple of minutes of building it saw the default
+scheme, whose own description in the code was "the default new-build look", and
+the rooms not yet read stayed that way for good. That is what a blue-grey
+dollhouse with white cabinets was: not the product, but the product before its
+photographs had been looked at, frozen there. The button now holds until the
+read is done and says which room it is on.
 
 `src/lib/spec/` holds it, and four rules do most of the work.
 
@@ -745,11 +755,17 @@ one - which is how both walk tests were flaky before they waited on state.
 
 - **Photographs off the model** - done. The shell renderer, the depth pass and
   the node-teleport camera are gone; `@huggingface/transformers` with them.
-- **Materials and light** - done. Procedurally derived normal, occlusion and
-  roughness maps; a procedural environment map for image-based lighting; one
-  sun instead of six shadow maps; windows as real area lights; bevelled edges
-  on everything that is an object; SMAA, occlusion and a restrained bloom
-  behind a three-tier quality setting.
+- **Materials and light** - done, and recently corrected. Procedurally derived
+  normal, occlusion and roughness maps; a procedural environment map for
+  image-based lighting; one sun instead of six shadow maps; windows as real
+  area lights; bevelled edges on everything that is an object; SMAA, occlusion
+  and a restrained bloom behind a three-tier quality setting. The environment
+  map was, for a while, one saturated blue painted into its zenith, its horizon
+  *and its ground* - a light dome three to four times more blue than red on
+  every surface, which is why every house came out looking like a clay model in
+  a fish tank. The sky is three colours now, the ground is a warm floor bounce,
+  the windows light the dollhouse as well as the walk, and the default scheme
+  is the warm one.
 - **The interior spec** - done, and described above. Read per room, reasoned
   across the house for the rooms nobody photographed, snapped to the sizes
   things are actually built to, and checked against the photographs it came

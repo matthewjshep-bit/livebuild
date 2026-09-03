@@ -148,7 +148,14 @@ export const SCHEMES: Scheme[] = [
   },
 ];
 
-export const DEFAULT_SCHEME = SCHEMES[1];
+/**
+ * Warm by default.
+ *
+ * The default was "Cool contemporary", whose "wood" floor is `#9b9691` - a
+ * grey. With the photographs now read, the scheme only ever fills the rooms
+ * nobody photographed, and an unread wood floor should not come out grey.
+ */
+export const DEFAULT_SCHEME = SCHEMES[0];
 
 /** The name given to a scheme derived from the building's own colours. */
 export const THIS_HOUSE = "This house";

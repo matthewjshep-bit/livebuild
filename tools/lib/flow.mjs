@@ -305,6 +305,28 @@ export async function build(page, { timeoutMs = 200_000, house, rooms } = {}) {
   return drawLayout(page, { timeoutMs });
 }
 
+/**
+ * Wait for "Walk through it" to become a link.
+ *
+ * It is a disabled button while the photographs are being read, and only a
+ * link once they have been - so a suite that looks for the link the instant
+ * the house appears finds a button instead. The read is a minute or two on a
+ * real key and nothing at all without one, so the wait is generous and the
+ * return says which it was.
+ */
+export async function waitForWalkThrough(page, { timeoutMs = 240_000 } = {}) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const tag = await page
+      .getByTestId("walk-through")
+      .evaluate((el) => el.tagName)
+      .catch(() => null);
+    if (tag === "A") return true;
+    await page.waitForTimeout(500);
+  }
+  return false;
+}
+
 /** The saved property document, which is what the app actually recorded. */
 export async function savedProperty(page) {
   return page.evaluate(() => {

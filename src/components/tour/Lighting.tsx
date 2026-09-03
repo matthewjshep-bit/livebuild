@@ -71,7 +71,11 @@ export function Lighting({
 
   useEffect(() => {
     if (!sun) return;
-    scene.background = new THREE.Color(sun.sky[0], sun.sky[1], sun.sky[2]);
+    // What is behind the house is the sky at eye level, not the zenith. The
+    // zenith blue was here, flat and saturated, and the model sat in it like a
+    // specimen in a tank. The horizon, lifted towards white, reads as air.
+    const [r, g, b] = sun.sky.horizon;
+    scene.background = new THREE.Color(r, g, b).lerp(new THREE.Color("#ffffff"), 0.45);
   }, [scene, sun]);
 
   const lampLights = lamps ? <Lamps plan={plan} explode={explode} /> : null;
@@ -87,7 +91,7 @@ export function Lighting({
           tone and nothing had form.
         */}
         <EnvRig sun={null} />
-        {interior && <WindowLights plan={plan} sun={null} levels={levels} />}
+        <WindowLights plan={plan} sun={null} levels={levels} />
         {/*
           Both of these are far lower than they were. The environment now
           supplies the fill they used to be entirely responsible for, and left
@@ -138,7 +142,11 @@ export function Lighting({
         shadow-normalBias={0.02}
       />
 
-      {interior && <WindowLights plan={plan} sun={sun} levels={levels} />}
+      {/* In every view, not only on foot. The dollhouse is the view most people
+          look at first, and it was the one with nothing warm in it: the sun
+          reaches only what the openings let through, the environment is
+          diffuse, and these were gated off. A rect light per window is cheap. */}
+      <WindowLights plan={plan} sun={sun} levels={levels} />
 
       {/*
         The sky, as something to reflect and be lit by.
@@ -251,7 +259,7 @@ function WindowLights({
   // What sells daylight is the falloff, not the hue, so most of the tint is
   // mixed back out towards white.
   const colour = sun
-    ? new THREE.Color(sun.sky[0], sun.sky[1], sun.sky[2]).lerp(new THREE.Color("#ffffff"), 0.72)
+    ? new THREE.Color(...sun.sky.horizon).lerp(new THREE.Color("#ffffff"), 0.6)
     : new THREE.Color("#eef3fa");
 
   return (

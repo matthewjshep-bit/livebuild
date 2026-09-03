@@ -101,7 +101,25 @@ export type SunState = {
   day: number;
   /** Warm near the horizon, white overhead - the whole look of a time of day. */
   colour: [number, number, number];
-  sky: [number, number, number];
+  /**
+   * The sky as three colours, because it is three colours.
+   *
+   * This was one triplet - `hslToRgb(0.58, 0.45, …)`, a cyan-blue at 45%
+   * saturation - painted into the zenith, the horizon *and the ground* of the
+   * environment map at three gains. An irradiance dome that is blue in every
+   * direction multiplies every surface in the house by blue: tan walls came
+   * back grey, oak came back cold, and the whole model read as a clay
+   * maquette in a fish tank. Nobody could name it and everybody saw it.
+   *
+   * Overhead is blue. The horizon is nearly white, warming with the sun. The
+   * ground is what a room stands on, and indoors that is a lit floor bouncing
+   * warm light back up at the ceiling - the one thing a ceiling can see.
+   */
+  sky: {
+    zenith: [number, number, number];
+    horizon: [number, number, number];
+    ground: [number, number, number];
+  };
   intensity: number;
   altitudeDeg: number;
   azimuthDeg: number;
@@ -132,11 +150,45 @@ export function sunState(site: Site, dayOfYearValue: number, hour: number): SunS
     direction: [px * horizontal, Math.sin(altR) * DISTANCE, py * horizontal],
     day,
     colour: [1, 0.93 - 0.24 * warmth, 0.84 - 0.42 * warmth],
-    sky: hslToRgb(0.58, 0.45, day < 0.03 ? 0.07 : 0.14 + 0.45 * day),
+    sky: skyColours(day, warmth),
     intensity: 2.7 * day + 0.05,
     altitudeDeg,
     azimuthDeg,
   };
+}
+
+/**
+ * Zenith, horizon and ground for a given daylight and warmth.
+ *
+ * The zenith keeps its hue and loses some saturation. The horizon is a warm
+ * neutral, not white: an environment map is diffuse light, and a near-white
+ * band round the horizon is very nearly a white ambient - the first version of
+ * the sky was `#f2f4f7` and the house came back as a paper cut-out. What is
+ * wanted is *variation*, somewhere bright to reflect and somewhere dim, in
+ * colours a room would actually be lit by. The ground is a lit floor.
+ *
+ * All three follow `day` down to a dim version of themselves rather than to
+ * black, because ACES renders near-black as a distinct blue and a night
+ * interior that goes blue-grey at the ceiling is the bug this replaces.
+ */
+function skyColours(
+  day: number,
+  warmth: number,
+): { zenith: [number, number, number]; horizon: [number, number, number]; ground: [number, number, number] } {
+  const zenith = hslToRgb(0.58, 0.38, day < 0.03 ? 0.07 : 0.14 + 0.4 * day);
+
+  const lift = 0.25 + 0.75 * day;
+  // A warm grey, pushed towards the sun's own colour as it drops.
+  const horizon: [number, number, number] = [
+    (0.66 + 0.12 * warmth) * lift,
+    (0.65 + 0.02 * warmth) * lift,
+    (0.63 - 0.08 * warmth) * lift,
+  ];
+
+  const bounce = 0.3 + 0.7 * day;
+  const ground: [number, number, number] = [0.54 * bounce, 0.48 * bounce, 0.4 * bounce];
+
+  return { zenith, horizon, ground };
 }
 
 function hslToRgb(h: number, s: number, l: number): [number, number, number] {

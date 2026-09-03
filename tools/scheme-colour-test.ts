@@ -13,7 +13,7 @@
  */
 import { FURNITURE_COLOURS } from "../src/lib/model/materials";
 import { rectangle } from "../src/lib/plan/geometry";
-import { SCHEMES, floorToneFor, recolour, schemeByName } from "../src/lib/model/schemes";
+import { DEFAULT_SCHEME, SCHEMES, floorToneFor, recolour, schemeByName } from "../src/lib/model/schemes";
 import { furnishRoom } from "../src/lib/model/furniture";
 
 import type { Plan } from "../src/lib/schema";
@@ -85,7 +85,17 @@ check("the tone differs between schemes",
   floorToneFor("Living Room", warm) !== floorToneFor("Living Room", cool),
   `${floorToneFor("Living Room", warm)} and ${floorToneFor("Living Room", cool)}`);
 check("an unknown scheme name falls back rather than throwing",
-  schemeByName("nonsense").name === SCHEMES[1].name);
+  schemeByName("nonsense").name === DEFAULT_SCHEME.name);
+
+// An unread wood floor must not default to grey. It did: the old default's
+// "wood" was #9b9691, and with the photographs now read the scheme only ever
+// fills the rooms nobody photographed - which is no reason to make them cold.
+{
+  const hex = DEFAULT_SCHEME.floors.wood;
+  const r = parseInt(hex.slice(1, 3), 16);
+  const b = parseInt(hex.slice(5, 7), 16);
+  check("the default scheme's wood floor is warm", r > b + 20, `${hex}`);
+}
 
 console.log(
   failures === 0

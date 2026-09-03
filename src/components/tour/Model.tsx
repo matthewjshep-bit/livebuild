@@ -9,7 +9,7 @@ import { runGeometry } from "@/lib/model/profiles";
 import { joineryFor } from "@/lib/model/joinery";
 import { exteriorLook } from "@/lib/model/exterior-look";
 import { fixturesFor } from "@/lib/model/fixtures";
-import { roofFor, roofGeometry } from "@/lib/model/roof";
+import { roofFor, roofGeometry, thickenFaces } from "@/lib/model/roof";
 import { sidingFinish } from "@/lib/model/siding";
 import { ceilingParts } from "@/lib/model/ceiling";
 
@@ -254,6 +254,8 @@ function ExteriorShell({
  * ghosted roof still shading the rooms under it would darken every room in
  * the house from the one view that shows them.
  */
+const ROOF_THICKNESS = 0.15;
+
 function Roof({
   plan,
   exterior,
@@ -282,11 +284,14 @@ function Roof({
       site,
     );
     if (!model) return null;
-    const slopes = roofGeometry(model.faces, "slope");
+    // Fifteen centimetres of deck, battens and shingle: the edge you see at
+    // the eave, without which a roof is a sheet.
+    const faces = thickenFaces(model.faces, ROOF_THICKNESS);
+    const slopes = roofGeometry(faces, "slope");
     if (slopes) applyWorldUvs(slopes, 2);
-    const ends = roofGeometry(model.faces, "gable");
+    const ends = roofGeometry(faces, "gable");
     if (ends) applyWorldUvs(ends, TEXTURE_METRES.wall);
-    const deck = roofGeometry(model.faces, "flat");
+    const deck = roofGeometry(faces, "flat");
     const colour = toHex(roofColour ?? exterior?.roof?.colour) ?? "#4b4b4d";
     const surface = canTexture() && slopes ? roofSurface(colour) : null;
     return { model, slopes, ends, deck, colour, surface };
@@ -326,8 +331,10 @@ function Roof({
             }}
             {...textured(built.surface, built.colour)}
             side={THREE.DoubleSide}
-            transparent
-            depthWrite={false}
+            // Opaque from the street, with depth, so the prism's near face
+            // hides its far one; see-through only while fading from above.
+            transparent={!solid}
+            depthWrite={solid}
           />
         </mesh>
       )}
@@ -339,8 +346,10 @@ function Roof({
             }}
             {...textured(siding, scheme.wallExterior)}
             side={THREE.DoubleSide}
-            transparent
-            depthWrite={false}
+            // Opaque from the street, with depth, so the prism's near face
+            // hides its far one; see-through only while fading from above.
+            transparent={!solid}
+            depthWrite={solid}
           />
         </mesh>
       )}
@@ -353,8 +362,10 @@ function Roof({
             color="#3a3a3c"
             roughness={0.95}
             side={THREE.DoubleSide}
-            transparent
-            depthWrite={false}
+            // Opaque from the street, with depth, so the prism's near face
+            // hides its far one; see-through only while fading from above.
+            transparent={!solid}
+            depthWrite={solid}
           />
         </mesh>
       )}
@@ -598,7 +609,9 @@ function LevelModel({
        */
       const ceilingCuts = ceilingHolesFor(plan, room);
       for (const part of ceilingParts(room, roomSpec?.ceiling, ceilingCuts, room.ceilingHeight)) {
-        if (part.kind !== "beam" && !walking) continue;
+        // On foot, and from the street: a window seen from the pavement
+        // shows a room with a ceiling, not the sky through the house.
+        if (part.kind !== "beam" && !walking && !facadesSolid) continue;
         addSurface(
           room.id,
           "ceiling",
@@ -918,7 +931,7 @@ function LevelModel({
       frames: merged(frameParts),
       glass: merged(glassParts),
     };
-  }, [plan, spec, level, baseY, furnished, walking, scheme, exploded]);
+  }, [plan, spec, level, baseY, furnished, walking, facadesSolid, scheme, exploded]);
 
   // Every surface of one room moves together, so a room comes apart from the
   // house as one part rather than as a floor and some furniture that happen to
@@ -1134,14 +1147,21 @@ function LevelModel({
             than a window. An architectural model wants glass that reads as
             glass from outside, which means a pale panel.
           */}
-          <meshStandardMaterial
+          <meshPhysicalMaterial
             color={PALETTE.glass}
-            roughness={0.04}
+            roughness={0.03}
             metalness={0}
             // Glass is the one surface that should take the environment whole:
             // what makes a pane read as glass rather than as a pale panel is
             // that it reflects the sky, and now there is a sky to reflect.
+            // Physical rather than standard for the Fresnel: a pane reflects
+            // little face-on and nearly everything at a glance, which is the
+            // one property that says glass and not paint.
             envMapIntensity={1.6}
+            reflectivity={1}
+            clearcoat={1}
+            clearcoatRoughness={0.04}
+            specularIntensity={1}
             transparent
             opacity={dimmed * 0.92}
           />

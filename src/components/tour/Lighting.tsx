@@ -12,7 +12,8 @@ import { EnvRig } from "@/components/tour/EnvRig";
 
 import { interiorPoint } from "@/lib/model/tessellate";
 import { roomKind } from "@/lib/plan/room-kind";
-import { SHADOW_SIZE, type Quality } from "@/lib/render/quality";
+import { SoftShadows } from "@react-three/drei";
+import { SHADOW_SIZE, TIERS, type Quality } from "@/lib/render/quality";
 import type { Plan, Site } from "@/lib/schema";
 
 /**
@@ -92,19 +93,26 @@ export function Lighting({
 
   useEffect(() => {
     if (!sun) return;
-    // What is behind the house is the sky at eye level, not the zenith. The
-    // zenith blue was here, flat and saturated, and the model sat in it like a
-    // specimen in a tank. The horizon, lifted towards white, reads as air.
+    // The backdrop is the analytic sky `EnvRig` mounts. What the haze fades
+    // to is that sky at eye level, not the zenith: the horizon, lifted
+    // towards white, reads as air. It used to be the background as well - a
+    // flat colour, which is the first thing that says "model".
     const [r, g, b] = sun.sky.horizon;
-    const background = new THREE.Color(r, g, b).lerp(new THREE.Color("#ffffff"), 0.45);
-    scene.background = background;
+    const haze = new THREE.Color(r, g, b).lerp(new THREE.Color("#ffffff"), 0.45);
     // The ground disc ends at two hundred metres, which is also the far
-    // plane. Fogged to the background from ninety, its edge is never seen.
-    scene.fog = fog ? new THREE.Fog(background, 90, 190) : null;
+    // plane. Fogged to the sky from ninety, its edge is never seen.
+    scene.fog = fog ? new THREE.Fog(haze, 90, 190) : null;
     return () => {
       scene.fog = null;
     };
   }, [scene, sun, fog]);
+
+  // Percentage-closer soft shadows on the top tier: an edge that is sharp
+  // where a wall meets the ground and softens as the caster gets further
+  // from what it shades, which is what a real shadow does and what the plain
+  // map's uniform blur never did. It patches the shadow shader for every
+  // material, so it is one switch for the whole scene.
+  const soft = TIERS[quality].softShadows ? <SoftShadows size={18} samples={12} focus={0.5} /> : null;
 
   const lampLights = lamps ? <Lamps plan={plan} explode={explode} /> : null;
 
@@ -118,7 +126,8 @@ export function Lighting({
           dollhouse read as a diagram, since every surface came back the same
           tone and nothing had form.
         */}
-        <EnvRig sun={null} />
+        {soft}
+        <EnvRig sun={null} intensity={interior ? 0.7 : 1} />
         <WindowLights plan={plan} sun={null} levels={levels} />
         {/*
           Both of these are far lower than they were. The environment now
@@ -190,7 +199,8 @@ export function Lighting({
         darkening where surfaces meet. An environment map does the first
         properly and for free, and screen-space occlusion does the second.
       */}
-      <EnvRig sun={sun} />
+      {soft}
+      <EnvRig sun={sun} intensity={interior ? 0.7 : 1} />
 
       {/*
         Just enough to keep a shadowed corner from going black.

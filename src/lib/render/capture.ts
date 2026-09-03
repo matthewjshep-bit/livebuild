@@ -106,7 +106,9 @@ export function captureFromPose(
      * finishes to compensate. That is precisely the failure that would make a
      * correction loop destructive rather than useful.
      */
-    gl.toneMapping = THREE.ACESFilmicToneMapping;
+    // The same curve as the screen's effect stack, so a capture and the
+    // view it stands for are one look.
+    gl.toneMapping = THREE.AgXToneMapping;
     gl.toneMappingExposure = 1.0;
 
     gl.setRenderTarget(target);

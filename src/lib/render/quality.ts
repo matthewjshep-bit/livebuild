@@ -11,6 +11,11 @@
  * Deliberately crude. The only decision it drives is which effects mount, and
  * being one tier too conservative costs a little polish while being one tier
  * too ambitious costs a slideshow.
+ *
+ * The tiers are one table now. "Best" and "Balanced" used to differ in name
+ * only - the same shadow map, the same half-resolution occlusion, the same
+ * effect stack - so the top of the range was a promise nothing kept. Each row
+ * says what its tier actually buys.
  */
 export type Quality = "low" | "medium" | "high";
 
@@ -20,7 +25,98 @@ export const QUALITY_LABEL: Record<Quality, string> = {
   high: "Best",
 };
 
-export function detectQuality(): Quality {
+export type Tier = {
+  /** Upper bound on device pixel ratio. Retina at full rate is four times the work. */
+  dpr: number;
+  /** Shadow map edge, in texels. The sun is the only light casting one. */
+  shadowSize: number;
+  /** Percentage-closer soft shadows: an edge that softens with distance from what casts it. */
+  softShadows: boolean;
+  /** Screen-space occlusion, and at what resolution. */
+  occlusion: "none" | "half" | "full";
+  bloom: boolean;
+  /** The lens: a darkened edge to the frame. */
+  vignette: boolean;
+  /** A light grade: a little contrast and saturation on top of the tone curve. */
+  grade: boolean;
+  /** Depth of field at eye level, focused where the camera looks. */
+  depthOfField: boolean;
+  /** Whether bundled texture sets are loaded at all, or the procedural ones stay. */
+  assets: boolean;
+};
+
+export const TIERS: Record<Quality, Tier> = {
+  low: {
+    dpr: 1.5,
+    shadowSize: 1024,
+    softShadows: false,
+    occlusion: "none",
+    bloom: false,
+    vignette: false,
+    grade: false,
+    depthOfField: false,
+    assets: false,
+  },
+  medium: {
+    dpr: 2,
+    shadowSize: 2048,
+    softShadows: false,
+    occlusion: "half",
+    bloom: true,
+    vignette: true,
+    grade: true,
+    depthOfField: false,
+    assets: true,
+  },
+  high: {
+    dpr: 2,
+    shadowSize: 4096,
+    softShadows: true,
+    occlusion: "full",
+    bloom: true,
+    vignette: true,
+    grade: true,
+    depthOfField: true,
+    assets: true,
+  },
+};
+
+export const SHADOW_SIZE: Record<Quality, number> = {
+  low: TIERS.low.shadowSize,
+  medium: TIERS.medium.shadowSize,
+  high: TIERS.high.shadowSize,
+};
+
+export const MAX_DPR: Record<Quality, number> = {
+  low: TIERS.low.dpr,
+  medium: TIERS.medium.dpr,
+  high: TIERS.high.dpr,
+};
+
+/**
+ * A renderer that is a CPU pretending to be a GPU.
+ *
+ * Headless browsers, virtual machines and some locked-down desktops draw with
+ * SwiftShader or Mesa's llvmpipe, and report a dozen cores and plenty of
+ * memory while doing it - so the core count says "high" and the frame takes
+ * a quarter of a second. The renderer string is the one thing that tells.
+ */
+export function isSoftwareRenderer(renderer: string | null | undefined): boolean {
+  return /swiftshader|llvmpipe|softpipe|software|mesa offscreen/i.test(renderer ?? "");
+}
+
+/** The GPU's name, as far as the browser will say. */
+export function rendererName(gl: WebGLRenderingContext | WebGL2RenderingContext): string | null {
+  try {
+    const info = gl.getExtension("WEBGL_debug_renderer_info");
+    const value = info ? gl.getParameter(info.UNMASKED_RENDERER_WEBGL) : gl.getParameter(gl.RENDERER);
+    return value ? String(value) : null;
+  } catch {
+    return null;
+  }
+}
+
+export function detectQuality(renderer?: string | null): Quality {
   if (typeof navigator === "undefined") return "medium";
 
   // Coarse pointer plus a narrow screen is a phone or a tablet, whatever it
@@ -32,19 +128,7 @@ export function detectQuality(): Quality {
   const cores = navigator.hardwareConcurrency ?? 4;
   const memory = (navigator as Navigator & { deviceMemory?: number }).deviceMemory ?? 4;
   if (cores <= 4 || memory <= 4) return "medium";
+  // Never the top tier on a software renderer, however many cores it claims.
+  if (isSoftwareRenderer(renderer)) return "medium";
   return "high";
 }
-
-/** Shadow map edge, in texels. The sun is the only light casting one. */
-export const SHADOW_SIZE: Record<Quality, number> = {
-  low: 1024,
-  medium: 2048,
-  high: 2048,
-};
-
-/** Upper bound on device pixel ratio. Retina at full rate is four times the work. */
-export const MAX_DPR: Record<Quality, number> = {
-  low: 1.5,
-  medium: 2,
-  high: 2,
-};

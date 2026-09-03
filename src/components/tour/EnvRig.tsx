@@ -1,13 +1,15 @@
 "use client";
 
-import { useThree } from "@react-three/fiber";
+import { useFrame, useThree } from "@react-three/fiber";
 import { useEffect, useMemo } from "react";
 import * as THREE from "three";
+import { Sky } from "three-stdlib";
 
 import { type SunState } from "@/lib/model/sun";
+import { skyUniformsFor } from "@/lib/render/sky";
 
 /**
- * The sky, as something surfaces can reflect.
+ * The sky, as something surfaces can reflect - and now as something to see.
  *
  * Until now every material in the house was `metalness: 0` with no environment
  * to sample, which is why nothing metal ever read as metal and a window pane
@@ -18,11 +20,20 @@ import { type SunState } from "@/lib/model/sun";
  *
  * Drawn in code rather than loaded. drei's `<Environment preset>` fetches an
  * HDR from a CDN, which would break the promise the procedural textures were
- * built to keep: a tour opens offline, downloads nothing, and has nothing to
- * license. A gradient with a sun in it is not a photograph of a real sky, but
- * it carries the two things a reflection needs - a bright warm source and a
- * horizon - and at the sizes these reflections appear at, that is the whole
- * effect.
+ * built to keep: a tour opens offline, downloads nothing from anyone else, and
+ * has nothing to license. A gradient with a sun in it is not a photograph of
+ * a real sky, but it carries the two things a reflection needs - a bright
+ * warm source and a horizon - and at the sizes these reflections appear at,
+ * that is the whole effect.
+ *
+ * What is *behind* the house is a different matter. The environment is seen
+ * only blurred across surfaces; the backdrop is looked at directly, and a
+ * flat colour there is the first thing that says "model". A sited house now
+ * stands under three's analytic sky - a scattering model with the sun in it,
+ * driven by the same `sunState` as the light and the shadows - as a mesh that
+ * follows the camera. The environment stays the gradient: the analytic sky's
+ * sun is thousands of times brighter than its blue, and convolved into an
+ * environment map it would light every surface facing it a second time.
  *
  * 128 pixels tall. An environment map is only ever seen blurred across a rough
  * surface or smeared across a small bright one, so resolution here buys almost
@@ -117,7 +128,33 @@ const rgb = ([r, g, b]: [number, number, number], gain: number) =>
 const rgba = (r: number, g: number, b: number, a: number) =>
   `rgba(${clamp255(r)},${clamp255(g)},${clamp255(b)},${a})`;
 
-export function EnvRig({ sun }: { sun: SunState | null }) {
+/**
+ * How far the sky box reaches. Its faces are at this distance and its corners
+ * at root-three times it, and the corners have to stay inside the camera's
+ * far plane (200m) or the sky has holes in it at the corners of the box. It
+ * writes no depth, so the ground beyond it still draws over it.
+ */
+const SKY_REACH = 100;
+
+/**
+ * The sky shader's output, scaled. It writes radiance well above one at the
+ * horizon - three's own example runs it at half exposure - and through the
+ * tone curve that came out as a flat white sheet with no blue in it at all.
+ */
+const SKY_EXPOSURE = 0.38;
+
+export function EnvRig({
+  sun,
+  /**
+   * How much the environment lights surfaces. Image-based light ignores
+   * walls - it lights the inside of a sealed box as brightly as the outside -
+   * so on foot it is turned down and the window lights carry the room.
+   */
+  intensity = 1,
+}: {
+  sun: SunState | null;
+  intensity?: number;
+}) {
   const gl = useThree((s) => s.gl);
   const scene = useThree((s) => s.scene);
 
@@ -150,5 +187,50 @@ export function EnvRig({ sun }: { sun: SunState | null }) {
     };
   }, [scene, environment]);
 
-  return null;
+  useEffect(() => {
+    scene.environmentIntensity = intensity;
+    return () => {
+      scene.environmentIntensity = 1;
+    };
+  }, [scene, intensity]);
+
+  // The visible sky, for a house that has a sun.
+  const sky = useMemo(() => {
+    if (!sun) return null;
+    const mesh = new Sky();
+    mesh.scale.setScalar(SKY_REACH);
+    mesh.material.fragmentShader = mesh.material.fragmentShader.replace(
+      /vec4\(\s*retColor\s*,\s*1\.0\s*\)/,
+      `vec4( retColor * ${SKY_EXPOSURE.toFixed(3)}, 1.0 )`,
+    );
+    // Not a thing in the model: the readout and the pick both skip it, and
+    // it never occludes a click.
+    mesh.userData = { sky: true };
+    mesh.raycast = () => null;
+    mesh.frustumCulled = false;
+    return mesh;
+    // The same quantisation as the environment, for the same reason.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sun !== null]);
+
+  useEffect(() => {
+    if (!sky || !sun) return;
+    const u = skyUniformsFor(sun);
+    const uniforms = sky.material.uniforms;
+    uniforms.turbidity.value = u.turbidity;
+    uniforms.rayleigh.value = u.rayleigh;
+    uniforms.mieCoefficient.value = u.mieCoefficient;
+    uniforms.mieDirectionalG.value = u.mieDirectionalG;
+    (uniforms.sunPosition.value as THREE.Vector3).set(...u.sunPosition);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sky, step]);
+
+  // The box rides with the camera, so the sky is the same from everywhere.
+  // Its shader takes the view direction from the box's own surface, which
+  // only works when the camera is at its centre.
+  useFrame(({ camera }) => {
+    if (sky) sky.position.copy(camera.position);
+  });
+
+  return sky ? <primitive object={sky} /> : null;
 }

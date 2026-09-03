@@ -203,6 +203,9 @@ check("out on the street, not in the house",
 check("on the road side of the house", kerbPos !== null && kerbPos[2] < 0, `${kerbPos}`);
 const streetScene = await page.evaluate(() => window.__scene);
 check("the roof is there from the street", (streetScene.bySurface?.roof ?? 0) > 0);
+// And through a window there is a room with a ceiling, not the sky through
+// the house: the dollhouse's lids are on from the pavement.
+check("the ceilings are on from the street", (streetScene.bySurface?.ceiling ?? 0) > 0, JSON.stringify(streetScene.bySurface));
 check("and the names are", (await page.locator("[data-street-name]").count()) === 2);
 await page.screenshot({ path: "shots/ST2-street-view.png" });
 

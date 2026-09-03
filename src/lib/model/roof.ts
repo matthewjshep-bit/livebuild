@@ -211,6 +211,57 @@ export function roofFor(plan: Plan, exterior: RoofRead, site: SiteRead): RoofMod
   return { faces, eaveY, ridgeY };
 }
 
+/**
+ * A roof with thickness.
+ *
+ * The faces are a surface with no depth: a slope was one quad, drawn from
+ * both sides, and at its eave you could see that it was a sheet of nothing
+ * - the single detail that most said "toy" about the house from the street.
+ * Each face becomes a closed prism: the face itself, an underside pushed in
+ * along the face's own normal, and a side for every edge, all wound outward.
+ * The sides at the eave are what read as the depth of the roof.
+ *
+ * Each face is thickened on its own. Where two slopes meet at the ridge their
+ * undersides do not quite meet - a sliver under the ridge that nothing sees,
+ * since the roof is not drawn from inside the house.
+ */
+export function thickenFaces(faces: RoofFace[], thickness: number): RoofFace[] {
+  const out: RoofFace[] = [];
+  for (const f of faces) {
+    const n = normalOf(f.points);
+    const under = f.points.map(
+      (p) => [p[0] - n[0] * thickness, p[1] - n[1] * thickness, p[2] - n[2] * thickness] as [number, number, number],
+    );
+    out.push(f);
+    out.push(face([...under].reverse(), f.kind, [-n[0], -n[1], -n[2]]));
+    const count = f.points.length;
+    for (let i = 0; i < count; i++) {
+      const j = (i + 1) % count;
+      const a = f.points[i];
+      const b = f.points[j];
+      const edge = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
+      // Outward from the face along this edge: the edge turned about the normal.
+      const outward: [number, number, number] = [
+        edge[1] * n[2] - edge[2] * n[1],
+        edge[2] * n[0] - edge[0] * n[2],
+        edge[0] * n[1] - edge[1] * n[0],
+      ];
+      out.push(face([a, b, under[j], under[i]], f.kind, outward));
+    }
+  }
+  return out;
+}
+
+/** The unit normal a face's winding implies. */
+function normalOf(points: Array<[number, number, number]>): [number, number, number] {
+  const [a, b, c] = points;
+  const u = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
+  const v = [c[0] - a[0], c[1] - a[1], c[2] - a[2]];
+  const n = [u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0]];
+  const length = Math.hypot(n[0], n[1], n[2]) || 1;
+  return [n[0] / length, n[1] / length, n[2] / length];
+}
+
 /** The faces of one kind as a mesh, with flat normals for the light. */
 export function roofGeometry(faces: RoofFace[], kind: RoofFace["kind"] | RoofFace["kind"][]): THREE.BufferGeometry | null {
   const kinds = new Set(Array.isArray(kind) ? kind : [kind]);

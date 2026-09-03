@@ -28,7 +28,7 @@ import { captureFromPose, type CapturePose } from "@/lib/render/capture";
 import { inferHouse } from "@/lib/spec/infer";
 import { HouseSpec } from "@/lib/spec/schema";
 import { Post } from "@/components/tour/Post";
-import { MAX_DPR, QUALITY_LABEL, type Quality, detectQuality } from "@/lib/render/quality";
+import { MAX_DPR, QUALITY_LABEL, type Quality, detectQuality, rendererName } from "@/lib/render/quality";
 import { buildBom } from "@/lib/bom/build";
 import type { Element, Grade } from "@/lib/bom/condition";
 import type { Pick } from "@/lib/bom/pickable";
@@ -373,7 +373,7 @@ function Scene({
 
       <CaptureRig />
 
-      <Post quality={quality} />
+      <Post quality={quality} eyeLevel={view.mode === "walk" || view.mode === "street"} />
 
       <RoomMarkers
         plan={property.plan}
@@ -720,8 +720,10 @@ export function TourViewer({
    * server and the client different answers and throw the whole tree away -
    * the same hydration trap the `mounted` flag above already exists for.
    */
+  // Decided once the canvas exists, because the one thing the device cannot
+  // lie about is the renderer's name - a headless browser reports a dozen
+  // cores and draws with a CPU.
   const [quality, setQuality] = useState<Quality>("medium");
-  useEffect(() => setQuality(detectQuality()), []);
 
   /**
    * Escape lets go of the room.
@@ -1228,6 +1230,7 @@ export function TourViewer({
             // it twice, and the result is a flat, washed image that looks like
             // a rendering problem and is actually an arithmetic one.
             gl.toneMapping = THREE.NoToneMapping;
+            setQuality(detectQuality(rendererName(gl.getContext())));
           }}
           className="touch-none"
         >

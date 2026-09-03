@@ -1,15 +1,19 @@
 "use client";
 
 import {
+  Autofocus,
   Bloom,
+  BrightnessContrast,
   EffectComposer,
+  HueSaturation,
   N8AO,
   SMAA,
   ToneMapping,
+  Vignette,
 } from "@react-three/postprocessing";
 import { ToneMappingMode } from "postprocessing";
 
-import type { Quality } from "@/lib/render/quality";
+import { TIERS, type Quality } from "@/lib/render/quality";
 
 /**
  * The pass that puts the model in contact with itself.
@@ -29,14 +33,32 @@ import type { Quality } from "@/lib/render/quality";
  * anyone being able to say why. So SMAA is not an optional nicety here, it is
  * the replacement for something that was already working.
  *
- * **Tone mapping.** The renderer's own ACES pass runs on the way out of the
- * main render, and the composer then writes its result to the screen - so
- * leaving `gl.toneMapping` set and adding a `ToneMapping` effect applies the
- * curve twice and flattens everything. The renderer's is turned off in
- * `TourViewer` and the curve moved in here, where it belongs: it should be the
- * last thing that happens, after bloom, not before it.
+ * **Tone mapping.** The renderer's own pass runs on the way out of the main
+ * render, and the composer then writes its result to the screen - so leaving
+ * `gl.toneMapping` set and adding a `ToneMapping` effect applies the curve
+ * twice and flattens everything. The renderer's is turned off in `TourViewer`
+ * and the curve moved in here, where it belongs: it should be the last thing
+ * that happens, after bloom, not before it.
+ *
+ * The curve is AgX rather than ACES. ACES pushes a bright saturated colour
+ * toward white and a warm wall toward orange - the "video game" look, which
+ * is exactly the complaint - and AgX keeps hue as things get bright. What
+ * `capture.ts` renders for the verifier uses the same curve, so a render and
+ * a photograph are compared under one look.
+ *
+ * Then the lens: a light grade and a vignette. A frame with no darkening at
+ * the edges and no contrast beyond the tone curve reads as a diagram however
+ * good the model is, because no photograph looks like that.
  */
-export function Post({ quality }: { quality: Quality }) {
+export function Post({
+  quality,
+  /** Standing in or at the house, where a lens has a focus. */
+  eyeLevel = false,
+}: {
+  quality: Quality;
+  eyeLevel?: boolean;
+}) {
+  const tier = TIERS[quality];
   // On a phone the composer itself is affordable and the occlusion pass is
   // not, so the low tier keeps the antialiasing and drops the rest. That
   // ordering matters: dropping SMAA to save the AO would trade a subtle
@@ -46,8 +68,7 @@ export function Post({ quality }: { quality: Quality }) {
   // four-core laptop detects as - so most machines rendered a house with no
   // contact shadow at all, which is most of the difference between a room and
   // a box. It runs at half resolution there, which is the cheap half.
-  const occlusion = quality !== "low";
-  const bloom = quality !== "low";
+  const occlusion = tier.occlusion !== "none";
 
   return (
     <EffectComposer
@@ -64,12 +85,12 @@ export function Post({ quality }: { quality: Quality }) {
           aoRadius={0.5}
           intensity={2.2}
           distanceFalloff={0.7}
-          halfRes
+          halfRes={tier.occlusion === "half"}
         />
       ) : (
         <></>
       )}
-      {bloom ? (
+      {tier.bloom ? (
         <Bloom
           // High enough that only a window or a lamp reaches it. A bloom that
           // catches white walls is a bloom that makes the house look foggy.
@@ -81,7 +102,17 @@ export function Post({ quality }: { quality: Quality }) {
       ) : (
         <></>
       )}
-      <ToneMapping mode={ToneMappingMode.ACES_FILMIC} />
+      {tier.depthOfField && eyeLevel ? (
+        // Focused where the camera looks, by a ray from the centre of the
+        // frame, and eased so a glance across the room does not snap.
+        <Autofocus smoothTime={0.45} worldFocusRange={3} bokehScale={2.5} resolutionScale={0.5} />
+      ) : (
+        <></>
+      )}
+      {tier.grade ? <BrightnessContrast brightness={0} contrast={0.08} /> : <></>}
+      {tier.grade ? <HueSaturation saturation={0.06} /> : <></>}
+      <ToneMapping mode={ToneMappingMode.AGX} />
+      {tier.vignette ? <Vignette eskil={false} offset={0.28} darkness={0.5} /> : <></>}
       <SMAA />
     </EffectComposer>
   );

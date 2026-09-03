@@ -635,7 +635,24 @@ doors); the rings on the floor are the other rooms, and the mini-map and
 the scope rail take you to a room by name; W A S D still walk and Q and E
 turn; a pad on screen does the same for a finger. A step that would be
 refused is tried each way on its own first, so a threshold crossed on the
-diagonal does not stop you. Escape leaves. From there the facades stay solid - the dollhouse fades the two
+diagonal does not stop you. Escape leaves.
+
+**A sky, soft shadows, and a graded frame.** A sited house stands under
+three's analytic sky now - a scattering model with the sun in it, driven by
+the same solar position as the light and the shadows, so the disc is where
+the shadows say it is and a low sun comes with the haze it should. The
+backdrop used to be one flat colour, which is the first thing that says
+"model". The roof has fifteen centimetres of thickness, so the eave is an
+edge and not a sheet; glass is a physical material with a Fresnel, so a pane
+reflects little face-on and nearly everything at a glance; the ceilings are
+on from the street, so a window shows a room. The tone curve is AgX rather
+than ACES - ACES pushes a bright colour toward white and a warm wall toward
+orange, the look the complaint was about - with a light grade and a vignette
+after it, on the same curve the verifier's captures use. And the quality
+tiers are real: "Best" was byte-identical to "Balanced", and now buys a
+4096 shadow map, soft shadows that widen with distance from the caster,
+full-resolution occlusion, and depth of field at eye level. A software
+renderer never gets it, however many cores it reports. From there the facades stay solid - the dollhouse fades the two
 walls between you and the rooms, which is right from above and wrong from
 the pavement - and the roof is solid too, casting the shadow on the lawn
 that a house from the street has. The scripted tour opens with that shot

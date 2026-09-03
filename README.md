@@ -564,6 +564,22 @@ size - a 140mm skirting board, a 2.44m ceiling - becomes that size, and a
 reading outside every tolerance is kept exactly as it came and flagged, because
 a house genuinely can have a 2.2m ceiling.
 
+**What is read is what is drawn.** For a while it was not. The reader
+returned a room's wall colour, and the one merged partition mesh painted every
+wall `scheme.wall` regardless - the tan reached a mesh only in the exploded
+view. It returned a cabinet's colour, and if the inference had not already
+invented a run for that room there was nothing to attach it to, so it was
+dropped without a word. It returned `doorStyle`, `worktop.material` and
+`walls.material`, and nothing in the renderer read any of the three: every
+door was one flat box, every worktop a coloured slab, every wall painted
+plaster whatever it said. The partitions now wear the house's read colour,
+textured; a read run is created where none was inferred; a door is a frame
+round a recessed panel when the photograph said shaker or raised-panel; a
+worktop is a metal when it said stainless; and brick, tile, panelling, timber
+and wallpaper each have a generator of their own. `wall-materials-test` opens
+a house with a brick living room and a plaster kitchen and counts the
+surfaces.
+
 **The rooms nobody photographed are reasoned about, not defaulted.** A listing
 set covers what sells a house and misses the landing, the second bathroom and
 the fourth bedroom - and those have to be built too. Defaults are per-room and a
@@ -771,11 +787,12 @@ one - which is how both walk tests were flaky before they waited on state.
   things are actually built to, and checked against the photographs it came
   from. What remains is breadth - more fields, read more reliably - rather than
   a thing that does not exist.
-- **The parts library** - not started. Cabinetry with doors and handles, lathe
-  sanitaryware, real window assemblies with reveals and mullions, replacing the
-  one-to-three-slab builders in `src/lib/model/furniture.ts`. This is now the
-  limit: the spec can say a kitchen has shaker doors in a particular green, and
-  the model draws a slab.
+- **The parts library** - started. Cabinet doors are drawn in their style -
+  shaker, raised-panel, glazed, beadboard - with knobs or bars, and worktops
+  take the light like what they are made of. Still to come: lathe
+  sanitaryware, real window assemblies with reveals and mullions, and the
+  loose furniture, which is still the one-to-three-slab builders in
+  `src/lib/model/furniture.ts`.
 - **The outside** - not started. Google Solar for real roof planes, Elevation
   for terrain, a harder Street View read for the facade.
 

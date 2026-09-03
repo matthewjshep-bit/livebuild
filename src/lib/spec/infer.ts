@@ -1,5 +1,6 @@
 import {
   type FloorMaterial,
+  type Side,
   type HouseSpec,
   type RoomSpec,
   type Source,
@@ -174,6 +175,77 @@ export type InferenceReport = {
   /** One line per convention the house was found to have. */
   conventions: string[];
 };
+
+/**
+ * The wall a fitted run would actually go on.
+ *
+ * Length is not the first question, and sorting by it was wrong: the longest
+ * wall in a bedroom is very often the one with the door in it, and a wardrobe
+ * built across a doorway is not a subtle error - it is a room you cannot get
+ * into. So a wall the door opens onto is disqualified outright, and only then
+ * does length decide between what is left.
+ *
+ * The distance is measured to the *nearest point* of the wall rather than its
+ * middle, because a door at the end of a long wall still rules that wall out
+ * and is a long way from its centre.
+ *
+ * Exported because the reader needs it too: a photograph that shows fitted
+ * units in a room the inference gave none is better evidence of cabinets than
+ * a room kind is, and the reader has to put them somewhere.
+ */
+export function clearestWall(
+  room: Room,
+  plan: Plan,
+): { side: Side; run: number; clearance: number } | null {
+  const b = boundsOf(room.polygon);
+  const width = b.x1 - b.x0;
+  const depth = b.y1 - b.y0;
+  if (width < 1.5 || depth < 1.5) return null;
+
+  const doors = plan.openings
+    .filter((o) => o.kind !== "stairs" && o.between.includes(room.id))
+    .map((o) => o.at);
+  const sides: Array<{ side: Side; run: number; a: Vec2; b: Vec2 }> = [
+    { side: "north", run: width, a: [b.x0, b.y0], b: [b.x1, b.y0] },
+    { side: "south", run: width, a: [b.x0, b.y1], b: [b.x1, b.y1] },
+    { side: "west", run: depth, a: [b.x0, b.y0], b: [b.x0, b.y1] },
+    { side: "east", run: depth, a: [b.x1, b.y0], b: [b.x1, b.y1] },
+  ];
+  const nearestDoor = (side: { a: Vec2; b: Vec2 }) =>
+    doors.length === 0
+      ? Infinity
+      : Math.min(
+          ...doors.map((d) => {
+            const len2 = Math.hypot(side.b[0] - side.a[0], side.b[1] - side.a[1]) ** 2 || 1;
+            const t = Math.max(
+              0,
+              Math.min(
+                1,
+                ((d[0] - side.a[0]) * (side.b[0] - side.a[0]) +
+                  (d[1] - side.a[1]) * (side.b[1] - side.a[1])) /
+                  len2,
+              ),
+            );
+            return Math.hypot(
+              d[0] - (side.a[0] + (side.b[0] - side.a[0]) * t),
+              d[1] - (side.a[1] + (side.b[1] - side.a[1]) * t),
+            );
+          }),
+        );
+
+  const DOOR_CLEAR_M = 0.9;
+  const ranked = sides
+    .map((side) => ({ ...side, clearance: nearestDoor(side) }))
+    .sort((a, z) => z.clearance - a.clearance || z.run - a.run);
+  const usable = ranked.filter((side) => side.clearance > DOOR_CLEAR_M);
+  // Everything is near a doorway in a small room, and a closet has a door in
+  // its only long wall by definition. Taking the clearest available beats
+  // fitting nothing at all.
+  const best = (usable.length > 0 ? usable : ranked).sort(
+    (a, z) => z.run - a.run || z.clearance - a.clearance,
+  )[0];
+  return { side: best.side, run: best.run, clearance: best.clearance };
+}
 
 export function inferHouse(plan: Plan, existing: HouseSpec): InferenceReport {
   const rooms = plan.rooms;
@@ -451,67 +523,8 @@ export function inferHouse(plan: Plan, existing: HouseSpec): InferenceReport {
     const depth = b.y1 - b.y0;
     if (width < 1.5 || depth < 1.5) continue;
 
-    // The wall a fitted run would actually go on: the longest one, and of the
-    // two that share that length, whichever is furthest from a doorway.
-    const doors = plan.openings
-      .filter((o) => o.kind !== "stairs" && o.between.includes(room.id))
-      .map((o) => o.at);
-    const sides: Array<{
-      side: "north" | "south" | "east" | "west";
-      run: number;
-      a: Vec2;
-      b: Vec2;
-    }> = [
-      { side: "north", run: width, a: [b.x0, b.y0], b: [b.x1, b.y0] },
-      { side: "south", run: width, a: [b.x0, b.y1], b: [b.x1, b.y1] },
-      { side: "west", run: depth, a: [b.x0, b.y0], b: [b.x0, b.y1] },
-      { side: "east", run: depth, a: [b.x1, b.y0], b: [b.x1, b.y1] },
-    ];
-    /**
-     * The wall a fitted run would actually go on.
-     *
-     * Length is not the first question, and sorting by it was wrong: the
-     * longest wall in a bedroom is very often the one with the door in it, and
-     * a wardrobe built across a doorway is not a subtle error - it is a room
-     * you cannot get into. So a wall the door opens onto is disqualified
-     * outright, and only then does length decide between what is left.
-     *
-     * The distance is measured to the *nearest point* of the wall rather than
-     * its middle, because a door at the end of a long wall still rules that
-     * wall out and is a long way from its centre.
-     */
-    const nearestDoor = (side: { a: Vec2; b: Vec2 }) =>
-      doors.length === 0
-        ? Infinity
-        : Math.min(
-            ...doors.map((d) => {
-              const t = Math.max(
-                0,
-                Math.min(
-                  1,
-                  ((d[0] - side.a[0]) * (side.b[0] - side.a[0]) +
-                    (d[1] - side.a[1]) * (side.b[1] - side.a[1])) /
-                    (Math.hypot(side.b[0] - side.a[0], side.b[1] - side.a[1]) ** 2 || 1),
-                ),
-              );
-              return Math.hypot(
-                d[0] - (side.a[0] + (side.b[0] - side.a[0]) * t),
-                d[1] - (side.a[1] + (side.b[1] - side.a[1]) * t),
-              );
-            }),
-          );
-
-    const DOOR_CLEAR_M = 0.9;
-    const ranked = sides
-      .map((side) => ({ ...side, clearance: nearestDoor(side) }))
-      .sort((a, z) => z.clearance - a.clearance || z.run - a.run);
-    const usable = ranked.filter((side) => side.clearance > DOOR_CLEAR_M);
-    // Everything is near a doorway in a small room, and a closet has a door in
-    // its only long wall by definition. Taking the clearest available beats
-    // fitting nothing at all.
-    const clearest = (usable.length > 0 ? usable : ranked).sort(
-      (a, z) => z.run - a.run || z.clearance - a.clearance,
-    )[0];
+    const clearest = clearestWall(room, plan);
+    if (!clearest) continue;
 
     if (kind === "kitchen") {
       roomSpec.joinery = [

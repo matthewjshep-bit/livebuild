@@ -22,12 +22,14 @@ import {
   subtractRects,
 } from "@/lib/model/stairs";
 import {
+  type Surface,
   TEXTURE_METRES,
+  type WallFinish,
   applyWorldUvs,
   canTexture,
   floorFinish,
   floorSurface,
-  type Surface,
+  wallMaterialSurface,
   wallSurface,
 } from "@/lib/model/textures";
 import { type WallSolid, roomIsRectilinear, wallsForLevel } from "@/lib/model/walls";
@@ -284,6 +286,8 @@ function LevelModel({
         element: Element;
         colour: string;
         staging: boolean;
+        /** A box's own finish, when its material is not the element's default. */
+        finish?: { roughness: number; metalness: number };
         parts: THREE.BufferGeometry[];
       }
     >();
@@ -307,9 +311,13 @@ function LevelModel({
       colour: string,
       geometry: THREE.BufferGeometry,
       staging = false,
+      finish?: { roughness: number; metalness: number },
     ) => {
-      const key = `${roomId}|${element}|${colour}|${staging ? "s" : "a"}`;
-      const entry = surfaces.get(key) ?? { roomId, element, colour, staging, parts: [] };
+      // The finish is part of the key: a stainless worktop and a laminate one
+      // in the same grey are different materials, and merging them would give
+      // one of them the other's sheen.
+      const key = `${roomId}|${element}|${colour}|${staging ? "s" : "a"}|${finish ? `${finish.roughness}/${finish.metalness}` : ""}`;
+      const entry = surfaces.get(key) ?? { roomId, element, colour, staging, finish, parts: [] };
       entry.parts.push(geometry);
       surfaces.set(key, entry);
     };
@@ -537,6 +545,8 @@ function LevelModel({
               [b.x0 + boxPart.center[0], baseY + boxPart.center[1], b.y0 + boxPart.center[2]],
               boxPart.size,
             ),
+            false,
+            boxPart.finish,
           );
         }
       }
@@ -589,10 +599,29 @@ function LevelModel({
       );
     }
 
+    /**
+     * The house's wall colour, and a surface for it.
+     *
+     * The partitions are one merged mesh per storey - a shared wall is one
+     * solid - so they cannot take a colour per room without splitting each
+     * wall along its faces. They can take the *house's* colour, which is what
+     * `infer.ts` already works out as the colour most of the rooms were seen
+     * painted, and which for nearly every house is the colour of nearly every
+     * wall. Until now this mesh was painted `scheme.wall` unconditionally: the
+     * reader returned tan walls, the inference carried tan through the house,
+     * and the renderer threw it away everywhere except the exploded view.
+     */
+    const houseWall = spec?.defaults?.wallColour ?? scheme.wall;
+    const interiorGeometry = merged(interiorParts);
+    if (interiorGeometry) applyWorldUvs(interiorGeometry, TEXTURE_METRES.wall);
+    const interiorSurface = canTexture() && interiorGeometry ? wallSurface(houseWall) : null;
+
     return {
       rooms,
       exterior,
-      interior: merged(interiorParts),
+      houseWall,
+      interior: interiorGeometry,
+      interiorSurface,
       surfaces: [...surfaces.values()]
         .map((entry) => {
           const geometry = merged(entry.parts);
@@ -619,9 +648,14 @@ function LevelModel({
                       | undefined) ?? floorFinish(room?.label ?? ""),
                     entry.colour,
                   )
-                : entry.element === "walls" || entry.element === "ceiling"
-                  ? wallSurface(entry.colour)
-                  : null
+                : entry.element === "walls"
+                  ? wallMaterialSurface(
+                      spec?.rooms[entry.roomId]?.walls?.material as WallFinish | null | undefined,
+                      entry.colour,
+                    )
+                  : entry.element === "ceiling"
+                    ? wallSurface(entry.colour)
+                    : null
               : null,
           };
         })
@@ -630,6 +664,7 @@ function LevelModel({
           element: Element;
           colour: string;
           staging: boolean;
+          finish?: { roughness: number; metalness: number };
           geometry: THREE.BufferGeometry;
           surface: Surface | null;
         }>,
@@ -753,7 +788,9 @@ function LevelModel({
               roughness={
                 surface.surface
                   ? 1
-                  : surface.staging
+                  : surface.finish
+                    ? surface.finish.roughness
+                    : surface.staging
                     // Upholstery and painted timber, which is most of what is
                     // standing in a room: soft, and nearly matte.
                     ? 0.72
@@ -761,7 +798,7 @@ function LevelModel({
                       ? 0.78
                       : 0.9
               }
-              metalness={surface.surface ? 1 : 0}
+              metalness={surface.surface ? 1 : (surface.finish?.metalness ?? 0)}
               // A painted wall is not a mirror. Left at 1 the environment
               // washes every pale surface out to white.
               envMapIntensity={
@@ -795,9 +832,18 @@ function LevelModel({
       {!exploded && built.interior && (
         <mesh geometry={built.interior} castShadow receiveShadow>
           <meshStandardMaterial
-            color={scheme.wall}
-            roughness={0.95}
-            metalness={0}
+            // Textured plaster in the house's own colour, the same way every
+            // room-owned surface is. This was flat `scheme.wall`, untextured,
+            // whatever the photographs had said.
+            color={built.interiorSurface ? "#ffffff" : built.houseWall}
+            map={built.interiorSurface?.map}
+            normalMap={built.interiorSurface?.normalMap}
+            aoMap={built.interiorSurface?.ormMap}
+            roughnessMap={built.interiorSurface?.ormMap}
+            metalnessMap={built.interiorSurface?.ormMap}
+            aoMapIntensity={0.9}
+            roughness={built.interiorSurface ? 1 : 0.95}
+            metalness={built.interiorSurface ? 1 : 0}
             envMapIntensity={0.35}
             transparent={ghosted}
             opacity={dimmed}
@@ -814,7 +860,7 @@ function LevelModel({
           baseY={baseY}
           opacity={dimmed}
           walking={walking}
-          colour={scheme.wallExterior}
+          colour={walking ? built.houseWall : scheme.wallExterior}
         />
       )}
 

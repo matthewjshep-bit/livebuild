@@ -20,6 +20,14 @@ export type Box = {
   center: [number, number, number];
   size: [number, number, number];
   colour: string;
+  /**
+   * How the surface behaves under light, when colour is not the whole story.
+   *
+   * Absent means what it always meant - the renderer's default for the
+   * element. Present, it is how a worktop knows it is stainless rather than
+   * laminate: the two can be the same grey and are nothing alike.
+   */
+  finish?: { roughness: number; metalness: number };
 };
 
 export type Piece = {

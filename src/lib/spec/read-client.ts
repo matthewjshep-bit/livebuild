@@ -1,15 +1,17 @@
 "use client";
 
 import { getMedia, isManagedRef, refToKey } from "@/lib/media-store";
-import { inferHouse } from "@/lib/spec/infer";
+import { clearestWall, inferHouse } from "@/lib/spec/infer";
 import {
   type HouseSpec,
+  type Joinery,
   type RoomSpec,
   type Source,
   EMPTY_ROOM_SPEC,
   outranks,
 } from "@/lib/spec/schema";
 import { boundsOf, roomAdjacency } from "@/lib/plan/geometry";
+import { roomKind } from "@/lib/plan/room-kind";
 
 import type { Property, Room } from "@/lib/schema";
 import { policyFor } from "@/lib/ai/policy";
@@ -351,6 +353,45 @@ export async function readRooms(
         );
         next.source["joinery"] = "read";
         delete next.because["joinery"];
+      } else {
+        /**
+         * The photograph shows fitted units - `result.joinery` is null when
+         * none are visible, so being here means they are - and the inference
+         * gave this room none. So make one, against the wall the inference
+         * would have chosen, and dress it in what was seen.
+         *
+         * This branch did not exist. A read cabinet colour with nothing to
+         * attach to was dropped on the floor: the maple was read, stored
+         * nowhere, and the kitchen came out in the carcass default, which is a
+         * near-white. A photograph that shows cabinets is better evidence
+         * that there are cabinets than a room kind is.
+         */
+        const wall = clearestWall(room, property.plan);
+        if (wall) {
+          const kind = roomKind(room.label);
+          next.joinery = [
+            ...(next.joinery ?? []),
+            {
+              id: `${room.id}-run`,
+              kind: kind === "bathroom" || kind === "powder" ? "vanity" : "cabinet-run",
+              wall: wall.side,
+              alongM: 0.05,
+              lengthM: 0.85,
+              depthM: null,
+              tier: seen.hasWallUnits ? "base+wall" : "base",
+              doorStyle: (seen.doorStyle as Joinery["doorStyle"]) ?? "shaker",
+              colour: seen.colour ?? null,
+              hardware: (seen.hardware as Joinery["hardware"]) ?? "bar",
+              worktop: {
+                material: (seen.worktopMaterial as NonNullable<Joinery["worktop"]>["material"]) ?? "laminate",
+                colour: seen.worktopColour ?? null,
+                thicknessM: 0.03,
+              },
+            },
+          ];
+          next.source["joinery"] = "read";
+          next.because["joinery"] = `Fitted units seen in the photograph, along the ${wall.side} wall - the clearest run.`;
+        }
       }
 
       // An island is a thing a photograph can genuinely see, and the plan

@@ -13,7 +13,7 @@
  * one oak means one oak, and - the one that matters most - that nothing it
  * infers ever overwrites something a photograph or a person actually said.
  */
-import { inferHouse } from "../src/lib/spec/infer";
+import { clearestWall, inferHouse } from "../src/lib/spec/infer";
 import { HouseSpec, type RoomSpec } from "../src/lib/spec/schema";
 import { autoOpenings } from "../src/lib/plan/autolayout";
 import { rectangle } from "../src/lib/plan/geometry";
@@ -187,6 +187,26 @@ check(
 // --- it parses ---
 check("the result is a valid document", HouseSpec.safeParse(seeded.spec).success);
 check("it reports what it did", seeded.conventions.length > 0, seeded.conventions.join(" | "));
+
+// --- the wall a run goes on is exported, and it is the one without the door ---
+//
+// The reader needs this now: a photograph that shows fitted units in a room
+// the inference gave none has to put them somewhere, and it should be the
+// same somewhere the inference would have chosen.
+{
+  const kitchen = room("k", "Kitchen", 0, 0, 4, 3);
+  const hall = room("h", "Hallway", 4, 0, 1.2, 3);
+  // The door is in the east wall, at its middle.
+  const withDoor: Plan = {
+    scaleRef: { px: 100, meters: 1 },
+    rooms: [kitchen, hall],
+    openings: [{ id: "d", between: ["k", "h"], at: [4, 1.5], width: 0.9, kind: "door" }],
+  };
+  const chosen = clearestWall(kitchen, withDoor);
+  check("a wall is chosen", chosen !== null);
+  check("and it is not the one with the door in it", chosen?.side !== "east", `${chosen?.side}`);
+  check("nothing fits a cupboard-sized room", clearestWall(room("c", "Closet", 0, 0, 1, 1), withDoor) === null);
+}
 
 function stripTime(spec: HouseSpec) {
   return { ...spec, inferredAt: 0 };

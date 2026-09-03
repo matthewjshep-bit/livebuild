@@ -217,6 +217,210 @@ export function wallSurface(colour: string): Surface {
   );
 }
 
+/**
+ * What a wall is made of, when it is not painted plaster.
+ *
+ * Deliberately the same union as `WallMaterial` in `spec/schema.ts`, for the
+ * reason the floors give: a spec that can name a material nothing can render
+ * is a spec that lies. Until now it lied - all six were read, stored, and
+ * every one of them was drawn as emulsion.
+ */
+export type WallFinish = "paint" | "wallpaper" | "tile" | "panelling" | "exposed-brick" | "timber";
+
+/** Walls cover 2.4m per tile, so these are the pixel sizes of real things. */
+const WALL_PX = 512;
+const WALL_PX_PER_M = WALL_PX / 2.4;
+
+/**
+ * A wall surface by material. Paint is the plaster generator above; the
+ * others are drawn here, in the same two passes with the same seeded noise.
+ */
+export function wallMaterialSurface(material: WallFinish | null | undefined, colour: string): Surface {
+  switch (material) {
+    case "exposed-brick":
+      return brickSurface(colour);
+    case "tile":
+      return wallTileSurface(colour);
+    case "panelling":
+      return boardSurface(colour, "vertical", 0.14, true);
+    case "timber":
+      return boardSurface(colour, "horizontal", 0.14, false);
+    case "wallpaper":
+      return wallpaperSurface(colour);
+    default:
+      return wallSurface(colour);
+  }
+}
+
+/**
+ * Brick in running bond.
+ *
+ * A standard brick is 215 by 65 with a 10mm joint, and every course is offset
+ * by half a brick. The mortar is *lower* than the brick in the height pass -
+ * which is the whole of what makes it read as masonry rather than as a
+ * printed pattern - and every brick is its own slightly different colour.
+ */
+function brickSurface(colour: string): Surface {
+  return makeSurface(
+    `wall|brick|${colour}`,
+    WALL_PX,
+    (g, w, h, channel) => {
+      const albedo = channel === "albedo";
+      const rand = seeded(0xb41c);
+      // Mortar first, everywhere. Low in height; pale in colour.
+      g.fillStyle = albedo ? "rgb(196,190,180)" : shift(GROUND, -55);
+      g.fillRect(0, 0, w, h);
+
+      const bw = 0.215 * WALL_PX_PER_M;
+      const bh = 0.065 * WALL_PX_PER_M;
+      const joint = 0.01 * WALL_PX_PER_M;
+      const courses = Math.ceil(h / (bh + joint)) + 1;
+      for (let c = 0; c < courses; c++) {
+        const y = c * (bh + joint);
+        const offset = c % 2 === 0 ? 0 : (bw + joint) / 2;
+        for (let x = -bw + offset; x < w + bw; x += bw + joint) {
+          // Each brick its own colour: a little lighter or darker, and one in
+          // nine noticeably darker, the way a fired batch varies.
+          const dark = rand() < 0.11;
+          const tone = (rand() - 0.5) * 22 + (dark ? -34 : 0);
+          g.fillStyle = albedo ? shift(colour, tone) : shift(GROUND, 8 + (rand() - 0.5) * 8);
+          g.fillRect(x, y, bw, bh);
+          if (albedo) {
+            // Speckle, which is the texture of the clay.
+            g.globalAlpha = 0.16;
+            for (let k = 0; k < 6; k++) {
+              g.fillStyle = rand() < 0.5 ? "#000" : "#fff";
+              g.fillRect(x + rand() * bw, y + rand() * bh, 1.5, 1.5);
+            }
+            g.globalAlpha = 1;
+          }
+        }
+      }
+    },
+    // Matte and rough, with real relief at the joints.
+    { roughness: 0.9, roughVariance: 0.08, relief: 2.6 },
+  );
+}
+
+/** Wall tile on a 200mm grid, glazed, with grout that is not. */
+function wallTileSurface(colour: string): Surface {
+  return makeSurface(
+    `wall|tile|${colour}`,
+    WALL_PX,
+    (g, w, h, channel) => {
+      const albedo = channel === "albedo";
+      const rand = seeded(0x7113);
+      g.fillStyle = albedo ? "rgb(214,212,206)" : shift(GROUND, -60);
+      g.fillRect(0, 0, w, h);
+      const s = 0.2 * WALL_PX_PER_M;
+      const grout = 0.003 * WALL_PX_PER_M;
+      for (let y = 0; y < h; y += s) {
+        for (let x = 0; x < w; x += s) {
+          g.fillStyle = albedo
+            ? shift(colour, (rand() - 0.5) * 8)
+            : shift(GROUND, 48 + (rand() - 0.5) * 5);
+          g.fillRect(x + grout / 2, y + grout / 2, s - grout, s - grout);
+        }
+      }
+    },
+    { roughness: 0.2, roughVariance: 0.34, relief: 2.2 },
+  );
+}
+
+/**
+ * Boards: vertical panelling with a V-groove, or horizontal timber cladding.
+ *
+ * Each board is its own shade and sits a hair proud or shy of its neighbour,
+ * as the floor's planks do. Grain is colour only - sanded timber is flat.
+ */
+function boardSurface(colour: string, run: "vertical" | "horizontal", widthM: number, groove: boolean): Surface {
+  return makeSurface(
+    `wall|board|${run}|${colour}`,
+    WALL_PX,
+    (g, w, h, channel) => {
+      const albedo = channel === "albedo";
+      const rand = seeded(run === "vertical" ? 0x9a4e : 0x71b3);
+      g.fillStyle = albedo ? colour : GROUND;
+      g.fillRect(0, 0, w, h);
+      const bw = widthM * WALL_PX_PER_M;
+      const gap = groove ? 0.004 * WALL_PX_PER_M : 0.002 * WALL_PX_PER_M;
+      const count = Math.ceil((run === "vertical" ? w : h) / bw) + 1;
+      for (let i = 0; i < count; i++) {
+        const at = i * bw;
+        const tone = (i % 3) * -6 + 3 + (rand() - 0.5) * 6;
+        const level = (i % 3) * 7 - 5;
+        g.fillStyle = albedo ? shift(colour, tone) : shift(GROUND, level);
+        if (run === "vertical") g.fillRect(at, 0, bw - gap, h);
+        else g.fillRect(0, at, w, bw - gap);
+
+        // The groove or shadow line between boards: depth, not colour.
+        if (!albedo) {
+          g.fillStyle = shift(GROUND, groove ? -70 : -40);
+          if (run === "vertical") g.fillRect(at + bw - gap, 0, gap, h);
+          else g.fillRect(0, at + bw - gap, w, gap);
+        }
+
+        if (albedo) {
+          g.globalAlpha = 0.14;
+          g.strokeStyle = shift(colour, -55);
+          for (let k = 0; k < 10; k++) {
+            g.lineWidth = 0.5 + rand();
+            g.beginPath();
+            if (run === "vertical") {
+              const x = at + rand() * (bw - gap);
+              g.moveTo(x, 0);
+              g.bezierCurveTo(x + (rand() - 0.5) * 3, h * 0.3, x + (rand() - 0.5) * 3, h * 0.7, x, h);
+            } else {
+              const y = at + rand() * (bw - gap);
+              g.moveTo(0, y);
+              g.bezierCurveTo(w * 0.3, y + (rand() - 0.5) * 3, w * 0.7, y + (rand() - 0.5) * 3, w, y);
+            }
+            g.stroke();
+          }
+          g.globalAlpha = 1;
+        }
+      }
+    },
+    { roughness: 0.62, roughVariance: 0.12, relief: 1.2 },
+  );
+}
+
+/** Plaster with a faint repeating motif, in colour only. */
+function wallpaperSurface(colour: string): Surface {
+  // The plaster pass, then a pattern over it. The pattern is albedo only:
+  // paper has no relief, and lifting it would read as embossed tin.
+  const base = wallSurface(colour);
+  return makeSurface(
+    `wall|paper|${colour}`,
+    WALL_PX,
+    (g, w, h, channel) => {
+      const albedo = channel === "albedo";
+      g.drawImage(base.map.image as HTMLCanvasElement, 0, 0, w, h);
+      if (!albedo) return;
+      const rand = seeded(0x9a9e);
+      const step = 0.12 * WALL_PX_PER_M;
+      g.globalAlpha = 0.09;
+      g.strokeStyle = shift(colour, -70);
+      g.lineWidth = 1.2;
+      for (let y = 0; y < h + step; y += step) {
+        for (let x = 0; x < w + step; x += step) {
+          const ox = (Math.floor(y / step) % 2) * (step / 2);
+          g.beginPath();
+          g.moveTo(x + ox, y - step * 0.3);
+          g.lineTo(x + ox + step * 0.3, y);
+          g.lineTo(x + ox, y + step * 0.3);
+          g.lineTo(x + ox - step * 0.3, y);
+          g.closePath();
+          g.stroke();
+          if (rand() < 0.02) g.stroke();
+        }
+      }
+      g.globalAlpha = 1;
+    },
+    { roughness: 0.9, roughVariance: 0.05, relief: 0.35 },
+  );
+}
+
 /* ------------------------------------------------------------------ floors */
 
 export type FloorFinish = "wood" | "tile" | "stone" | "carpet" | "concrete" | "grass";

@@ -109,7 +109,125 @@ const box = (
   h: number,
   d: number,
   colour: string,
-): Box => ({ center: [x + w / 2, y + h / 2, z + d / 2], size: [w, h, d], colour });
+  finish?: Box["finish"],
+): Box => ({ center: [x + w / 2, y + h / 2, z + d / 2], size: [w, h, d], colour, ...(finish ? { finish } : {}) });
+
+/** How a worktop takes the light, by what it is made of. */
+const WORKTOP_FINISH: Record<NonNullable<NonNullable<Joinery["worktop"]>["material"]>, Box["finish"]> = {
+  // Brushed steel: the one worktop that is a metal, and reads as one.
+  stainless: { roughness: 0.32, metalness: 0.85 },
+  // Polished stone. The sheen is most of what says "stone" at a distance.
+  quartz: { roughness: 0.22, metalness: 0 },
+  marble: { roughness: 0.2, metalness: 0 },
+  granite: { roughness: 0.26, metalness: 0 },
+  // Matte, which is the honest answer for both.
+  laminate: { roughness: 0.7, metalness: 0 },
+  "butcher-block": { roughness: 0.55, metalness: 0 },
+};
+const worktopFinish = (top: Joinery["worktop"]) =>
+  top?.material ? WORKTOP_FINISH[top.material] : undefined;
+
+/** Frame rails and stiles, and how far a panel sits back from the door's face. */
+const RAIL = 0.06;
+const PANEL_IN = 0.006;
+const FIELD_UP = 0.003;
+
+/**
+ * One door, in whichever style the photograph said.
+ *
+ * `doorStyle` was read, stored and never drawn: every door was one flat box,
+ * so a shaker kitchen and a slab one rendered identically. The read prompt
+ * itself says the difference is "a line of shadow a few millimetres wide
+ * around the edge of each door, and it is the single most telling thing about
+ * a kitchen's age" - which is exactly what a frame of four boxes round a
+ * recessed panel produces, and what one box cannot.
+ *
+ * `along` is the door's extent along the run, `up` its vertical extent, and
+ * `face` the coordinate of the carcass face it sits on. `out` is +1 when the
+ * door's front points along the positive axis and -1 when it points back,
+ * which is the whole of the orientation problem in one sign.
+ */
+function door(
+  style: Joinery["doorStyle"],
+  horizontal: boolean,
+  along: [number, number],
+  up: [number, number],
+  face: number,
+  thickness: number,
+  out: 1 | -1,
+  colour: string,
+  boxes: Box[],
+): void {
+  const [a0, a1] = along;
+  const [u0, u1] = up;
+  const aw = a1 - a0;
+  const uh = u1 - u0;
+  // The door occupies [face, face + thickness] when it points forward and
+  // [face - thickness, face] when it points back; `near` is its back edge.
+  const near = out === 1 ? face : face - thickness;
+
+  const slab = (aa: number, uu: number, ww: number, hh: number, depthFrom: number, depthTo: number, c = colour) => {
+    const d0 = Math.min(depthFrom, depthTo);
+    const dd = Math.abs(depthTo - depthFrom);
+    if (horizontal) boxes.push(box(aa, uu, d0, ww, hh, dd, c));
+    else boxes.push(box(d0, uu, aa, dd, hh, ww, c));
+  };
+  const full: [number, number] = [near, near + thickness];
+  // Recessed: the panel's front sits PANEL_IN behind the frame's front.
+  const recessed: [number, number] =
+    out === 1 ? [near, near + thickness - PANEL_IN] : [near + PANEL_IN, near + thickness];
+  // Raised: a field inside the recess, proud of the panel but behind the frame.
+  const raised: [number, number] =
+    out === 1
+      ? [near, near + thickness - PANEL_IN + FIELD_UP]
+      : [near + PANEL_IN - FIELD_UP, near + thickness];
+
+  if (style === "slab" || aw < RAIL * 3 || uh < RAIL * 3) {
+    slab(a0, u0, aw, uh, ...full);
+    return;
+  }
+
+  if (style === "glazed") {
+    // A frame round a pane. The pane is the same glassy tint the windows use.
+    slab(a0, u0, aw, RAIL, ...full);
+    slab(a0, u1 - RAIL, aw, RAIL, ...full);
+    slab(a0, u0 + RAIL, RAIL, uh - RAIL * 2, ...full);
+    slab(a1 - RAIL, u0 + RAIL, RAIL, uh - RAIL * 2, ...full);
+    slab(a0 + RAIL, u0 + RAIL, aw - RAIL * 2, uh - RAIL * 2, ...recessed, "#cfe0ea");
+    return;
+  }
+
+  if (style === "beadboard") {
+    // A flat door with vertical grooves: the face, then three shallow
+    // channels cut into it.
+    slab(a0, u0, aw, uh, ...full);
+    const grooves = 3;
+    for (let i = 1; i <= grooves; i++) {
+      const at = a0 + (aw * i) / (grooves + 1);
+      slab(at - 0.003, u0 + RAIL, 0.006, uh - RAIL * 2, ...recessed, shift(colour, -14));
+    }
+    return;
+  }
+
+  // Shaker and raised-panel: a frame round a recessed panel. The raised one
+  // adds a field standing a little proud inside the recess.
+  slab(a0, u0, aw, RAIL, ...full);
+  slab(a0, u1 - RAIL, aw, RAIL, ...full);
+  slab(a0, u0 + RAIL, RAIL, uh - RAIL * 2, ...full);
+  slab(a1 - RAIL, u0 + RAIL, RAIL, uh - RAIL * 2, ...full);
+  slab(a0 + RAIL, u0 + RAIL, aw - RAIL * 2, uh - RAIL * 2, ...recessed);
+  if (style === "raised-panel") {
+    const inset = RAIL + 0.03;
+    slab(a0 + inset, u0 + inset, aw - inset * 2, uh - inset * 2, ...raised);
+  }
+}
+
+/** A colour nudged darker, for a groove or a shadow. */
+function shift(hex: string, amount: number): string {
+  const n = parseInt(hex.replace("#", ""), 16);
+  const c = (v: number) => Math.max(0, Math.min(255, v + amount)).toString(16).padStart(2, "0");
+  return `#${c((n >> 16) & 255)}${c((n >> 8) & 255)}${c(n & 255)}`;
+}
 
 /**
  * One tier of cabinets: a carcass, its doors, and their handles.
@@ -127,6 +245,7 @@ function tier(
   depth: number,
   colour: string,
   hardware: Joinery["hardware"],
+  style: Joinery["doorStyle"],
   boxes: Box[],
 ): void {
   const horizontal = p.facing === "north" || p.facing === "south";
@@ -151,22 +270,30 @@ function tier(
 
   for (let i = 0; i < count; i++) {
     const offset = REVEAL + i * (doorRun + REVEAL);
+    const up: [number, number] = [base + REVEAL, base + height - REVEAL];
     if (horizontal) {
-      const z = p.facing === "north" ? p.y + carcassDepth : p.y;
-      boxes.push(box(p.x + offset, base + REVEAL, z, doorRun, height - REVEAL * 2, doorThickness, colour));
+      // North-facing fronts point +z from the carcass face; south-facing
+      // point -z from theirs.
+      const out: 1 | -1 = p.facing === "north" ? 1 : -1;
+      const face = p.facing === "north" ? p.y + carcassDepth : p.y + doorThickness;
+      door(style, true, [p.x + offset, p.x + offset + doorRun], up, face, doorThickness, out, colour, boxes);
       if (hardware !== "none") {
-        // A bar pull, run vertically near the leading edge of each door.
         const hx = p.x + offset + (i % 2 === 0 ? doorRun - 0.06 : 0.04);
-        const hz = p.facing === "north" ? z + doorThickness : z - 0.02;
-        boxes.push(box(hx, base + height * 0.6, hz, 0.02, height * 0.28, 0.02, HANDLE));
+        const front = out === 1 ? face + doorThickness : face - doorThickness;
+        const hz = out === 1 ? front : front - 0.02;
+        if (hardware === "knob") boxes.push(box(hx - 0.005, base + height * 0.5, hz, 0.03, 0.03, 0.02, HANDLE));
+        else boxes.push(box(hx, base + height * 0.6, hz, 0.02, height * 0.28, 0.02, HANDLE));
       }
     } else {
-      const x = p.facing === "west" ? p.x + carcassDepth : p.x;
-      boxes.push(box(x, base + REVEAL, p.y + offset, doorThickness, height - REVEAL * 2, doorRun, colour));
+      const out: 1 | -1 = p.facing === "west" ? 1 : -1;
+      const face = p.facing === "west" ? p.x + carcassDepth : p.x + doorThickness;
+      door(style, false, [p.y + offset, p.y + offset + doorRun], up, face, doorThickness, out, colour, boxes);
       if (hardware !== "none") {
         const hy = p.y + offset + (i % 2 === 0 ? doorRun - 0.06 : 0.04);
-        const hx = p.facing === "west" ? x + doorThickness : x - 0.02;
-        boxes.push(box(hx, base + height * 0.6, hy, 0.02, height * 0.28, 0.02, HANDLE));
+        const front = out === 1 ? face + doorThickness : face - doorThickness;
+        const hx = out === 1 ? front : front - 0.02;
+        if (hardware === "knob") boxes.push(box(hx, base + height * 0.5, hy - 0.005, 0.02, 0.03, 0.03, HANDLE));
+        else boxes.push(box(hx, base + height * 0.6, hy, 0.02, height * 0.28, 0.02, HANDLE));
       }
     }
   }
@@ -188,18 +315,19 @@ function baseRun(p: Placement, item: Joinery, boxes: Box[]): void {
     boxes.push(box(x, 0, p.y, depth - PLINTH_SETBACK, PLINTH_HEIGHT, p.depth, colour));
   }
 
-  tier(p, PLINTH_HEIGHT, BASE_HEIGHT - PLINTH_HEIGHT, depth, colour, item.hardware, boxes);
+  tier(p, PLINTH_HEIGHT, BASE_HEIGHT - PLINTH_HEIGHT, depth, colour, item.hardware, item.doorStyle, boxes);
 
   // The worktop, standing proud of the doors on the open side.
   const top = item.worktop;
   const thickness = top?.thicknessM ?? 0.03;
   const topColour = top?.colour ?? WORKTOP;
+  const finish = worktopFinish(top);
   if (horizontal) {
     const z = p.facing === "north" ? p.y : p.y - WORKTOP_PROUD;
-    boxes.push(box(p.x, BASE_HEIGHT, z, p.width, thickness, depth + WORKTOP_PROUD, topColour));
+    boxes.push(box(p.x, BASE_HEIGHT, z, p.width, thickness, depth + WORKTOP_PROUD, topColour, finish));
   } else {
     const x = p.facing === "west" ? p.x : p.x - WORKTOP_PROUD;
-    boxes.push(box(x, BASE_HEIGHT, p.y, depth + WORKTOP_PROUD, thickness, p.depth, topColour));
+    boxes.push(box(x, BASE_HEIGHT, p.y, depth + WORKTOP_PROUD, thickness, p.depth, topColour, finish));
   }
 }
 
@@ -234,7 +362,7 @@ export function joineryFor(room: Room, spec: RoomSpec | undefined): Piece[] {
       boxes.push(box(x, PLINTH_HEIGHT, y, iw, BASE_HEIGHT - PLINTH_HEIGHT, id, colour));
       const thickness = item.worktop?.thicknessM ?? 0.03;
       boxes.push(
-        box(x - WORKTOP_PROUD, BASE_HEIGHT, y - WORKTOP_PROUD, iw + WORKTOP_PROUD * 2, thickness, id + WORKTOP_PROUD * 2, item.worktop?.colour ?? WORKTOP),
+        box(x - WORKTOP_PROUD, BASE_HEIGHT, y - WORKTOP_PROUD, iw + WORKTOP_PROUD * 2, thickness, id + WORKTOP_PROUD * 2, item.worktop?.colour ?? WORKTOP, worktopFinish(item.worktop)),
       );
       pieces.push({ kind: "island", boxes });
       continue;
@@ -250,12 +378,12 @@ export function joineryFor(room: Room, spec: RoomSpec | undefined): Piece[] {
     if (item.kind === "vanity") {
       const horizontal = p.facing === "north" || p.facing === "south";
       const d = horizontal ? p.depth : p.width;
-      tier(p, 0, VANITY_HEIGHT, d, colour, item.hardware, boxes);
+      tier(p, 0, VANITY_HEIGHT, d, colour, item.hardware, item.doorStyle, boxes);
       const thickness = item.worktop?.thicknessM ?? 0.03;
       if (horizontal) {
-        boxes.push(box(p.x, VANITY_HEIGHT, p.y - WORKTOP_PROUD, p.width, thickness, d + WORKTOP_PROUD, item.worktop?.colour ?? WORKTOP));
+        boxes.push(box(p.x, VANITY_HEIGHT, p.y - WORKTOP_PROUD, p.width, thickness, d + WORKTOP_PROUD, item.worktop?.colour ?? WORKTOP, worktopFinish(item.worktop)));
       } else {
-        boxes.push(box(p.x - WORKTOP_PROUD, VANITY_HEIGHT, p.y, d + WORKTOP_PROUD, thickness, p.depth, item.worktop?.colour ?? WORKTOP));
+        boxes.push(box(p.x - WORKTOP_PROUD, VANITY_HEIGHT, p.y, d + WORKTOP_PROUD, thickness, p.depth, item.worktop?.colour ?? WORKTOP, worktopFinish(item.worktop)));
       }
       pieces.push({ kind: "vanity", boxes });
       continue;
@@ -263,7 +391,7 @@ export function joineryFor(room: Room, spec: RoomSpec | undefined): Piece[] {
 
     if (item.kind === "wardrobe" || item.tier === "tall") {
       const horizontal = p.facing === "north" || p.facing === "south";
-      tier(p, 0, TALL_HEIGHT, horizontal ? p.depth : p.width, colour, item.hardware, boxes);
+      tier(p, 0, TALL_HEIGHT, horizontal ? p.depth : p.width, colour, item.hardware, item.doorStyle, boxes);
       pieces.push({ kind: item.kind === "wardrobe" ? "wardrobe" : "cabinet", boxes });
       continue;
     }
@@ -281,6 +409,7 @@ export function joineryFor(room: Room, spec: RoomSpec | undefined): Piece[] {
           wallDepth,
           colour,
           item.hardware,
+          item.doorStyle,
           boxes,
         );
       }

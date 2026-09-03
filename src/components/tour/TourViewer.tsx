@@ -76,6 +76,10 @@ function SceneReadout({ mode, furnished }: { mode: ViewState["mode"]; furnished:
     const markerAt: Array<[number, number]> = [];
     const bySurface: Record<string, number> = {};
     let emissive = 0;
+    // Every distinct colour map in use. Two rooms in two wall materials have
+    // two; a house whose every wall is plaster has one - which is how a suite
+    // can tell that `walls.material` reached a mesh without reading pixels.
+    const maps = new Set<unknown>();
     scene.traverse((object) => {
       const mesh = object as THREE.Mesh;
       if (!mesh.isMesh) return;
@@ -125,6 +129,7 @@ function SceneReadout({ mode, furnished }: { mode: ViewState["mode"]; furnished:
       const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
       for (const material of materials) {
         const map = (material as THREE.MeshStandardMaterial)?.map;
+        if (map?.image) maps.add(map.image);
         const source = map?.image as { src?: string } | undefined;
         if (typeof source?.src === "string" && source.src.length > 0) photoTextures++;
       }
@@ -143,6 +148,7 @@ function SceneReadout({ mode, furnished }: { mode: ViewState["mode"]; furnished:
       bySurface,
       emissive,
       photoTextures,
+      distinctMaps: maps.size,
       triangles: Math.round(triangles),
       geometries: gl.info.memory.geometries,
       textures: gl.info.memory.textures,

@@ -195,12 +195,58 @@ check(
 );
 
 // --- cost ---
+//
+// A door is five boxes now rather than one - a frame round a recessed panel -
+// so a base-and-wall run of fourteen doors is seventy boxes before its
+// carcasses, plinth, top and handles. They merge into one mesh per colour, so
+// this is triangles rather than draw calls, and a few thousand triangles is
+// nothing. The bound is here to catch a runaway, not to keep the count small.
 const boxes = joineryFor(rooms[0], spec.rooms.kitchen).reduce((n, p) => n + p.boxes.length, 0);
-check("a kitchen's run is a sensible number of parts", boxes > 6 && boxes < 80, `${boxes} boxes`);
+check("a kitchen's run is a sensible number of parts", boxes > 6 && boxes < 200, `${boxes} boxes`);
+
+// --- the door style is drawn, not just stored ---
+//
+// `doorStyle` was read off the photograph, stored with provenance, and never
+// looked at: every door was one flat box, so a shaker kitchen and a slab one
+// rendered identically. The read prompt says the difference is "a line of
+// shadow a few millimetres wide around the edge of each door", which a frame
+// of boxes round a recessed panel makes and one box cannot.
+{
+  const styled = (doorStyle: RoomSpec["joinery"][number]["doorStyle"]): number =>
+    joineryFor(rooms[0], {
+      ...spec.rooms.kitchen,
+      joinery: spec.rooms.kitchen.joinery.map((j) => ({ ...j, doorStyle })),
+    }).reduce((n, p) => n + p.boxes.length, 0);
+  const slab = styled("slab");
+  const shaker = styled("shaker");
+  const raised = styled("raised-panel");
+  check("a shaker door is more than one box", shaker > slab, `${shaker} vs ${slab}`);
+  check("and a raised panel is more again", raised > shaker, `${raised} vs ${shaker}`);
+}
+
+// --- the worktop's material reaches its finish ---
+//
+// `worktop.material` affected only colour, so stainless and laminate in the
+// same grey were the same surface. A box may now say how it takes the light.
+{
+  const withTop = (material: NonNullable<RoomSpec["joinery"][number]["worktop"]>["material"]) =>
+    joineryFor(rooms[0], {
+      ...spec.rooms.kitchen,
+      joinery: spec.rooms.kitchen.joinery.map((j) => ({
+        ...j,
+        worktop: { material, colour: "#bfbfbf", thicknessM: 0.03 },
+      })),
+    }).flatMap((p) => p.boxes);
+  const steel = withTop("stainless").find((b) => b.finish && b.finish.metalness > 0.5);
+  const laminate = withTop("laminate").find((b) => b.finish);
+  check("a stainless worktop is a metal", Boolean(steel), "no box with metalness > 0.5");
+  check("and a laminate one is matte and not", Boolean(laminate) && laminate!.finish!.metalness === 0 && laminate!.finish!.roughness > 0.5,
+    JSON.stringify(laminate?.finish));
+}
 
 console.log(
   failures === 0
-    ? "JOINERY OK - kitchens and bathrooms are fitted, every part stays in its room, runs are trimmed to their wall, and nothing is supplied twice"
+    ? "JOINERY OK - kitchens and bathrooms are fitted, every part stays in its room, runs are trimmed to their wall, nothing is supplied twice, a door is drawn in its style, and a worktop takes the light like what it is made of"
     : `JOINERY FAILED - ${failures} check${failures === 1 ? "" : "s"}`,
 );
 process.exit(failures === 0 ? 0 : 1);

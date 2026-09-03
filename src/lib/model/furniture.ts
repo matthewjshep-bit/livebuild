@@ -2,6 +2,7 @@ import { FURNITURE_COLOURS } from "@/lib/model/materials";
 import { orientedFrameOf } from "@/lib/plan/geometry";
 import { type RoomKind, roomKind } from "@/lib/plan/room-kind";
 import type { Opening, Plan, Room, Vec2 } from "@/lib/schema";
+import type { RoomSpec } from "@/lib/spec/schema";
 
 /**
  * Furnish a room from what kind of room it is.
@@ -51,7 +52,7 @@ export type Piece = {
 /** How much clear floor a doorway needs. Nothing may be placed inside this. */
 const DOOR_CLEARANCE = 0.75;
 
-type Placement = {
+export type Placement = {
   /** Footprint in room-local coordinates. */
   x: number;
   y: number;
@@ -59,7 +60,7 @@ type Placement = {
   depth: number;
 };
 
-type Wall = "north" | "south" | "east" | "west";
+export type Wall = "north" | "south" | "east" | "west";
 
 /**
  * The wall furthest from any door.
@@ -117,12 +118,27 @@ function doorsOf(plan: Plan, room: Room): Vec2[] {
 const C = FURNITURE_COLOURS;
 
 /** A rectangular slab, given a footprint and a height range. */
-function slab(place: Placement, from: number, to: number, colour: string): Box {
+export function slab(
+  place: Placement,
+  from: number,
+  to: number,
+  colour: string,
+  finish?: Box["finish"],
+): Box {
   return {
     center: [place.x + place.width / 2, (from + to) / 2, place.y + place.depth / 2],
     size: [place.width, to - from, place.depth],
     colour,
+    ...(finish ? { finish } : {}),
   };
+}
+
+/** A colour nudged darker, for the shadowed part of one piece. */
+export function darker(hex: string, amount: number): string {
+  const n = parseInt(hex.replace("#", ""), 16);
+  if (Number.isNaN(n)) return hex;
+  const c = (v: number) => Math.max(0, Math.min(255, v - amount)).toString(16).padStart(2, "0");
+  return `#${c((n >> 16) & 255)}${c((n >> 8) & 255)}${c(n & 255)}`;
 }
 
 /**
@@ -131,7 +147,7 @@ function slab(place: Placement, from: number, to: number, colour: string): Box {
  * Furniture in the middle of a room reads as a showroom; against a wall it
  * reads as somewhere someone lives.
  */
-function againstWall(
+export function againstWall(
   wall: Wall,
   width: number,
   depth: number,
@@ -151,11 +167,11 @@ function againstWall(
   }
 }
 
-type Builder = (width: number, depth: number, doors: Vec2[]) => Piece[];
+type Builder = (width: number, depth: number, doors: Vec2[], spec?: RoomSpec | null) => Piece[];
 
 const BUILDERS: Partial<Record<RoomKind, Builder>> = {
-  bedroom: (w, d, doors) => bedroom(w, d, doors, 1.4),
-  "primary-bedroom": (w, d, doors) => bedroom(w, d, doors, 1.6),
+  bedroom: (w, d, doors, spec) => bedroom(w, d, doors, 1.4, spec),
+  "primary-bedroom": (w, d, doors, spec) => bedroom(w, d, doors, 1.6, spec),
   living: livingRoom,
   kitchen: kitchen,
   dining: dining,
@@ -166,11 +182,21 @@ const BUILDERS: Partial<Record<RoomKind, Builder>> = {
   laundry: laundry,
 };
 
-function bedroom(width: number, depth: number, doors: Vec2[], bedWidth: number): Piece[] {
+function bedroom(
+  width: number,
+  depth: number,
+  doors: Vec2[],
+  bedWidth: number,
+  spec?: RoomSpec | null,
+): Piece[] {
   const pieces: Piece[] = [];
   const wall = quietestWall(width, depth, doors);
   const bed = againstWall(wall, width, depth, [bedWidth, 2.0], 0.12);
   if (bed.width > width - 0.3 || bed.depth > depth - 0.3 || blocksDoor(bed, doors)) return pieces;
+
+  // The headboard takes the colour the photograph saw, when it saw one.
+  const seen = spec?.furnishings?.find((f) => f.kind === "bed");
+  const head = seen?.colour ?? C.soft;
 
   pieces.push({
     kind: "bed",
@@ -189,7 +215,7 @@ function bedroom(width: number, depth: number, doors: Vec2[], bedWidth: number):
           : { x: wall === "west" ? bed.x + 0.08 : bed.x + bed.width - 0.45, y: bed.y + 0.1, width: 0.37, depth: bed.depth - 0.2 },
         0.62,
         0.74,
-        C.soft,
+        head,
       ),
     ],
   });
@@ -205,16 +231,31 @@ function bedroom(width: number, depth: number, doors: Vec2[], bedWidth: number):
   return pieces;
 }
 
-function livingRoom(width: number, depth: number, doors: Vec2[]): Piece[] {
+function livingRoom(width: number, depth: number, doors: Vec2[], spec?: RoomSpec | null): Piece[] {
   const pieces: Piece[] = [];
   const wall = quietestWall(width, depth, doors);
   const sofa = againstWall(wall, width, depth, [Math.min(2.2, width * 0.6), 0.9], 0.25);
   if (blocksDoor(sofa, doors)) return pieces;
 
+  /**
+   * The sofa in the photograph's colour, and its material's finish.
+   *
+   * It was always `scheme.furniture.soft`, which in every scheme is a pale
+   * grey or sand - so a dark leather sofa came back as a pale fabric one, and
+   * the room read as staged rather than as the room. A read colour is the
+   * exact hex the reader returned, which `recolour` leaves alone precisely
+   * because it is not in the palette.
+   */
+  const seen = spec?.furnishings?.find((f) => f.kind === "sofa");
+  const seat = seen?.colour ?? C.soft;
+  const back = seen?.colour ? darker(seen.colour, 22) : C.softDark;
+  const finish: Box["finish"] | undefined =
+    seen?.material === "leather" ? { roughness: 0.5, metalness: 0 } : undefined;
+
   pieces.push({
     kind: "sofa",
     boxes: [
-      slab(sofa, 0.1, 0.42, C.soft),
+      slab(sofa, 0.1, 0.42, seat, finish),
       slab(
         wall === "north"
           ? { ...sofa, depth: 0.2 }
@@ -225,7 +266,8 @@ function livingRoom(width: number, depth: number, doors: Vec2[]): Piece[] {
               : { ...sofa, x: sofa.x + sofa.width - 0.2, width: 0.2 },
         0.42,
         0.78,
-        C.softDark,
+        back,
+        finish,
       ),
     ],
   });
@@ -408,7 +450,7 @@ function garage(width: number, depth: number, doors: Vec2[]): Piece[] {
  * squeezed into a room too small for it looks more broken than an empty room,
  * and generated rooms are sometimes genuinely too small.
  */
-export function furnishRoom(plan: Plan, room: Room): Piece[] {
+export function furnishRoom(plan: Plan, room: Room, spec?: RoomSpec | null): Piece[] {
   // Measured in the room's own frame, so an angled room is furnished to its own
   // walls rather than to the larger box the world would draw round it.
   const frame = orientedFrameOf(room.polygon);
@@ -419,7 +461,7 @@ export function furnishRoom(plan: Plan, room: Room): Piece[] {
   if (!builder) return [];
 
   const doors = doorsOf(plan, room);
-  return builder(width, depth, doors)
+  return builder(width, depth, doors, spec)
     .filter((piece) => piece.boxes.length > 0)
     .map((piece) => ({ ...piece, frame }));
 }

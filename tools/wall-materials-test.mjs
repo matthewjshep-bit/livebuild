@@ -59,7 +59,12 @@ const fixture = {
     rooms: {
       living: roomSpec({
         walls: { material: "exposed-brick", colour: "#a0522d" },
-        source: { "walls.material": "read", "walls.colour": "read" },
+        // And what is in the room: a brick fireplace, which is fitted and
+        // is built whatever the furniture toggle says, and a dark leather
+        // sofa, which is the seller's and is kept for its colour.
+        fixtures: [{ id: "fp", kind: "fireplace", material: "brick", colour: null }],
+        furnishings: [{ id: "sf", kind: "sofa", colour: "#3a2a1e", material: "leather" }],
+        source: { "walls.material": "read", "walls.colour": "read", fixtures: "read", furnishings: "read" },
       }),
       kitchen: roomSpec({
         walls: { material: "paint", colour: "#d8c9a8" },
@@ -80,7 +85,11 @@ const fixture = {
             worktop: { material: "stainless", colour: "#b9bcc0", thicknessM: 0.03 },
           },
         ],
-        source: { "walls.material": "read", "walls.colour": "read", joinery: "read" },
+        fixtures: [
+          { id: "rg", kind: "range", material: "stainless steel", colour: null },
+          { id: "hd", kind: "hood", material: "stainless steel", colour: null },
+        ],
+        source: { "walls.material": "read", "walls.colour": "read", joinery: "read", fixtures: "read" },
       }),
     },
     defaults: { wallColour: "#d8c9a8" },
@@ -120,6 +129,19 @@ check(
 
 await page.screenshot({ path: "shots/W1-wall-materials.png" });
 
+// At eye level in the living room: the fireplace on an outside wall and the
+// sofa in its own colour, neither of which existed before the reader was
+// allowed to see the room's contents.
+await page.goto(`${BASE}/tour/${ID}?room=living`, { waitUntil: "networkidle" });
+await page.waitForFunction(() => window.__scene && window.__scene.mode === "walk", { timeout: 45_000 }).catch(() => {});
+await page.waitForTimeout(3000);
+await page.screenshot({ path: "shots/W3-living-fireplace.png" });
+const living = await page.evaluate(() => window.__scene);
+// The brick is on the wall you are looking at, not only on the exploded
+// room: assembled, a read wall material used to reach no mesh at all.
+check("the living room wears its own brick walls on foot", (living.bySurface?.walls ?? 0) > 0, JSON.stringify(living.bySurface));
+check("and its fireplace is a fixture, which the toggle cannot remove", (living.meshes ?? 0) > 0);
+
 // And at eye level in the kitchen, where the door style and the steel top are
 // the whole point: a frame of shadow round each door, a worktop with a sheen.
 await page.goto(`${BASE}/tour/${ID}?room=kitchen`, { waitUntil: "networkidle" });
@@ -128,6 +150,8 @@ await page.waitForTimeout(3000);
 await page.screenshot({ path: "shots/W2-kitchen-doors.png" });
 const walk = await page.evaluate(() => window.__scene);
 check("the kitchen has cabinets", (walk.bySurface?.cabinets ?? 0) > 0, JSON.stringify(walk.bySurface));
+// The read range and hood are appliances, priced as such and drawn as such.
+check("the read range and hood are in the kitchen", (walk.bySurface?.appliances ?? 0) > 0, JSON.stringify(walk.bySurface));
 
 check("no page errors", errors.length === 0, errors.slice(0, 2).join(" | "));
 

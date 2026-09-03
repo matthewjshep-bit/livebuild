@@ -8,6 +8,9 @@
 import { readFileSync } from "node:fs";
 
 import { furnishRoom } from "../src/lib/model/furniture";
+import { fixturesFor } from "../src/lib/model/fixtures";
+import { piecesFor } from "../src/lib/model/staging";
+import { EMPTY_ROOM_SPEC, type RoomSpec } from "../src/lib/spec/schema";
 import { autoOpenings } from "../src/lib/plan/autolayout";
 import { boundsOf } from "../src/lib/plan/geometry";
 import { roomKind } from "../src/lib/plan/room-kind";
@@ -166,9 +169,72 @@ check("rooms actually got furnished", furnishedRooms >= 6, `${furnishedRooms} ro
   );
 }
 
+// --- what the photograph saw in the room gets built ---
+//
+// The reader was told to ignore contents outright, so a brick fireplace had
+// no field to land in and a sofa's colour was never asked. Two things follow
+// from asking: a fixture is placed where a fixture goes, and a furnishing is
+// the colour it was seen.
+{
+  const living = {
+    id: "living",
+    label: "Living Room",
+    polygon: [[0, 0], [6, 0], [6, 5], [0, 5]] as [number, number][],
+    ceilingHeight: 2.7,
+    level: 0,
+  };
+  const kitchen = {
+    id: "kitchen",
+    label: "Kitchen",
+    polygon: [[6, 0], [10, 0], [10, 5], [6, 5]] as [number, number][],
+    ceilingHeight: 2.7,
+    level: 0,
+  };
+  const two: Plan = {
+    scaleRef: { px: 1, meters: 0.3048 },
+    rooms: [living, kitchen],
+    openings: [{ id: "d", kind: "door", between: ["living", "kitchen"], at: [6, 2.5], width: 0.9 }],
+  };
+  const withFireplace: RoomSpec = {
+    ...EMPTY_ROOM_SPEC,
+    fixtures: [{ id: "f", kind: "fireplace", material: "brick", colour: null }],
+  };
+
+  const pieces = fixturesFor(living, withFireplace, two);
+  const fire = pieces.find((p) => p.kind === "fireplace");
+  check("a read fireplace is built", Boolean(fire));
+  if (fire) {
+    // The living room's east wall is the one it shares with the kitchen. A
+    // chimney on a partition is a chimney in the middle of the house.
+    const xs = fire.boxes.map((b) => b.center[0]);
+    check("and it stands on an outside wall, not the one shared with the kitchen",
+      Math.max(...xs) < 6 - 0.5, `max x ${Math.max(...xs).toFixed(2)} of a 6m room`);
+    check("in brick", fire.boxes.some((b) => b.colour === "#8b4a3a"), fire.boxes.map((b) => b.colour).join(", "));
+    check("with a firebox darker than its surround", fire.boxes.some((b) => b.colour === "#1e1a17"));
+  }
+
+  const withSofa: RoomSpec = {
+    ...EMPTY_ROOM_SPEC,
+    furnishings: [{ id: "s", kind: "sofa", colour: "#3a2a1e", material: "leather" }],
+  };
+  const sofa = furnishRoom(two, living, withSofa).find((p) => p.kind === "sofa");
+  check("the sofa is the colour the photograph saw", Boolean(sofa) && sofa!.boxes.some((b) => b.colour === "#3a2a1e"),
+    sofa?.boxes.map((b) => b.colour).join(", "));
+  check("and leather is less matte than the default", Boolean(sofa) && sofa!.boxes.some((b) => b.finish && b.finish.roughness < 0.7));
+
+  // A read fridge means the generic slab must not also stand there.
+  const withFridge: RoomSpec = {
+    ...EMPTY_ROOM_SPEC,
+    fixtures: [{ id: "r", kind: "fridge", material: "stainless steel", colour: null }],
+  };
+  const staged = piecesFor(two, kitchen, true, withFridge);
+  check("a read fridge replaces the generic one", !staged.some((p) => p.kind === "fridge"),
+    staged.map((p) => p.kind).join(", "));
+}
+
 console.log(
   failures === 0
-    ? `FURNITURE OK - ${totalPieces} pieces across ${furnishedRooms} rooms, all inside their room and clear of every doorway - the garage included`
+    ? `FURNITURE OK - ${totalPieces} pieces across ${furnishedRooms} rooms, all inside their room and clear of every doorway - the garage included; a read fireplace stands on an outside wall and a read sofa keeps its colour`
     : `FURNITURE BROKEN - ${failures} failures`,
 );
 process.exit(failures === 0 ? 0 : 1);

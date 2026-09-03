@@ -37,13 +37,17 @@ export function piecesFor(
    * a kitchen priced twice.
    */
   const fitted = new Set((spec?.joinery ?? []).map((item) => item.kind));
+  // And whatever the photograph showed as a fixture, the generic slab of the
+  // same thing must not also stand there.
+  const seen = new Set((spec?.fixtures ?? []).map((item) => item.kind));
   const supersededByJoinery = (kind: string) =>
     (kind === "counter" && fitted.has("cabinet-run")) ||
     (kind === "island" && fitted.has("island")) ||
     (kind === "basin" && fitted.has("vanity")) ||
-    (kind === "wardrobe" && fitted.has("wardrobe"));
+    (kind === "wardrobe" && fitted.has("wardrobe")) ||
+    (kind === "fridge" && seen.has("fridge"));
 
-  return furnishRoom(plan, room).filter(
+  return furnishRoom(plan, room, spec).filter(
     (piece) =>
       !supersededByJoinery(piece.kind) &&
       (furnished || elementForPiece(piece.kind) !== null),

@@ -7,6 +7,7 @@ import * as THREE from "three";
 import { boxGeometry, merged, slabGeometry, solid } from "@/lib/model/solids";
 import { runGeometry } from "@/lib/model/profiles";
 import { joineryFor } from "@/lib/model/joinery";
+import { fixturesFor } from "@/lib/model/fixtures";
 import { ceilingParts } from "@/lib/model/ceiling";
 
 import { type Element } from "@/lib/bom/condition";
@@ -14,7 +15,7 @@ import { elementForPiece, type Pick } from "@/lib/bom/pickable";
 import { piecesFor } from "@/lib/model/staging";
 import { BASEBOARD_DEPTH, BASEBOARD_HEIGHT, PALETTE } from "@/lib/model/materials";
 import { DEFAULT_SCHEME, type Scheme, floorToneFor, recolour } from "@/lib/model/schemes";
-import { explodeLift, explodeOffset, roomShell } from "@/lib/model/room-shell";
+import { explodeLift, explodeOffset, roomShell, wallSkins } from "@/lib/model/room-shell";
 import {
   ceilingHolesFor,
   floorHolesFor,
@@ -243,6 +244,13 @@ function LevelModel({
     const rooms = plan.rooms.filter((r) => r.level === level);
     const walls = wallsForLevel(plan, level);
     const windows = windowsForLevel(plan, level);
+    /**
+     * The house's wall colour: what `infer.ts` worked out as the colour most
+     * of the rooms were seen painted, or the scheme's. The merged partitions
+     * wear it, and a room whose walls were read as something else wears its
+     * own over them.
+     */
+    const houseWall = spec?.defaults?.wallColour ?? scheme.wall;
 
     // Exterior walls carrying a window are rebuilt as the pieces around it,
     // which is cheaper and far simpler than subtracting a solid.
@@ -420,6 +428,25 @@ function LevelModel({
             ),
           );
         }
+      } else if (
+        // Assembled, a room whose walls the photograph showed as something
+        // other than the house's paint wears them as a skin over the shared
+        // partition - see `wallSkins`. Everything else draws nothing extra:
+        // the merged mesh in the house's colour is already right for it.
+        (roomSpec?.walls?.material && roomSpec.walls.material !== "paint") ||
+        (roomSpec?.walls?.colour && roomSpec.walls.colour !== houseWall)
+      ) {
+        for (const panel of wallSkins(plan, room, windows)) {
+          addSurface(
+            room.id,
+            "walls",
+            wallTone,
+            boxGeometry(
+              [panel.center[0], baseY + panel.center[1], panel.center[2]],
+              panel.size,
+            ),
+          );
+        }
       }
 
       // The staircase itself. Structure rather than staging, so it is drawn
@@ -534,6 +561,33 @@ function LevelModel({
        * the seller's furniture has gone. Turning furniture off should empty a
        * house, not strip it.
        */
+      /**
+       * Fitted things that are not cabinetry: a fireplace, a range, a hood.
+       *
+       * The same contract as joinery and the same ungating - a fireplace is
+       * what is being bought, and it does not go when the furniture is turned
+       * off. The element it prices under comes from `elementForPiece`, which
+       * knows the appliances and leaves a fireplace to its room.
+       */
+      for (const piece of fixturesFor(room, roomSpec, plan)) {
+        const element = elementForPiece(piece.kind);
+        const frame = piece.frame;
+        const turn = frame ? (-frame.rotationDeg * Math.PI) / 180 : 0;
+        for (const boxPart of piece.boxes) {
+          const at: [number, number] = frame
+            ? fromFrame(frame, [boxPart.center[0], boxPart.center[2]])
+            : [b.x0 + boxPart.center[0], b.y0 + boxPart.center[2]];
+          addSurface(
+            room.id,
+            element ?? "walls",
+            boxPart.colour,
+            solid([at[0], baseY + boxPart.center[1], at[1]], boxPart.size, turn),
+            false,
+            boxPart.finish,
+          );
+        }
+      }
+
       for (const piece of joineryFor(room, roomSpec)) {
         const element = elementForPiece(piece.kind);
         for (const boxPart of piece.boxes) {
@@ -611,7 +665,6 @@ function LevelModel({
      * reader returned tan walls, the inference carried tan through the house,
      * and the renderer threw it away everywhere except the exploded view.
      */
-    const houseWall = spec?.defaults?.wallColour ?? scheme.wall;
     const interiorGeometry = merged(interiorParts);
     if (interiorGeometry) applyWorldUvs(interiorGeometry, TEXTURE_METRES.wall);
     const interiorSurface = canTexture() && interiorGeometry ? wallSurface(houseWall) : null;

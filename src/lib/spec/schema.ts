@@ -223,6 +223,54 @@ export const Joinery = z.object({
 });
 export type Joinery = z.infer<typeof Joinery>;
 
+/* ------------------------------------------------------------ contents */
+
+/**
+ * What is in the room, in two lists that mean two different things.
+ *
+ * The reader was told to ignore contents outright - "the building, not its
+ * contents" - and so a brick fireplace, the most fixed thing in a living room,
+ * had no field to land in, and a sofa's colour, the most visible thing in the
+ * photograph, was never asked for. The distinction the prompt was drawing is
+ * real and is kept; it just needs both halves.
+ *
+ * A **fixture** is fitted: the buyer is purchasing it, the scope of work may
+ * price it, and it is still there when the seller's van has gone. A
+ * **furnishing** is theirs: wanted only for what it looks like, so a room
+ * reads as the room in the photograph rather than a showroom in the scheme's
+ * colours.
+ */
+export const FixtureKind = z.enum([
+  "fireplace",
+  "range",
+  "hood",
+  "dishwasher",
+  "wall-oven",
+  "fridge",
+  "built-in-shelving",
+]);
+export type FixtureKind = z.infer<typeof FixtureKind>;
+
+export const Fixture = z.object({
+  id: z.string().min(1),
+  kind: FixtureKind,
+  /** Free text: "brick", "stainless steel", "cast iron". The builder maps it. */
+  material: z.string().nullish(),
+  colour: z.string().nullish(),
+});
+export type Fixture = z.infer<typeof Fixture>;
+
+export const FurnishingKind = z.enum(["sofa", "armchair", "bed", "dining-table", "desk", "rug"]);
+export type FurnishingKind = z.infer<typeof FurnishingKind>;
+
+export const Furnishing = z.object({
+  id: z.string().min(1),
+  kind: FurnishingKind,
+  colour: z.string().nullish(),
+  material: z.enum(["leather", "fabric", "wood", "metal"]).nullish(),
+});
+export type Furnishing = z.infer<typeof Furnishing>;
+
 /* ------------------------------------------------------------- the room */
 
 export const RoomSpec = z.object({
@@ -234,6 +282,10 @@ export const RoomSpec = z.object({
   openings: z.record(z.string(), OpeningSpec).default({}),
   /** Cabinetry, islands, vanities and built-in wardrobes. */
   joinery: z.array(Joinery).default([]),
+  /** Fitted things that are not cabinetry: a fireplace, a range, a hood. */
+  fixtures: z.array(Fixture).default([]),
+  /** The seller's things, kept for their colour and their presence. */
+  furnishings: z.array(Furnishing).default([]),
   /**
    * Where each field came from, keyed by dotted path - `floor.material`,
    * `ceiling.heightM`, `openings.r3.kind`.

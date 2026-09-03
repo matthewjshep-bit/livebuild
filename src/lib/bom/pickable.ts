@@ -31,6 +31,14 @@ const PIECE_ELEMENT: Record<string, Element> = {
   island: "counters",
   fridge: "appliances",
   machines: "appliances",
+  range: "appliances",
+  hood: "appliances",
+  dishwasher: "appliances",
+  // A fireplace is deliberately absent: it is fitted, but there is no rehab
+  // line that prices "a fireplace", so clicking one selects the room rather
+  // than pretending there is. It reaches the model through `fixturesFor`,
+  // which is ungated by the furniture toggle, so being unmapped here does not
+  // make it staging.
 };
 
 export function elementForPiece(kind: string): Element | null {

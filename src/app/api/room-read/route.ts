@@ -62,6 +62,44 @@ const WALL_MATERIALS = [
   "timber",
 ] as const;
 const PROFILES = ["square", "ogee", "stepped", "colonial", "chamfer"] as const;
+const FIXTURE_KINDS = new Set(["fireplace", "range", "hood", "dishwasher", "wall-oven", "fridge", "built-in-shelving"]);
+const FURNISHING_KINDS = new Set(["sofa", "armchair", "bed", "dining-table", "desk", "rug"]);
+
+/**
+ * The one list the reader returns, as the two the spec keeps.
+ *
+ * Fitted from loose by kind; anything the reader named that is on neither
+ * list is dropped rather than failing the room, which is why `kind` is a
+ * string and not an enum. A loose thing's material is folded to the four the
+ * spec knows, because "distressed brown leather" is leather.
+ */
+function sortContents(contents: Array<{ kind: string; material: string; colour: string }>) {
+  const fixtures = [];
+  const furnishings = [];
+  for (const item of contents) {
+    const kind = item.kind.trim().toLowerCase().replace(/\s+/g, "-");
+    const material = item.material.trim() || null;
+    const colour = quantiseColour(item.colour.trim() || null);
+    if (FIXTURE_KINDS.has(kind)) fixtures.push({ kind, material, colour });
+    else if (FURNISHING_KINDS.has(kind)) {
+      const m = (material ?? "").toLowerCase();
+      furnishings.push({
+        kind,
+        colour,
+        material: /leather/.test(m)
+          ? "leather"
+          : /wood|oak|timber|pine|walnut/.test(m)
+            ? "wood"
+            : /metal|steel|chrome|iron|brass/.test(m)
+              ? "metal"
+              : m
+                ? "fabric"
+                : null,
+      });
+    }
+  }
+  return { fixtures, furnishings };
+}
 const CEILINGS = ["flat", "tray", "coffered", "beamed", "vaulted", "sloped"] as const;
 const DOOR_STYLES = ["shaker", "slab", "raised-panel", "glazed", "beadboard"] as const;
 const WORKTOPS = [
@@ -169,12 +207,41 @@ const ReadSchema = z.object({
     .nullable()
     .describe("null when no fitted units are visible"),
 
+  /**
+   * What is in the room: fitted things and the seller's things, in one list.
+   *
+   * One list of three plain strings rather than two lists of nullable fields,
+   * and the shape is not a style choice. The reader's answer is a structured
+   * output whose schema is compiled to a grammar, and that grammar has a size
+   * limit: with two arrays of objects of nullable fields added, the API
+   * refused the whole schema - "the compiled grammar is too large" - and
+   * every room came back unread. Each nullable is an `anyOf`; an enum costs
+   * nothing, because the SDK writes it into the description. So: strings,
+   * empty for unknown, and the vocabulary in the description, where the
+   * route sorts fitted from loose by kind.
+   */
+  contents: z
+    .array(
+      z.object({
+        kind: z
+          .string()
+          .describe(
+            "One of - fitted: fireplace, range, hood, dishwasher, wall-oven, fridge, built-in-shelving; loose: sofa, armchair, bed, dining-table, desk, rug",
+          ),
+        material: z.string().describe("brick, stone, stainless steel, leather, fabric, wood... or empty if unclear"),
+        colour: z.string().describe("#rrggbb of its main surface, or empty"),
+      }),
+    )
+    .describe("What is in the room, fitted and loose. Empty when there is nothing to report."),
+
   notes: z.string().describe("Anything worth saying about the room, or empty"),
 });
 
 const SYSTEM = `You read what a room is made of, from photographs, so that a 3D replica of it can be built.
 
-You are describing the *building*, not its contents. Ignore furniture, rugs, curtains, art, plants and anything the seller will take with them. A rug is not a floor. Report the floor under it, or null if the rug hides it.
+Describe the *building* first - floor, walls, ceiling, trim, fitted units - and keep the seller's belongings out of those fields. A rug is not a floor: report the floor under it, or null if the rug hides it.
+
+Then list what is in the room, as **contents**, each with its kind, material and colour. Fitted things stay with the house and are wanted so the replica has them: a fireplace and its surround, a range, a hood, a dishwasher, a wall oven, a fridge, built-in shelving. Loose things are the seller's and go with them - the sofa, an armchair, the bed, the dining table, a desk, a rug - and are wanted only for their colour and material, so the replica reads as this room rather than a showroom. Report only what you can see; an empty list is a correct answer.
 
 Start with scaleRef. Name one thing in the photograph whose real size you are confident of, and state that size. An interior door leaf is 0.81m wide, a light switch plate 0.086m, a kitchen base unit 0.6m deep and 0.87m to the worktop, a standard floor tile 0.3m or 0.6m. Every dimension you give afterwards should be a multiple of that object, measured against it in the image. Do not estimate dimensions any other way.
 
@@ -308,7 +375,10 @@ export async function POST(request: Request) {
       return Response.json({ error: "rate-limited" }, { status: 429 });
     }
     if (error instanceof Anthropic.APIError) {
-      return Response.json({ error: "api", status: error.status }, { status: 502 });
+      // With the API's own sentence. A bare status is "something went wrong"
+      // and the message is what went wrong - which, when it is the output
+      // schema the API has refused, is the only way anyone finds out.
+      return Response.json({ error: "api", status: error.status, message: error.message }, { status: 502 });
     }
     return Response.json({ error: "unknown" }, { status: 500 });
   }
@@ -464,6 +534,7 @@ function reconcile(
       colour: quantiseColour(parsed.trimColour),
     },
     openings,
+    ...sortContents(parsed.contents ?? []),
     /** How big the room is, when nothing else had measured it. Null otherwise. */
     measured,
     /** Sizes that matched no stock size. Shown as "unusual, worth checking". */

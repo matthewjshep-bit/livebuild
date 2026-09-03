@@ -580,6 +580,26 @@ and wallpaper each have a generator of their own. `wall-materials-test` opens
 a house with a brick living room and a plaster kitchen and counts the
 surfaces.
 
+**And the wall you are looking at is the one that was read.** Assembled,
+the partitions are one merged solid per storey in the house's colour, which
+is right for nearly every wall in nearly every house and wrong for the one the
+photograph showed as brick. A room whose walls were read as something other
+than the house's paint wears them as a skin: a panel a finger thick, its face
+just proud of the partition's, following the same door-cut segments the
+exploded view uses, with the windows cut out so a brick wall does not cover
+its own glass. Every other room draws nothing extra.
+
+**And what is in the room is read too.** The prompt used to say "ignore
+furniture, rugs, curtains, art, plants and anything the seller will take with
+them" - which meant a brick fireplace, the most fixed thing in a living room
+and the first thing anyone sees in a photograph of one, had no field to land
+in, and a dark leather sofa came back as the scheme's pale sand one. The
+distinction the prompt was drawing is real and is kept; it just needed both
+halves. A **fixture** is fitted - a fireplace, a range, a hood, a fridge - and
+`fixtures.ts` builds it where a fixture goes: a chimney breast on an outside
+wall, appliances along the cabinet run. A **furnishing** is the seller's and is
+kept only for its colour and material, so the sofa is the sofa in the picture.
+
 **The rooms nobody photographed are reasoned about, not defaulted.** A listing
 set covers what sells a house and misses the landing, the second bathroom and
 the fourth bedroom - and those have to be built too. Defaults are per-room and a

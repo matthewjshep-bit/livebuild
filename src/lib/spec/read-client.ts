@@ -3,6 +3,8 @@
 import { getMedia, isManagedRef, refToKey } from "@/lib/media-store";
 import { clearestWall, inferHouse } from "@/lib/spec/infer";
 import {
+  type Fixture,
+  type Furnishing,
   type HouseSpec,
   type Joinery,
   type RoomSpec,
@@ -143,6 +145,8 @@ type ReadResult = {
     worktopColour: string | null;
     hardware: string | null;
   } | null;
+  fixtures?: Array<{ kind: string; material: string | null; colour: string | null }>;
+  furnishings?: Array<{ kind: string; colour: string | null; material: string | null }>;
   offStandard?: string[];
   dropped?: string[];
   notes?: string;
@@ -217,7 +221,7 @@ export async function readRooms(
 
   /** A refusal about the whole setup is said once, not once per room. */
   let houseWide: string | null = null;
-  const explain = (label: string, status: number, why: string | null) => {
+  const explain = (label: string, status: number, why: string | null, message?: string) => {
     const whole =
       why === "no-api-key"
         ? "The photographs were not read: no API key is configured on the server, so the house is built from its room list alone."
@@ -234,7 +238,7 @@ export async function readRooms(
     notes.push(
       why === "refused"
         ? `${label}: the model declined to read these photographs.`
-        : `${label}: the photographs could not be read (${why ?? status}).`,
+        : `${label}: the photographs could not be read (${why ?? status}${message ? `: ${message}` : ""}).`,
     );
   };
 
@@ -273,8 +277,9 @@ export async function readRooms(
          * found to be a white box, and there was no way to tell which had
          * happened. A default house needs a sentence beside it.
          */
-        const why = await response.json().then((j) => j?.error as string).catch(() => null);
-        explain(room.label, response.status, why);
+        const body = await response.json().catch(() => null);
+        const why = (body?.error as string | undefined) ?? null;
+        explain(room.label, response.status, why, body?.message as string | undefined);
       }
     } catch {
       // One room failing is one room the inference will fill in. The pass as a
@@ -315,6 +320,35 @@ export async function readRooms(
       const otherId = nameOf.get(opening.toRoom.trim().toLowerCase());
       if (!otherId || otherId === room.id) continue;
       put(next, `openings.${otherId}.kind`, opening.kind);
+    }
+
+    /**
+     * What is in the room, as the photograph saw it.
+     *
+     * Replaced wholesale rather than merged: a photograph is the only source of
+     * either list, so there is nothing of a lower rank to preserve, and a
+     * second read of the same room should describe the room and not accumulate
+     * two fireplaces.
+     */
+    if (result.fixtures && result.fixtures.length > 0) {
+      next.fixtures = result.fixtures.map((f, i) => ({
+        id: `${room.id}-fixture-${i}`,
+        kind: f.kind as Fixture["kind"],
+        material: f.material,
+        colour: f.colour,
+      }));
+      next.source["fixtures"] = "read";
+      delete next.because["fixtures"];
+    }
+    if (result.furnishings && result.furnishings.length > 0) {
+      next.furnishings = result.furnishings.map((f, i) => ({
+        id: `${room.id}-furnishing-${i}`,
+        kind: f.kind as Furnishing["kind"],
+        colour: f.colour,
+        material: f.material as Furnishing["material"],
+      }));
+      next.source["furnishings"] = "read";
+      delete next.because["furnishings"];
     }
 
     /**

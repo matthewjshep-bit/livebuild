@@ -1,7 +1,8 @@
-import { EXTERIOR_THICKNESS } from "@/lib/model/walls";
+import { EXTERIOR_THICKNESS, INTERIOR_THICKNESS } from "@/lib/model/walls";
 
-import { boundsOf, dist, wallSegmentsForRoom } from "@/lib/plan/geometry";
+import { boundsOf, dist, wallSegmentsForRoom, signedArea } from "@/lib/plan/geometry";
 import type { Plan, Room, Vec2 } from "@/lib/schema";
+import type { ModelWindow } from "@/lib/model/windows";
 
 /**
  * One room's own four walls, for the exploded view.
@@ -51,6 +52,84 @@ export function roomShell(plan: Plan, room: Room): ShellBox[] {
         size: (alongX ? [length, height, t] : [t, height, length]) as [number, number, number],
       };
     });
+}
+
+/**
+ * One room's walls as it sees them from inside: thin panels, on foot.
+ *
+ * Assembled, a wall is one merged solid per storey in the house's colour,
+ * which is right for nearly every wall in nearly every house and wrong for
+ * the one the photograph showed as brick. The reader returns a wall's
+ * material and its colour per room; until now both reached a mesh only when
+ * the house was pulled apart, because the room's own walls were built only
+ * then. So a room whose walls are not the house's paint wears a skin of them:
+ * a panel a finger thick, its face just proud of the partition's, following
+ * the same door-cut segments the exploded shell uses.
+ *
+ * Windows are cut out too, or a brick wall would cover its own glass from
+ * inside. A panel is split at each window into the band below the sill and
+ * the band above the head - the same three pieces `wallPiecesAround` makes
+ * for the exterior solid.
+ */
+export function wallSkins(plan: Plan, room: Room, windows: ModelWindow[]): ShellBox[] {
+  const SKIN = 0.012;
+  // Just proud of the partition's inner face. The exterior shell sits outside
+  // the polygon, so this clears it by construction.
+  const INSET = INTERIOR_THICKNESS / 2 + 0.005;
+  const height = room.ceilingHeight;
+  // Shoelace sign: positive is counter-clockwise, whose interior is to the
+  // left of each edge. The left normal of (dx, dy) is (-dy, dx).
+  const inward = Math.sign(signedArea(room.polygon)) || 1;
+  const out: ShellBox[] = [];
+
+  for (const seg of wallSegmentsForRoom(room, plan.openings)) {
+    const length = dist(seg.a, seg.b);
+    if (length < 0.05) continue;
+    const dx = (seg.b[0] - seg.a[0]) / length;
+    const dy = (seg.b[1] - seg.a[1]) / length;
+    const nx = -dy * inward;
+    const ny = dx * inward;
+    const shift = INSET + SKIN / 2;
+    const alongX = Math.abs(dx) >= Math.abs(dy);
+
+    const emit = (t0: number, t1: number, y0: number, y1: number) => {
+      if (t1 - t0 < 0.02 || y1 - y0 < 0.02) return;
+      const mid = (t0 + t1) / 2;
+      out.push({
+        center: [seg.a[0] + dx * mid + nx * shift, (y0 + y1) / 2, seg.a[1] + dy * mid + ny * shift],
+        size: alongX ? [t1 - t0, y1 - y0, SKIN] : [SKIN, y1 - y0, t1 - t0],
+      });
+    };
+
+    // Windows on this wall, as spans along it.
+    const cuts = windows
+      .filter((w) => pointToSegment(w.center, seg.a, seg.b) < 0.15)
+      .map((w) => {
+        const t = (w.center[0] - seg.a[0]) * dx + (w.center[1] - seg.a[1]) * dy;
+        return { from: t - w.width / 2, to: t + w.width / 2, sill: w.sill, head: w.head };
+      })
+      .sort((a, b) => a.from - b.from);
+
+    let cursor = 0;
+    for (const cut of cuts) {
+      const from = Math.max(cursor, cut.from);
+      const to = Math.min(length, cut.to);
+      emit(cursor, from, 0, height);
+      emit(from, to, 0, cut.sill);
+      emit(from, to, cut.head, height);
+      cursor = Math.max(cursor, to);
+    }
+    emit(cursor, length, 0, height);
+  }
+  return out;
+}
+
+function pointToSegment(p: Vec2, a: Vec2, b: Vec2): number {
+  const abx = b[0] - a[0];
+  const aby = b[1] - a[1];
+  const l2 = abx * abx + aby * aby;
+  const t = l2 === 0 ? 0 : Math.max(0, Math.min(1, ((p[0] - a[0]) * abx + (p[1] - a[1]) * aby) / l2));
+  return Math.hypot(p[0] - (a[0] + abx * t), p[1] - (a[1] + aby * t));
 }
 
 /**

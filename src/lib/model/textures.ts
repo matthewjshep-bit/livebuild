@@ -15,10 +15,14 @@ import { type RoomKind, roomKind } from "@/lib/plan/room-kind";
  * between this and a model people call convincing turns out to be mostly
  * surface grain.
  *
- * Everything is generated in code rather than shipped as images. That is the
- * same choice already made for furniture and for the same reasons: nothing to
- * license, nothing to download, and a floor that can be regenerated at any size
- * without a texture atlas. It also keeps the tour openable offline.
+ * Everything here is generated in code. That was the whole answer once, for
+ * the reasons furniture is built rather than downloaded: nothing to license,
+ * nothing to fetch, a floor that can be regenerated at any size. Scanned sets
+ * now ship with the app (`assets.ts`, `asset-surfaces.ts`) and dress the
+ * house when the tier can afford them; these are what it opens in, what the
+ * low tier keeps, and what it falls back to. Either way a tour opens
+ * offline and downloads nothing from anyone else - and no photograph of the
+ * house itself is ever on the model.
  *
  * Every generator is memoised, because a house has one oak floor no matter how
  * many rooms are laid with it.
@@ -40,6 +44,14 @@ export type Surface = {
   normalMap: THREE.Texture;
   /** AO in red, roughness in green, metalness in blue - the glTF convention. */
   ormMap: THREE.Texture;
+  /**
+   * The material colour to multiply the maps by, in linear light. A drawn
+   * surface carries its colour in the map and leaves this white; a bundled
+   * scan is tinted to the read colour with it. See `tint.ts`.
+   */
+  tint?: [number, number, number];
+  /** True for a shipped scan rather than a drawn one. */
+  bundled?: boolean;
 };
 
 /** Which channel a generator is being asked to draw. */

@@ -30,6 +30,9 @@ page.on("pageerror", (e) => errors.push(e.message));
 
 await page.goto(`${BASE}/tour/showcase`, { waitUntil: "networkidle" });
 await page.waitForFunction(() => window.__scene && window.__scene.meshes > 0, { timeout: 60_000 });
+// The software renderer the suites draw with is given the bottom tier, which
+// loads no scans; this suite is about the scans, so it asks for the middle one.
+await page.selectOption('select[aria-label="Render quality"]', "medium");
 await page.waitForTimeout(3000);
 const scene = await page.evaluate(() => window.__scene);
 check("the showcase opens at the kerb", scene.mode === "street", scene.mode);
@@ -40,6 +43,10 @@ const want = ["floor", "walls", "cabinets", "appliances", "siding", "roof", "gro
 for (const key of want) check(`the showcase draws ${key}`, (by[key] ?? 0) > 0, JSON.stringify(by));
 check("many distinct surfaces", scene.distinctMaps >= 8, `${scene.distinctMaps}`);
 check("no photograph is on the model", scene.photoTextures === 0, `${scene.photoTextures}`);
+// The bundled scans are on it, and every one asked for has landed - the
+// readout says how many are still in flight, and it is zero before this reads.
+check("the bundled scans are on the model", (scene.bundledTextures ?? 0) > 0, `${scene.bundledTextures}`);
+check("and every set asked for has landed", scene.pending === 0, `${scene.pending} pending`);
 check("nothing glows", scene.emissive === 0, `${scene.emissive}`);
 check("the house wears its own colours", (await page.evaluate(() => document.querySelector("select[aria-label='Interior scheme']")?.value)) === "This house");
 const names = await page.evaluate(() => [...document.querySelectorAll("[data-street-name]")].map((el) => el.textContent?.trim()));
@@ -67,6 +74,8 @@ check("Exit returns to the kerb", (await page.evaluate(() => window.__scene?.mod
 // And on foot, in the kitchen: the read cabinets under a read wall.
 await page.goto(`${BASE}/tour/showcase?room=kitchen`, { waitUntil: "networkidle" });
 await page.waitForFunction(() => window.__scene && window.__scene.mode === "walk", { timeout: 45_000 }).catch(() => {});
+await page.selectOption('select[aria-label="Render quality"]', "medium").catch(() => {});
+await page.waitForFunction(() => window.__scene && window.__scene.pending === 0, { timeout: 60_000 }).catch(() => {});
 await page.waitForTimeout(3000);
 const walk = await page.evaluate(() => window.__scene);
 check("on foot the kitchen has its cabinets", (walk.bySurface?.cabinets ?? 0) > 0, JSON.stringify(walk.bySurface));

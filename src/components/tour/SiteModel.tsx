@@ -23,6 +23,9 @@ import {
   roofSurface,
   sidingSurface,
 } from "@/lib/model/textures";
+import { assetForRoof, assetForSiding } from "@/lib/model/assets";
+import { assetSurface, useAssetsVersion } from "@/lib/model/asset-surfaces";
+import { surfaceProps } from "@/lib/model/surface-props";
 import { centroid, pointInPolygon } from "@/lib/plan/geometry";
 import { type Lot, deriveLot, houseBounds } from "@/lib/site/lot";
 import { type PlanSite, closestPointOnWays, roadWidth } from "@/lib/site/plan-site";
@@ -55,19 +58,7 @@ type Textured = { geometry: THREE.BufferGeometry; surface: Surface | null; colou
 
 /** A material for a surface, or a flat colour when textures cannot be made. */
 function Material({ surface, colour, roughness = 0.95, env = 0.3 }: { surface: Surface | null; colour: string; roughness?: number; env?: number }) {
-  return (
-    <meshStandardMaterial
-      color={surface ? "#ffffff" : colour}
-      map={surface?.map}
-      normalMap={surface?.normalMap}
-      aoMap={surface?.ormMap}
-      roughnessMap={surface?.ormMap}
-      metalnessMap={surface?.ormMap}
-      roughness={surface ? 1 : roughness}
-      metalness={surface ? 1 : 0}
-      envMapIntensity={env}
-    />
-  );
+  return <meshStandardMaterial {...surfaceProps(surface, { colour, roughness }, env)} />;
 }
 
 /** A box along a segment on the ground. */
@@ -98,6 +89,7 @@ export function SiteModel({
   showNeighbours: boolean;
   labels: boolean;
 }) {
+  const assetsVersion = useAssetsVersion();
   const built = useMemo(() => {
     if (!planSite) return null;
     const house = houseBounds(plan);
@@ -179,10 +171,16 @@ export function SiteModel({
       doorColour: look.doorColour,
     });
 
-    const concrete = textures ? floorSurface("concrete", CONCRETE) : null;
-    const siding = textures ? sidingSurface(sidingFinish(look.wallMaterial), scheme.wallExterior) : null;
+    // Scans when they have landed, the drawn surfaces until then.
+    const concrete = textures ? assetSurface("ground-concrete", TEXTURE_METRES.floor, CONCRETE) ?? floorSurface("concrete", CONCRETE) : null;
+    const gravel = textures ? assetSurface("ground-gravel", TEXTURE_METRES.floor, GRAVEL) ?? floorSurface("concrete", GRAVEL) : null;
+    const asphalt = textures ? assetSurface("ground-asphalt", TEXTURE_METRES.floor, null) ?? asphaltSurface() : null;
+    const sidingKind = sidingFinish(look.wallMaterial);
+    const siding = textures
+      ? assetSurface(assetForSiding(sidingKind), TEXTURE_METRES.wall, look.wallColour ?? scheme.wallExterior) ?? sidingSurface(sidingKind, scheme.wallExterior)
+      : null;
     const roofColour = toHex(look.roofColour) ?? "#4b4b4d";
-    const roof = textures ? roofSurface(roofColour) : null;
+    const roof = textures ? assetSurface(assetForRoof(look.roofMaterial), 2, roofColour) ?? roofSurface(roofColour) : null;
 
     const hard: Textured[] = [];
     if (garden.driveway) {
@@ -192,7 +190,7 @@ export function SiteModel({
         const material = garden.driveway.material;
         hard.push({
           geometry: g,
-          surface: material === "asphalt" ? (textures ? asphaltSurface() : null) : material === "gravel" ? (textures ? floorSurface("concrete", GRAVEL) : null) : concrete,
+          surface: material === "asphalt" ? asphalt : material === "gravel" ? gravel : concrete,
           colour: material === "asphalt" ? "#4a4b4d" : material === "gravel" ? GRAVEL : CONCRETE,
           element: "driveway",
         });
@@ -275,7 +273,9 @@ export function SiteModel({
     const outbuildingEnds = merged(outEnds);
     if (outbuildingEnds) applyWorldUvs(outbuildingEnds, TEXTURE_METRES.wall);
 
-    const surfaces = textures ? { grass: floorSurface("grass", LAWN), asphalt: asphaltSurface() } : null;
+    // The lawn stays drawn: Poly Haven scans meadows and verges, not mown
+    // lawns, and tinted to a lawn green they came out orange.
+    const surfaces = textures ? { grass: floorSurface("grass", LAWN), asphalt } : null;
     return {
       lot,
       lawn,
@@ -299,7 +299,9 @@ export function SiteModel({
       roof,
       roofColour,
     };
-  }, [plan, site, planSite, exterior, spec, scheme]);
+    // `assetsVersion` is not read: it changes when a scan lands.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [plan, site, planSite, exterior, spec, scheme, assetsVersion]);
 
   if (!built) return null;
   const { surfaces } = built;

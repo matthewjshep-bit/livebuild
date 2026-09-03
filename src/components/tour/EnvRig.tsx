@@ -1,10 +1,14 @@
 "use client";
 
 import { useFrame, useThree } from "@react-three/fiber";
-import { useEffect, useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import * as THREE from "three";
 import { Sky } from "three-stdlib";
 
+import { RGBELoader } from "three/examples/jsm/loaders/RGBELoader.js";
+
+import { SKY_PATH } from "@/lib/model/assets";
+import { assetsEnabled, useAssetsVersion } from "@/lib/model/asset-surfaces";
 import { type SunState } from "@/lib/model/sun";
 import { skyUniformsFor } from "@/lib/render/sky";
 
@@ -162,8 +166,45 @@ export function EnvRig({
   // convolution on every one of the sixty frames it takes to cross the bar.
   const step = sun ? Math.round(sun.altitudeDeg) + Math.round(sun.azimuthDeg) * 1000 : -1;
 
+  /**
+   * A house with no site has no sun to draw a sky from, and was lit by a
+   * neutral studio gradient. The bundled HDR is a real overcast sky, as an
+   * environment only - the background stays the page - and it arrives when
+   * it arrives: the gradient lights the house until then, and for good on a
+   * tier that loads no scans.
+   */
+  const [studio, setStudio] = useState<THREE.Texture | null>(null);
+  const assetsVersion = useAssetsVersion();
+  useEffect(() => {
+    if (sun || studio || !assetsEnabled() || typeof document === "undefined") return;
+    let live = true;
+    new RGBELoader().load(
+      SKY_PATH,
+      (texture) => {
+        if (!live) return;
+        texture.mapping = THREE.EquirectangularReflectionMapping;
+        const pmrem = new THREE.PMREMGenerator(gl);
+        const target = pmrem.fromEquirectangular(texture);
+        texture.dispose();
+        pmrem.dispose();
+        target.texture.userData.bundled = true;
+        setStudio(target.texture);
+      },
+      undefined,
+      () => {
+        // Left on the gradient. Nothing to do and nothing to say.
+      },
+    );
+    return () => {
+      live = false;
+    };
+    // `assetsVersion` stands in for "the tier turned the scans on".
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sun !== null, studio, gl, assetsVersion]);
+
   const environment = useMemo(() => {
     if (typeof document === "undefined") return null;
+    if (!sun && studio) return studio;
     const texture = new THREE.CanvasTexture(paint(sun));
     texture.mapping = THREE.EquirectangularReflectionMapping;
     texture.colorSpace = THREE.SRGBColorSpace;
@@ -176,16 +217,17 @@ export function EnvRig({
     // `step` stands in for the sun: the object identity changes every frame
     // while the sky only changes when the angle does.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [gl, step]);
+  }, [gl, step, studio]);
 
   useEffect(() => {
     if (!environment) return;
     scene.environment = environment;
     return () => {
       scene.environment = null;
-      environment.dispose();
+      // The studio is kept: it is loaded once and outlives any one house.
+      if (environment !== studio) environment.dispose();
     };
-  }, [scene, environment]);
+  }, [scene, environment, studio]);
 
   useEffect(() => {
     scene.environmentIntensity = intensity;

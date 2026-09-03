@@ -29,6 +29,8 @@ export type Box = {
    * laminate: the two can be the same grey and are nothing alike.
    */
   finish?: { roughness: number; metalness: number };
+  /** What it is made of, when the kind of piece does not say. See `box-material.ts`. */
+  material?: import("@/lib/model/assets").BoxMaterial;
 };
 
 export type Piece = {

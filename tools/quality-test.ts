@@ -35,7 +35,7 @@ Object.defineProperty(globalThis, "navigator", {
   configurable: true,
 });
 check("many cores on a real GPU is the top tier", detectQuality("Apple M2 Pro") === "high", detectQuality("Apple M2 Pro"));
-check("many cores on a software renderer is not", detectQuality("SwiftShader") === "medium", detectQuality("SwiftShader"));
+check("many cores on a software renderer is the bottom tier", detectQuality("SwiftShader") === "low", detectQuality("SwiftShader"));
 Object.defineProperty(globalThis, "navigator", { value: { hardwareConcurrency: 4, deviceMemory: 8 }, configurable: true });
 check("few cores is the middle tier whatever draws", detectQuality("Apple M2 Pro") === "medium");
 

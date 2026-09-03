@@ -10,6 +10,10 @@ import { joineryFor } from "@/lib/model/joinery";
 import { exteriorLook } from "@/lib/model/exterior-look";
 import { fixturesFor } from "@/lib/model/fixtures";
 import { roofFor, roofGeometry, thickenFaces } from "@/lib/model/roof";
+import { assetForBox, assetForFloor, assetForRoof, assetForSiding, assetForWall, type BoxMaterial } from "@/lib/model/assets";
+import { assetSurface, useAssetsVersion } from "@/lib/model/asset-surfaces";
+import { materialForBox } from "@/lib/model/box-material";
+import { surfaceProps } from "@/lib/model/surface-props";
 import { sidingFinish } from "@/lib/model/siding";
 import { ceilingParts } from "@/lib/model/ceiling";
 
@@ -219,16 +223,7 @@ function ExteriorShell({
                   ref={(m) => {
                     skinMaterials.current[i] = m;
                   }}
-                  color="#ffffff"
-                  map={siding.map}
-                  normalMap={siding.normalMap}
-                  aoMap={siding.ormMap}
-                  roughnessMap={siding.ormMap}
-                  metalnessMap={siding.ormMap}
-                  aoMapIntensity={0.9}
-                  roughness={1}
-                  metalness={1}
-                  envMapIntensity={0.35}
+                  {...surfaceProps(siding, { colour, roughness: 0.95 }, 0.35)}
                   // Fading is a dollhouse need. On foot the cladding is solid
                   // and writes depth, which is not only cheaper than a
                   // transparent skin - without a GPU, four large transparent
@@ -265,6 +260,7 @@ function Roof({
   solid = false,
   roofShape = null,
   roofColour = null,
+  roofMaterial = null,
 }: {
   plan: Plan;
   exterior: Exterior | null;
@@ -276,7 +272,9 @@ function Roof({
   /** The photographs' say, when they had one: fills a shape the map lacked, and wins on colour. */
   roofShape?: string | null;
   roofColour?: string | null;
+  roofMaterial?: string | null;
 }) {
+  const assetsVersion = useAssetsVersion();
   const built = useMemo(() => {
     const model = roofFor(
       plan,
@@ -293,9 +291,13 @@ function Roof({
     if (ends) applyWorldUvs(ends, TEXTURE_METRES.wall);
     const deck = roofGeometry(faces, "flat");
     const colour = toHex(roofColour ?? exterior?.roof?.colour) ?? "#4b4b4d";
-    const surface = canTexture() && slopes ? roofSurface(colour) : null;
+    const surface =
+      canTexture() && slopes
+        ? assetSurface(assetForRoof(roofMaterial ?? exterior?.roof?.material), 2, colour) ?? roofSurface(colour)
+        : null;
     return { model, slopes, ends, deck, colour, surface };
-  }, [plan, exterior, site, roofShape, roofColour]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [plan, exterior, site, roofShape, roofColour, roofMaterial, assetsVersion]);
 
   const materials = useRef<Array<THREE.MeshStandardMaterial | null>>([]);
   useFrame(({ camera }) => {
@@ -307,19 +309,7 @@ function Roof({
   });
 
   if (!built) return null;
-  const textured = (surface: Surface | null, flat: string) =>
-    surface
-      ? {
-          color: "#ffffff",
-          map: surface.map,
-          normalMap: surface.normalMap,
-          aoMap: surface.ormMap,
-          roughnessMap: surface.ormMap,
-          metalnessMap: surface.ormMap,
-          roughness: 1,
-          metalness: 1,
-        }
-      : { color: flat, roughness: 0.95, metalness: 0 };
+  const textured = (surface: Surface | null, flat: string) => surfaceProps(surface, { colour: flat, roughness: 0.95 }, 0.35);
 
   return (
     <group>
@@ -417,6 +407,7 @@ function LevelModel({
   onEnterRoom?: (roomId: string) => void;
   focusRoomId?: string | null;
 }) {
+  const assetsVersion = useAssetsVersion();
   const baseY = levelBase(plan, level);
 
   /**
@@ -501,6 +492,8 @@ function LevelModel({
         staging: boolean;
         /** A box's own finish, when its material is not the element's default. */
         finish?: { roughness: number; metalness: number };
+        /** What a box is made of, which picks the scan it wears. */
+        material?: BoxMaterial | null;
         parts: THREE.BufferGeometry[];
       }
     >();
@@ -525,12 +518,14 @@ function LevelModel({
       geometry: THREE.BufferGeometry,
       staging = false,
       finish?: { roughness: number; metalness: number },
+      material: BoxMaterial | null = null,
     ) => {
       // The finish is part of the key: a stainless worktop and a laminate one
       // in the same grey are different materials, and merging them would give
-      // one of them the other's sheen.
-      const key = `${roomId}|${element}|${colour}|${staging ? "s" : "a"}|${finish ? `${finish.roughness}/${finish.metalness}` : ""}`;
-      const entry = surfaces.get(key) ?? { roomId, element, colour, staging, finish, parts: [] };
+      // one of them the other's sheen. So is the material, for the same
+      // reason: a walnut table and a linen sofa in one brown are two scans.
+      const key = `${roomId}|${element}|${colour}|${staging ? "s" : "a"}|${finish ? `${finish.roughness}/${finish.metalness}` : ""}|${material ?? ""}`;
+      const entry = surfaces.get(key) ?? { roomId, element, colour, staging, finish, material, parts: [] };
       entry.parts.push(geometry);
       surfaces.set(key, entry);
     };
@@ -669,6 +664,8 @@ function LevelModel({
               box.size,
             ),
             true,
+            undefined,
+            materialForBox(piece.kind, box),
           );
         }
       }
@@ -791,6 +788,7 @@ function LevelModel({
             solid([at[0], baseY + boxPart.center[1], at[1]], boxPart.size, turn),
             false,
             boxPart.finish,
+            materialForBox(piece.kind, boxPart),
           );
         }
       }
@@ -808,6 +806,7 @@ function LevelModel({
             ),
             false,
             boxPart.finish,
+            materialForBox(piece.kind, boxPart),
           );
         }
       }
@@ -838,6 +837,8 @@ function LevelModel({
               recolour(box.colour, scheme),
               solid([at[0], baseY + box.center[1], at[1]], box.size, turn),
               true,
+              undefined,
+              materialForBox(piece.kind, box),
             );
           }
         }
@@ -874,7 +875,10 @@ function LevelModel({
      */
     const interiorGeometry = merged(interiorParts);
     if (interiorGeometry) applyWorldUvs(interiorGeometry, TEXTURE_METRES.wall);
-    const interiorSurface = canTexture() && interiorGeometry ? wallSurface(houseWall) : null;
+    const interiorSurface =
+      canTexture() && interiorGeometry
+        ? assetSurface("wall-paint", TEXTURE_METRES.wall, houseWall) ?? wallSurface(houseWall)
+        : null;
 
     return {
       rooms,
@@ -894,30 +898,39 @@ function LevelModel({
             );
           }
           const room = rooms.find((r) => r.id === entry.roomId);
-          return {
-            ...entry,
-            geometry,
-            surface: canTexture() && !entry.staging
-              ? entry.element === "floor"
-                ? floorSurface(
-                    // The material the spec named, or the one a room of this
-                    // kind usually has. `floorFinish` reads the label, which is
-                    // the guess the house made before anyone looked at it.
-                    (spec?.rooms[entry.roomId]?.floor?.material as
-                      | ReturnType<typeof floorFinish>
-                      | undefined) ?? floorFinish(room?.label ?? ""),
-                    entry.colour,
-                  )
-                : entry.element === "walls"
-                  ? wallMaterialSurface(
-                      spec?.rooms[entry.roomId]?.walls?.material as WallFinish | null | undefined,
-                      entry.colour,
-                    )
-                  : entry.element === "ceiling"
-                    ? wallSurface(entry.colour)
-                    : null
-              : null,
+          const uv = entry.element === "floor" ? TEXTURE_METRES.floor : TEXTURE_METRES.wall;
+          /**
+           * What the surface wears: a bundled scan when one has landed and
+           * the tier allows it, the drawn surface otherwise. A box that says
+           * what it is made of gets that scan, tinted to its own colour;
+           * steel and glass have no scan and stay a finish.
+           */
+          const surface = (): Surface | null => {
+            if (!canTexture()) return null;
+            if (entry.material) {
+              const key = assetForBox(entry.material);
+              return key ? assetSurface(key, uv, entry.colour) : null;
+            }
+            if (entry.staging) return null;
+            if (entry.element === "floor") {
+              // The material the spec named, or the one a room of this
+              // kind usually has. `floorFinish` reads the label, which is
+              // the guess the house made before anyone looked at it.
+              const named = spec?.rooms[entry.roomId]?.floor?.material;
+              const finish = (named as ReturnType<typeof floorFinish> | undefined) ?? floorFinish(room?.label ?? "");
+              const key = assetForFloor(named ?? finish);
+              return (key ? assetSurface(key, uv, entry.colour) : null) ?? floorSurface(finish, entry.colour);
+            }
+            if (entry.element === "walls") {
+              const material = spec?.rooms[entry.roomId]?.walls?.material as WallFinish | null | undefined;
+              return assetSurface(assetForWall(material), uv, entry.colour) ?? wallMaterialSurface(material, entry.colour);
+            }
+            if (entry.element === "ceiling") {
+              return assetSurface("wall-paint", uv, entry.colour) ?? wallSurface(entry.colour);
+            }
+            return null;
           };
+          return { ...entry, geometry, surface: surface() };
         })
         .filter((entry) => entry.geometry) as Array<{
           roomId: string;
@@ -925,13 +938,17 @@ function LevelModel({
           colour: string;
           staging: boolean;
           finish?: { roughness: number; metalness: number };
+          material?: BoxMaterial | null;
           geometry: THREE.BufferGeometry;
           surface: Surface | null;
         }>,
       frames: merged(frameParts),
       glass: merged(glassParts),
     };
-  }, [plan, spec, level, baseY, furnished, walking, facadesSolid, scheme, exploded]);
+    // `assetsVersion` is not read: it changes when a scan lands, which is
+    // when the gate above would answer differently.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [plan, spec, level, baseY, furnished, walking, facadesSolid, scheme, exploded, assetsVersion]);
 
   // Every surface of one room moves together, so a room comes apart from the
   // house as one part rather than as a floor and some furniture that happen to
@@ -982,7 +999,7 @@ function LevelModel({
             // "Warm minimal" `floors.carpet` and `furniture.soft` are both
             // #c3b6a3, and a bed's pillow is filed under its room's floor - so
             // a carpeted bedroom produced two children with the same key.
-            key={`${surface.roomId}-${surface.element}-${surface.colour}-${surface.staging ? "s" : "a"}`}
+            key={`${surface.roomId}-${surface.element}-${surface.colour}-${surface.staging ? "s" : "a"}-${surface.material ?? ""}`}
             position={offsetFor(surface.roomId)}
             geometry={surface.geometry}
             castShadow
@@ -1030,51 +1047,31 @@ function LevelModel({
             }}
           >
             <meshStandardMaterial
-              // The texture already carries the colour, so tinting it again
-              // would darken every surface by its own shade.
-              color={surface.surface ? "#ffffff" : surface.colour}
-              map={surface.surface?.map}
-              normalMap={surface.surface?.normalMap}
-              // One texture, three channels, three maps. three.js reads red for
-              // occlusion, green for roughness and blue for metalness, so the
-              // same image serves all three and only uploads once.
-              aoMap={surface.surface?.ormMap}
-              roughnessMap={surface.surface?.ormMap}
-              metalnessMap={surface.surface?.ormMap}
-              aoMapIntensity={0.9}
-              // The map supplies the variation; these are the ceiling it varies
-              // under. Without a map they are the whole answer, which is the
-              // server-rendered and no-canvas case.
-              roughness={
-                surface.surface
-                  ? 1
-                  : surface.finish
+              {...surfaceProps(
+                surface.surface,
+                {
+                  colour: surface.colour,
+                  // Without a map these are the whole answer, which is the
+                  // server-rendered and no-canvas case.
+                  roughness: surface.finish
                     ? surface.finish.roughness
                     : surface.staging
-                    // Upholstery and painted timber, which is most of what is
-                    // standing in a room: soft, and nearly matte.
-                    ? 0.72
-                    : surface.element === "floor"
-                      ? 0.78
-                      : 0.9
-              }
-              metalness={surface.surface ? 1 : (surface.finish?.metalness ?? 0)}
-              // A painted wall is not a mirror. Left at 1 the environment
-              // washes every pale surface out to white.
-              envMapIntensity={
-                surface.staging
-                  ? 0.45
-                  : surface.element === "floor"
-                    ? 0.6
-                    : // A ceiling is the one surface no light source reaches.
-                      // The sun is above it, the lamps hang below it, and a
-                      // window throws light at the floor. Everything it is lit
-                      // by is bounce, so the environment is not a subtlety
-                      // there - it is nearly the whole answer.
-                      surface.element === "ceiling"
-                      ? 0.85
-                      : 0.35
-              }
+                      ? // Upholstery and painted timber, which is most of what is
+                        // standing in a room: soft, and nearly matte.
+                        0.72
+                      : surface.element === "floor"
+                        ? 0.78
+                        : 0.9,
+                  metalness: surface.finish?.metalness ?? 0,
+                },
+                // A painted wall is not a mirror. Left at 1 the environment
+                // washes every pale surface out to white. A ceiling is the
+                // one surface no light source reaches - the sun is above it,
+                // the lamps hang below it, a window throws light at the floor
+                // - so everything it is lit by is bounce, and the environment
+                // is nearly the whole answer there.
+                surface.staging ? 0.45 : surface.element === "floor" ? 0.6 : surface.element === "ceiling" ? 0.85 : 0.35,
+              )}
               transparent={ghosted}
               opacity={opacityFor(surface.roomId)}
               // Lifting what is selected rather than tinting it: a colour shift
@@ -1095,16 +1092,7 @@ function LevelModel({
             // Textured plaster in the house's own colour, the same way every
             // room-owned surface is. This was flat `scheme.wall`, untextured,
             // whatever the photographs had said.
-            color={built.interiorSurface ? "#ffffff" : built.houseWall}
-            map={built.interiorSurface?.map}
-            normalMap={built.interiorSurface?.normalMap}
-            aoMap={built.interiorSurface?.ormMap}
-            roughnessMap={built.interiorSurface?.ormMap}
-            metalnessMap={built.interiorSurface?.ormMap}
-            aoMapIntensity={0.9}
-            roughness={built.interiorSurface ? 1 : 0.95}
-            metalness={built.interiorSurface ? 1 : 0}
-            envMapIntensity={0.35}
+            {...surfaceProps(built.interiorSurface, { colour: built.houseWall, roughness: 0.95 }, 0.35)}
             transparent={ghosted}
             opacity={dimmed}
           />
@@ -1282,9 +1270,19 @@ export function Model({
   // What the outside looks like: the photographs first, then the map, then
   // the scheme.
   const look = useMemo(() => exteriorLook(spec, exterior), [spec, exterior]);
+  const assetsVersion = useAssetsVersion();
   const siding = useMemo(
-    () => (canTexture() ? sidingSurface(sidingFinish(look.wallMaterial), scheme.wallExterior) : null),
-    [look.wallMaterial, scheme.wallExterior],
+    () => {
+      if (!canTexture()) return null;
+      const finish = sidingFinish(look.wallMaterial);
+      return (
+        assetSurface(assetForSiding(finish), TEXTURE_METRES.wall, look.wallColour ?? scheme.wallExterior) ??
+        sidingSurface(finish, scheme.wallExterior)
+      );
+    },
+    // `assetsVersion` is not read: it changes when a scan lands.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [look.wallMaterial, look.wallColour, scheme.wallExterior, assetsVersion],
   );
 
   if (opacity <= 0.001) return null;
@@ -1327,6 +1325,7 @@ export function Model({
           solid={street}
           roofShape={look.roofShape}
           roofColour={look.roofColour}
+          roofMaterial={look.roofMaterial}
         />
       )}
 

@@ -311,7 +311,7 @@ export function CameraRig({
   // place looking the same way, it simply does not travel there.
   const reducedMotion = usePrefersReducedMotion();
 
-  useFrame(() => {
+  useFrame((_, delta) => {
     // Walking hands the camera to WalkControls entirely, and a scripted tour
     // takes it the same way. Two things writing camera.position on the same
     // frame is a fight the user sees as jitter.
@@ -354,7 +354,12 @@ export function CameraRig({
       camera.position.lerpVectors(from.current.position, scratch.position, t);
       camera.quaternion.slerpQuaternions(from.current.quaternion, scratch.quaternion, t);
     } else {
-      camera.position.lerp(scratch.position, 0.18);
+      // Time-based, not frame-based. A fixed fraction per frame settles in
+      // a third of a second at sixty frames a second and in ten at three,
+      // which is what a software renderer manages - and the browser suites
+      // found the camera still metres from its orbit seconds after a click.
+      // This is the same 0.18 at sixty frames, and one frame at three.
+      camera.position.lerp(scratch.position, 1 - Math.exp(-11 * delta));
       camera.quaternion.copy(scratch.quaternion);
     }
     camera.updateMatrixWorld();

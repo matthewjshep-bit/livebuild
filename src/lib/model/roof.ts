@@ -35,8 +35,8 @@ export type SiteRead = { planXBearing?: number | null } | null | undefined;
 export type RoofFace = {
   /** Corners, wound counter-clockwise seen from outside. Three to five, convex. */
   points: Array<[number, number, number]>;
-  /** What it is, which decides what it is made of. */
-  kind: "slope" | "gable" | "flat";
+  /** What it is, which decides what it is made of. Trim is what `roof-trim.ts` adds round the edges. */
+  kind: "slope" | "gable" | "flat" | "trim";
 };
 
 export type RoofModel = {

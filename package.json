@@ -10,7 +10,8 @@
     "typecheck": "tsc --noEmit",
     "test": "node tools/run-tests.mjs",
     "test:browser": "node tools/run-tests.mjs --browser",
-    "test:all": "node tools/run-tests.mjs --all"
+    "test:all": "node tools/run-tests.mjs --all",
+    "assets:fetch": "tsx tools/fetch-assets.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.120.0",

@@ -28,7 +28,9 @@ import { captureFromPose, type CapturePose } from "@/lib/render/capture";
 import { inferHouse } from "@/lib/spec/infer";
 import { HouseSpec } from "@/lib/spec/schema";
 import { Post } from "@/components/tour/Post";
-import { MAX_DPR, QUALITY_LABEL, type Quality, detectQuality, rendererName } from "@/lib/render/quality";
+import { MAX_DPR, QUALITY_LABEL, TIERS, type Quality, detectQuality, rendererName } from "@/lib/render/quality";
+import { isBundledUrl } from "@/lib/model/assets";
+import { enableAssets, pendingAssets } from "@/lib/model/asset-surfaces";
 import { buildBom } from "@/lib/bom/build";
 import type { Element, Grade } from "@/lib/bom/condition";
 import type { Pick } from "@/lib/bom/pickable";
@@ -78,6 +80,7 @@ function SceneReadout({ mode, furnished }: { mode: ViewState["mode"]; furnished:
     let markers = 0;
     let stairMarkers = 0;
     let photoTextures = 0;
+    let bundledTextures = 0;
     let triangles = 0;
     const markerAt: Array<[number, number]> = [];
     const bySurface: Record<string, number> = {};
@@ -135,10 +138,30 @@ function SceneReadout({ mode, furnished }: { mode: ViewState["mode"]; furnished:
 
       const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
       for (const material of materials) {
-        const map = (material as THREE.MeshStandardMaterial)?.map;
-        if (map?.image) maps.add(map.image);
-        const source = map?.image as { src?: string } | undefined;
-        if (typeof source?.src === "string" && source.src.length > 0) photoTextures++;
+        const standard = material as THREE.MeshStandardMaterial;
+        if (standard?.map?.image) maps.add(standard.map.image);
+        /**
+         * The rule: no photograph of this house on the model.
+         *
+         * Every map slot is looked at, not only the colour map. A texture
+         * is bundled when it says so or when its image came from this
+         * origin under `/textures/` or `/sky/` - the sets the app ships.
+         * Anything else with an image that is not a canvas the app drew is
+         * a photograph, and counted: an `<img>` from anywhere else, a
+         * bitmap, a compressed texture. The drawn surfaces are canvases and
+         * count as nothing, as they always did.
+         */
+        for (const slot of ["map", "normalMap", "aoMap", "roughnessMap", "metalnessMap", "emissiveMap", "bumpMap"] as const) {
+          const texture = standard?.[slot] as THREE.Texture | null | undefined;
+          if (!texture?.image) continue;
+          // The drawn surfaces' normal and ORM maps are data textures the
+          // app computed from its own canvases: bytes, not a picture.
+          if ((texture as THREE.DataTexture).isDataTexture) continue;
+          const image = texture.image as { src?: string };
+          const fromHere = typeof image.src === "string" && isBundledUrl(image.src, window.location.origin);
+          if (texture.userData?.bundled || fromHere) bundledTextures++;
+          else if (!(texture.image instanceof HTMLCanvasElement)) photoTextures++;
+        }
       }
     });
 
@@ -156,6 +179,10 @@ function SceneReadout({ mode, furnished }: { mode: ViewState["mode"]; furnished:
       bySurface,
       emissive,
       photoTextures,
+      bundledTextures,
+      // Scans asked for and not yet landed. A screenshot taken at zero is
+      // the house dressed; one taken before is the house arriving.
+      pending: pendingAssets(),
       distinctMaps: maps.size,
       triangles: Math.round(triangles),
       geometries: gl.info.memory.geometries,
@@ -273,6 +300,13 @@ function Scene({
     };
   }, [property.plan, property.site, property.exterior, planSite]);
   const walkState = useRef<WalkState>({ x: 0, y: 0, level: 0, yaw: 0 });
+
+  // The scans load only on a tier that can afford them, and this is where
+  // the tier is known and the renderer can say how much anisotropy it has.
+  const gl = useThree((s) => s.gl);
+  useEffect(() => {
+    enableAssets(TIERS[quality].assets, gl.capabilities.getMaxAnisotropy());
+  }, [quality, gl]);
 
   return (
     <>
@@ -1209,8 +1243,19 @@ export function TourViewer({
         <Canvas
           // Clicking the sky is the other half of clicking a room, and R3F
           // hands it over for free: this fires only when a click hit nothing.
-          onPointerMissed={() => {
-            if (view.mode !== "walk") setFocusRoomId(null);
+          onPointerMissed={(event) => {
+            if (view.mode === "walk") return;
+            // The second click of a double-click. The first one focused a
+            // room and sent the camera flying, and on a slow renderer a whole
+            // frame passes before the second lands - so the pixel that held
+            // the room a moment ago holds sky or a wall now, and the click
+            // that meant "walk in" was arriving as "let go". The room the
+            // first click chose is the room meant.
+            if (event.detail >= 2 && focusRoomId) {
+              enterRoom(focusRoomId);
+              return;
+            }
+            setFocusRoomId(null);
           }}
           camera={{ fov: 60, near: 0.05, far: 200 }}
           dpr={[1, MAX_DPR[quality]]}

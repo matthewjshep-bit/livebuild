@@ -52,6 +52,20 @@ const railTotal = () => page.locator("[data-rail-total]").innerText();
 const railRoom = () => page.locator("[data-rail-total]").getAttribute("data-room");
 const camera = () => page.evaluate(() => window.__camera ?? null);
 const walker = () => page.evaluate(() => window.__walk ?? null);
+// The orbit eases into place over several seconds after a load and after
+// letting go of a room. A pixel found while it is still moving is a pixel
+// on the edge of something, and is not there any more when it is clicked
+// again - so wait until two samples a quarter-second apart agree.
+const settled = async () => {
+  let last = null;
+  for (let i = 0; i < 40; i++) {
+    await page.waitForTimeout(250);
+    const c = await camera();
+    const p = c?.position ?? null;
+    if (p && last && Math.hypot(p[0] - last[0], p[1] - last[1], p[2] - last[2]) < 0.002) return;
+    last = p;
+  }
+};
 const dollhouse = async () => {
   const b = page.getByRole("button", { name: "Dollhouse" });
   if (await b.isEnabled().catch(() => false)) {
@@ -178,7 +192,11 @@ check("a point on the focused house could be found to double click", Boolean(tar
 if (!target) target = { x: focused.x, y: focused.y };
 await page.waitForTimeout(1200);
 await page.mouse.dblclick(target.x, target.y);
-await page.waitForTimeout(2600);
+// Until the walker reports, rather than a fixed wait: its readout arrives with
+// the first frame drawn on foot, which a software renderer can take seconds
+// to compile the materials for.
+await page.waitForFunction(() => window.__walk && window.__walk.level !== undefined, { timeout: 15_000 }).catch(() => {});
+await page.waitForTimeout(400);
 
 const walk = await walker();
 check("double click puts you on foot", Boolean(walk), "no walker state");
@@ -214,6 +232,7 @@ await page.evaluate(async () => {
 await page.goto(`${BASE}/tour/two-storey`, { waitUntil: "networkidle" });
 await page.waitForSelector("canvas", { timeout: 25_000 });
 await page.waitForTimeout(4500);
+await settled();
 
 const upper = page.getByRole("button", { name: "Upper" });
 if (await upper.count()) {
@@ -243,8 +262,10 @@ if (up) {
   // with no pause for the camera to move between them.
   await page.keyboard.press("Escape");
   await page.waitForTimeout(1400);
+  await settled();
   await page.mouse.dblclick(up.x, up.y);
-  await page.waitForTimeout(2600);
+  await page.waitForFunction(() => window.__walk && window.__walk.level !== undefined, { timeout: 15_000 }).catch(() => {});
+  await page.waitForTimeout(400);
 
   const upstairsWalk = await walker();
   check("double clicking upstairs lands upstairs", upstairsWalk?.level === 1, `level ${upstairsWalk?.level}`);

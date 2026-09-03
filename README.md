@@ -635,7 +635,11 @@ doors); the rings on the floor are the other rooms, and the mini-map and
 the scope rail take you to a room by name; W A S D still walk and Q and E
 turn; a pad on screen does the same for a finger. A step that would be
 refused is tried each way on its own first, so a threshold crossed on the
-diagonal does not stop you. Escape leaves.
+diagonal does not stop you. Escape leaves. And a double-click from above
+walks in even on a machine that draws slowly: the first click sends the
+camera flying, and by the time the second lands the pixel that held the
+room may hold sky, so a second click that misses while a room has just
+been focused is taken as walking into that room.
 
 **A sky, soft shadows, and a graded frame.** A sited house stands under
 three's analytic sky now - a scattering model with the sun in it, driven by
@@ -652,7 +656,30 @@ after it, on the same curve the verifier's captures use. And the quality
 tiers are real: "Best" was byte-identical to "Balanced", and now buys a
 4096 shadow map, soft shadows that widen with distance from the caster,
 full-resolution occlusion, and depth of field at eye level. A software
-renderer never gets it, however many cores it reports. From there the facades stay solid - the dollhouse fades the two
+renderer gets the bottom tier, however many cores it reports: a CPU
+drawing pixels cannot afford the scans or the occlusion pass, and the
+browser suites run on one.
+
+**Scanned surfaces, shipped with the app.** Every surface was drawn into a
+canvas at runtime, which kept the tour free of downloads and licences and
+kept it looking like a drawing of a surface rather than a surface.
+Twenty-eight scanned sets from Poly Haven live under `public/textures/`
+now - oak, slate, brick, linen, leather, shingle, lawn, asphalt - each a
+colour, a normal and an occlusion-roughness-metalness map, CC0, fetched
+once by `npm run assets:fetch` from the manifest in
+`src/lib/model/assets.ts` and never at runtime from anyone else's server.
+They arrive progressively: a house opens in the procedural surfaces and
+dresses itself as the sets land, and the low tier never asks for them. A
+scan is tinted to the colour the reader gave the surface, by that colour
+over the scan's own average, so it keeps its grain and lands on the
+colour. The rule is refined, not relaxed: it was "no photograph on the
+model" and it is "no photograph *of this house*" - the readout tells a
+bundled scan from anything else by its path on this origin, six suites
+hold `photoTextures` at zero as they always did, and `tools/offline-test.mjs`
+fails on the first request that leaves this origin. Furniture, joinery,
+fixtures and stairs say what they are made of and wear the matching scan;
+the lawn, roads, drive and kerbs do too; a house with no site is lit by a
+bundled HDR studio. From there the facades stay solid - the dollhouse fades the two
 walls between you and the rooms, which is right from above and wrong from
 the pavement - and the roof is solid too, casting the shadow on the lawn
 that a house from the street has. The scripted tour opens with that shot

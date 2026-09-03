@@ -125,10 +125,12 @@ export function detectQuality(renderer?: string | null): Quality {
   const narrow = typeof window !== "undefined" && window.innerWidth < 900;
   if (touch && narrow) return "low";
 
+  // A CPU drawing pixels, however many cores it claims. It cannot afford the
+  // scans - uploading them stalls the frame for seconds - nor the occlusion
+  // pass, and the bottom tier is what it can actually run.
+  if (isSoftwareRenderer(renderer)) return "low";
   const cores = navigator.hardwareConcurrency ?? 4;
   const memory = (navigator as Navigator & { deviceMemory?: number }).deviceMemory ?? 4;
   if (cores <= 4 || memory <= 4) return "medium";
-  // Never the top tier on a software renderer, however many cores it claims.
-  if (isSoftwareRenderer(renderer)) return "medium";
   return "high";
 }

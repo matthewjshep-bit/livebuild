@@ -603,6 +603,15 @@ road edge. It is an estimate, and the tour says so beside the map credit.
 The neighbours are grey masses at the height the map gives them, and can be
 put away.
 
+**And you can stand on the street.** A Street button holds the same orbit
+down at eye height and starts it at the kerb in front of the house, looking
+back at it. From there the facades stay solid - the dollhouse fades the two
+walls between you and the rooms, which is right from above and wrong from
+the pavement - and the roof is solid too, casting the shadow on the lawn
+that a house from the street has. The scripted tour opens with that shot
+before it climbs to the dollhouse. Without a map there is no kerb, and the
+street view stands the default distance off at the same height.
+
 **And the outside is a house.** The site read returns what the walls are
 clad in and what shape the roof is, with its ridge bearing and pitch, and
 until now the street saw an untextured box with its top open. The free text

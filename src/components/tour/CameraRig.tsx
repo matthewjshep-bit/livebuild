@@ -12,16 +12,37 @@ import type { Plan } from "@/lib/schema";
 
 export type ViewState =
   | { mode: "dollhouse" }
+  /**
+   * From the kerb: the same orbit, held down at eye height and looking at
+   * the house from the street, with the facades left solid. Where a house
+   * is judged first.
+   */
+  | { mode: "street" }
   /** First person, on foot. The walker owns the camera in this mode. */
   | { mode: "walk" }
   /** The architectural plan, which is a drawing rather than a camera. */
   | { mode: "plan" };
+
+/** The two modes in which this rig owns the camera. */
+export const isOrbit = (view: ViewState): boolean => view.mode === "dollhouse" || view.mode === "street";
 
 const TRANSITION_MS = 850;
 
 const UP = new THREE.Vector3(0, 1, 0);
 
 const DOLLHOUSE_FOV = 55;
+/** A little wider from the street, where the house fills the frame. */
+const STREET_FOV = 62;
+/** Standing height, the same as the walker's. */
+const STREET_EYE = 1.62;
+/** What the street camera looks at: the house, a little above the ground. */
+const STREET_LOOK_Y = 1.2;
+
+/** The orbit's limits, which differ by mode: from the street you stay down. */
+const LIMITS = {
+  dollhouse: { elevation: [0.12, 1.45] as const, distance: [3, 80] as const },
+  street: { elevation: [0.02, 0.35] as const, distance: [6, 70] as const },
+};
 
 function easeInOutCubic(t: number): number {
   return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
@@ -49,7 +70,31 @@ export function defaultOrbit(plan: Plan): Orbit {
   return { azimuth: 0, elevation: 0.66, distance: span * 1.35 };
 }
 
-function orbitPosition(center: THREE.Vector3, orbit: Orbit): THREE.Vector3 {
+/**
+ * Where the street camera starts: at the kerb, at eye height, looking at the
+ * house. Without a kerb - no map - it stands the default distance off, on
+ * the side the dollhouse opens on, still at eye height.
+ */
+export function streetOrbit(plan: Plan, kerb: [number, number] | null): Orbit {
+  const center = planCenter(plan);
+  center.y = STREET_LOOK_Y;
+  let azimuth = 0;
+  let distance = defaultOrbit(plan).distance;
+  if (kerb) {
+    const dx = kerb[0] - center.x;
+    const dz = kerb[1] - center.z;
+    azimuth = Math.atan2(dx, dz);
+    distance = Math.max(Math.hypot(dx, dz) + 2, LIMITS.street.distance[0]);
+  }
+  const elevation = THREE.MathUtils.clamp(
+    Math.asin(THREE.MathUtils.clamp((STREET_EYE - center.y) / distance, -1, 1)),
+    LIMITS.street.elevation[0],
+    LIMITS.street.elevation[1],
+  );
+  return { azimuth, elevation, distance };
+}
+
+export function orbitPosition(center: THREE.Vector3, orbit: Orbit): THREE.Vector3 {
   const horizontal = Math.cos(orbit.elevation) * orbit.distance;
   return new THREE.Vector3(
     center.x + Math.sin(orbit.azimuth) * horizontal,
@@ -73,9 +118,12 @@ export function CameraRig({
   paused = false,
   explode = 0,
   focusRoomId = null,
+  streetStart = null,
 }: {
   plan: Plan;
   view: ViewState;
+  /** The kerb in front of the house, where the street view starts. */
+  streetStart?: { kerb: [number, number] | null } | null;
   /**
    * One room being looked at on its own, or null for the whole house.
    *
@@ -133,30 +181,38 @@ export function CameraRig({
       from.current.quaternion.copy(camera.quaternion);
       startedAt.current = performance.now();
     }
+    // Each orbit mode starts where it should: the street at the kerb, the
+    // dollhouse back up where it frames the house - a ground-level orbit
+    // carried up into the dollhouse looks at the side of the roof.
+    if (previous?.mode !== view.mode) {
+      if (view.mode === "street") orbit.current = streetOrbit(plan, streetStart?.kerb ?? null);
+      else if (view.mode === "dollhouse" && previous?.mode === "street") orbit.current = defaultOrbit(plan);
+    }
     previousView.current = view;
-  }, [view, camera, focusRoomId, plan]);
+  }, [view, camera, focusRoomId, plan, streetStart]);
 
   useEffect(() => {
     const element = gl.domElement;
 
+    const limits = view.mode === "street" ? LIMITS.street : LIMITS.dollhouse;
     const onPointerDown = (e: PointerEvent) => {
       // Orbit and pointer-lock look would both be steering at once otherwise.
-      if (view.mode !== "dollhouse") return;
+      if (!isOrbit(view)) return;
       dragging.current = true;
       lastPointer.current = { x: e.clientX, y: e.clientY };
       element.setPointerCapture(e.pointerId);
     };
 
     const onPointerMove = (e: PointerEvent) => {
-      if (view.mode !== "dollhouse" || !dragging.current) return;
+      if (!isOrbit(view) || !dragging.current) return;
       const dx = e.clientX - lastPointer.current.x;
       const dy = e.clientY - lastPointer.current.y;
       lastPointer.current = { x: e.clientX, y: e.clientY };
       orbit.current.azimuth -= dx * 0.006;
       orbit.current.elevation = THREE.MathUtils.clamp(
         orbit.current.elevation + dy * 0.005,
-        0.12,
-        1.45,
+        limits.elevation[0],
+        limits.elevation[1],
       );
     };
 
@@ -166,12 +222,12 @@ export function CameraRig({
     };
 
     const onWheel = (e: WheelEvent) => {
-      if (view.mode !== "dollhouse") return;
+      if (!isOrbit(view)) return;
       e.preventDefault();
       orbit.current.distance = THREE.MathUtils.clamp(
         orbit.current.distance * (1 + e.deltaY * 0.0012),
-        3,
-        80,
+        limits.distance[0],
+        limits.distance[1],
       );
     };
 
@@ -214,7 +270,7 @@ export function CameraRig({
     // Walking hands the camera to WalkControls entirely, and a scripted tour
     // takes it the same way. Two things writing camera.position on the same
     // frame is a fight the user sees as jitter.
-    if (view.mode !== "dollhouse" || paused) return;
+    if (!isOrbit(view) || paused) return;
 
     const elapsed = performance.now() - startedAt.current;
     const raw = reducedMotion ? 1 : THREE.MathUtils.clamp(elapsed / TRANSITION_MS, 0, 1);
@@ -222,6 +278,7 @@ export function CameraRig({
 
     const room = focusRoomId ? plan.rooms.find((r) => r.id === focusRoomId) : null;
     const center = room ? new THREE.Vector3(...frameRoom(plan, room).center) : planCenter(plan);
+    if (view.mode === "street") center.y = STREET_LOOK_Y;
     // Pulling the house apart makes it bigger, so the camera has to give
     // ground or the pieces simply leave the frame - which is what happened
     // the first time, and looks like the rooms have been deleted.
@@ -232,7 +289,7 @@ export function CameraRig({
     scratch.position.copy(orbitPosition(center, framed));
     scratch.lookAt.lookAt(scratch.position, center, UP);
     scratch.quaternion.setFromRotationMatrix(scratch.lookAt);
-    applyFov(DOLLHOUSE_FOV);
+    applyFov(view.mode === "street" ? STREET_FOV : DOLLHOUSE_FOV);
 
     // A readout for the browser suite, alongside WalkControls' `__walk`. Where
     // the camera ended up cannot be seen from outside the canvas, and a

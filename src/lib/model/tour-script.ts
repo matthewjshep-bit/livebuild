@@ -24,6 +24,8 @@ export type Beat = {
   from: [number, number, number];
   at: [number, number, number];
   caption: string;
+  /** What kind of shot: from the street the facades have to stay solid. */
+  kind?: "street" | "orbit" | "room";
 };
 
 /** Two seconds is about the floor for "the viewer understood what changed". */
@@ -41,7 +43,12 @@ const STAND_OFF_M = 0.85;
 /** Rooms nobody opens a tour with. */
 const SKIP = new Set(["closet", "outside", "stairs", "hallway"]);
 
-export function buildTour(plan: Plan, label: string): Beat[] {
+export function buildTour(
+  plan: Plan,
+  label: string,
+  /** The kerb in front of the house, when the map placed one. */
+  opening: { kerb: [number, number] } | null = null,
+): Beat[] {
   const level = Math.min(...plan.rooms.map((r) => r.level));
   const ground = plan.rooms.filter((r) => r.level === level);
   if (ground.length === 0) return [];
@@ -54,6 +61,18 @@ export function buildTour(plan: Plan, label: string): Beat[] {
 
   const beats: Beat[] = [];
 
+  // From the kerb first, when there is one: the house as you would arrive at
+  // it, before the dollhouse shows what is inside.
+  if (opening) {
+    beats.push({
+      ms: ORBIT_MS,
+      from: [opening.kerb[0], base + EYE_M, opening.kerb[1]],
+      at: [cx, base + 1.5, cy],
+      caption: label,
+      kind: "street",
+    });
+  }
+
   // Two establishing shots from opposite corners. One orbit position tells you
   // the footprint; two tell you it is a building.
   for (const [i, angle] of [-0.7, 1.9].entries()) {
@@ -65,7 +84,8 @@ export function buildTour(plan: Plan, label: string): Beat[] {
         cy + Math.sin(angle) * span * 1.15,
       ],
       at: [cx, base + 1, cy],
-      caption: i === 0 ? label : `${ground.length} rooms`,
+      caption: i === 0 && !opening ? label : `${ground.length} rooms`,
+      kind: "orbit",
     });
   }
 

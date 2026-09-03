@@ -37,6 +37,12 @@ const box = house([["a", [[0, 0], [10, 0], [10, 6], [0, 6]]]]);
   const ridge = roof.faces.flatMap((f) => f.points).filter((p) => Math.abs(p[1] - roof.ridgeY) < 1e-6);
   check("the ridge is along the long axis", ridge.length > 0 && ridge.every((p) => Math.abs(p[2] - 3) < 1e-6), ridge.map((p) => p[2].toFixed(2)).join(","));
   check("and rises at the default pitch", Math.abs(roof.ridgeY - roof.eaveY - 3.4 * Math.tan(Math.PI / 6)) < 0.01, `${(roof.ridgeY - roof.eaveY).toFixed(3)}`);
+  // A gable end is wall: it stays within the wall's own span and reaches down
+  // to the eave, so nothing pokes out past the corner and no sky shows under
+  // the rake.
+  const endZs = ends.flatMap((f) => f.points.map((p) => p[2]));
+  check("the gable ends stay within the wall line", Math.min(...endZs) >= 0 - 1e-9 && Math.max(...endZs) <= 6 + 1e-9, `z ${Math.min(...endZs)}..${Math.max(...endZs)}`);
+  check("and reach down to the eave", ends.every((f) => f.points.some((p) => Math.abs(p[1] - roof.eaveY) < 1e-9)));
   check("the eave sits on top of the storey", roof.eaveY > 2.7 && roof.eaveY < 3.2, `${roof.eaveY}`);
 }
 

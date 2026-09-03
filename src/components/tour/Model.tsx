@@ -116,6 +116,7 @@ function ExteriorShell({
   baseY,
   opacity = 1,
   walking,
+  solid = walking,
   colour,
   siding = null,
 }: {
@@ -124,6 +125,11 @@ function ExteriorShell({
   /** Below 1 only while the house is being ghosted for focus. */
   opacity?: number;
   walking: boolean;
+  /**
+   * Leave the facades alone. On foot and from the street the walls between
+   * the camera and the interior are the point, not in the way.
+   */
+  solid?: boolean;
   colour: string;
   /** What the outside is clad in; null draws the bare shell as before. */
   siding?: Surface | null;
@@ -177,7 +183,7 @@ function ExteriorShell({
       // Eased across the grazing angle so nothing pops as the view swings, and
       // never quite to zero - a ghost of the elevation keeps the building's
       // outline readable.
-      material.opacity = walking
+      material.opacity = solid
         ? opacity
         : opacity * THREE.MathUtils.clamp(-toCamera / 2.5, 0.05, 1);
       // The cladding fades with the wall it is on.
@@ -227,9 +233,9 @@ function ExteriorShell({
                   // transparent skin - without a GPU, four large transparent
                   // textured quads behind every wall tripled the frame time
                   // and the walker crawled - it also occludes what is behind.
-                  transparent={!walking}
+                  transparent={!solid}
                   opacity={opacity}
-                  depthWrite={walking}
+                  depthWrite={solid}
                 />
               </mesh>
             ),
@@ -253,12 +259,15 @@ function Roof({
   site,
   scheme,
   siding,
+  solid = false,
 }: {
   plan: Plan;
   exterior: Exterior | null;
   site: Site | null;
   scheme: Scheme;
   siding: Surface | null;
+  /** From the street: opaque, and casting the shadow on the lawn that is the point. */
+  solid?: boolean;
 }) {
   const built = useMemo(() => {
     const model = roofFor(plan, exterior, site);
@@ -276,7 +285,9 @@ function Roof({
   const materials = useRef<Array<THREE.MeshStandardMaterial | null>>([]);
   useFrame(({ camera }) => {
     if (!built) return;
-    const fade = THREE.MathUtils.clamp((built.model.eaveY + 0.6 - camera.position.y) / 3, 0.06, 1);
+    const fade = solid
+      ? 1
+      : THREE.MathUtils.clamp((built.model.eaveY + 0.6 - camera.position.y) / 3, 0.06, 1);
     for (const material of materials.current) if (material) material.opacity = fade;
   });
 
@@ -298,7 +309,7 @@ function Roof({
   return (
     <group>
       {built.slopes && (
-        <mesh geometry={built.slopes} receiveShadow userData={{ element: "roof" }}>
+        <mesh geometry={built.slopes} castShadow={solid} receiveShadow userData={{ element: "roof" }}>
           <meshStandardMaterial
             ref={(m) => {
               materials.current[0] = m;
@@ -311,7 +322,7 @@ function Roof({
         </mesh>
       )}
       {built.ends && (
-        <mesh geometry={built.ends} receiveShadow userData={{ element: "roof" }}>
+        <mesh geometry={built.ends} castShadow={solid} receiveShadow userData={{ element: "roof" }}>
           <meshStandardMaterial
             ref={(m) => {
               materials.current[1] = m;
@@ -324,7 +335,7 @@ function Roof({
         </mesh>
       )}
       {built.deck && (
-        <mesh geometry={built.deck} receiveShadow userData={{ element: "roof" }}>
+        <mesh geometry={built.deck} castShadow={solid} receiveShadow userData={{ element: "roof" }}>
           <meshStandardMaterial
             ref={(m) => {
               materials.current[2] = m;
@@ -348,6 +359,8 @@ function LevelModel({
   opacity,
   furnished,
   walking,
+  // Bound under another name: `solid` is also the box helper this builds with.
+  solid: facadesSolid = walking,
   scheme,
   explode,
   siding,
@@ -363,6 +376,8 @@ function LevelModel({
   /** What each room is made of, when anything has read or inferred it. */
   spec: HouseSpec | null | undefined;
   level: number;
+  /** Facades left solid: on foot, or looking from the street. */
+  solid?: boolean;
   /** The outside's cladding, or null before textures can be made. */
   siding?: Surface | null;
   opacity: number;
@@ -1079,6 +1094,7 @@ function LevelModel({
           baseY={baseY}
           opacity={dimmed}
           walking={walking}
+          solid={facadesSolid}
           colour={walking ? built.houseWall : scheme.wallExterior}
           siding={siding}
         />
@@ -1142,10 +1158,13 @@ export function Model({
   focusRoomId = null,
   exterior = null,
   site = null,
+  street = false,
 }: {
   plan: Plan;
   /** What each room is made of. Absent means fall back to the scheme. */
   spec?: HouseSpec | null;
+  /** Looking from the street: facades and roof solid, the roof's shadow on. */
+  street?: boolean;
   /** What the outside is like, from the site read. Absent means a default house. */
   exterior?: Exterior | null;
   site?: Site | null;
@@ -1248,6 +1267,7 @@ export function Model({
           scheme={scheme}
           explode={explode}
           siding={siding}
+          solid={walking || street}
           focusRoomId={focusRoomId}
           pick={pick}
           onPick={onPick}
@@ -1261,7 +1281,7 @@ export function Model({
       {/* A roof, from the street. Not when the house is pulled apart, and
           not on foot - inside there is a ceiling between you and it. */}
       {explode <= 0 && !walking && (onlyLevel === null || onlyLevel === undefined) && (
-        <Roof plan={plan} exterior={exterior} site={site} scheme={scheme} siding={siding} />
+        <Roof plan={plan} exterior={exterior} site={site} scheme={scheme} siding={siding} solid={street} />
       )}
 
       {showLabels &&

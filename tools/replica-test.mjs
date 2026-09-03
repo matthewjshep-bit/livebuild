@@ -54,6 +54,12 @@ await check("scripted tour", "/tour/demo-house", async () => {
   await page.waitForTimeout(4000);
 });
 
+// From the street, on a house with no map: still a model, still no photograph.
+await check("street", "/tour/demo-house", async () => {
+  await page.locator("[data-street-toggle]").click();
+  await page.waitForTimeout(2500);
+});
+
 const offenders = readings.filter((r) => r.photoTextures !== 0);
 const rendered = readings.every((r) => r.meshes > 0 && r.triangles > 0);
 const ok = offenders.length === 0 && rendered && errors.length === 0;

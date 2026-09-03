@@ -43,6 +43,7 @@ import { levelName, levelsOf } from "@/lib/plan/geometry";
 import type { Plan, Property } from "@/lib/schema";
 import { SiteModel } from "@/components/tour/SiteModel";
 import { siteInPlan } from "@/lib/site/plan-site";
+import { deriveLot, houseBounds } from "@/lib/site/lot";
 
 /**
  * What is actually on screen, for the browser suite.
@@ -209,9 +210,13 @@ function Scene({
   quality,
   furnished,
   showNeighbours,
+  streetStart,
+  tourBeatKind,
 }: {
   property: Property;
   view: ViewState;
+  streetStart: { kerb: [number, number] | null } | null;
+  tourBeatKind: Beat["kind"] | null;
   onlyLevel: number | null;
   pick: Pick | null;
   onPick?: (pick: Pick) => void;
@@ -270,6 +275,7 @@ function Scene({
         paused={touring}
         explode={explode}
         focusRoomId={focusRoomId}
+        streetStart={streetStart}
       />
 
       <Model
@@ -290,6 +296,9 @@ function Scene({
         onEnterRoom={onPick ? onEnterRoom : undefined}
         onMeasurePoint={measuring ? onMeasurePoint : undefined}
         walking={view.mode === "walk"}
+        // From the street, or during the tour's shot from it, the facades
+        // and the roof stay solid.
+        street={view.mode === "street" || tourBeatKind === "street"}
         scheme={scheme}
         explode={explode}
         exterior={property.exterior}
@@ -302,7 +311,7 @@ function Scene({
         planSite={planSite}
         exterior={property.exterior}
         showNeighbours={showNeighbours}
-        labels={view.mode === "dollhouse"}
+        labels={view.mode === "dollhouse" || view.mode === "street"}
       />
 
       <Measure points={measurePoints} displayUnits={property.displayUnits} />
@@ -519,20 +528,39 @@ export function TourViewer({
   // The scripted tour, and recording it.
   const [touring, setTouring] = useState(false);
   const [tourCaption, setTourCaption] = useState("");
+  /** The kind of beat playing, so a shot from the street keeps the facades. */
+  const [tourBeatKind, setTourBeatKind] = useState<Beat["kind"] | null>(null);
   const [recording, setRecording] = useState(false);
   const stopRecording = useRef<null | (() => void)>(null);
+  /** Where the street view and the tour's opening shot stand: the kerb. */
+  const streetStart = useMemo(() => {
+    const planSite = siteInPlan(property.site);
+    const house = houseBounds(property.plan);
+    if (!house) return null;
+    const lot = deriveLot({
+      house,
+      site: planSite,
+      frontDoorBearing: property.exterior?.frontDoorBearing ?? null,
+      garageBearing: property.exterior?.garage?.bearing ?? null,
+      planXBearing: property.site?.planXBearing ?? 90,
+    });
+    return { kerb: lot.front.kerb ? ([lot.front.kerb[0], lot.front.kerb[1]] as [number, number]) : null };
+  }, [property.site, property.plan, property.exterior]);
+
   const tourBeats = useMemo(
-    () => buildTour(property.plan, property.label || "This house"),
-    [property.plan, property.label],
+    () => buildTour(property.plan, property.label || "This house", streetStart?.kerb ? { kerb: streetStart.kerb } : null),
+    [property.plan, property.label, streetStart],
   );
 
   const onTourBeat = useCallback((beat: Beat | null) => {
     setTourCaption(beat?.caption ?? "");
+    setTourBeatKind(beat?.kind ?? null);
   }, []);
 
   const finishTour = useCallback(() => {
     setTouring(false);
     setTourCaption("");
+    setTourBeatKind(null);
     stopRecording.current?.();
     stopRecording.current = null;
     setRecording(false);
@@ -751,6 +779,16 @@ export function TourViewer({
     window.history.replaceState(null, "", url);
   }, []);
 
+  /** From the kerb, whole house, nothing pulled apart. */
+  const showStreet = useCallback(() => {
+    setExplode(0);
+    setFocusRoomId(null);
+    setView({ mode: "street" });
+    const url = new URL(window.location.href);
+    url.searchParams.delete("room");
+    window.history.replaceState(null, "", url);
+  }, []);
+
   /**
    * `?room=` drops you inside that room, on your feet.
    *
@@ -842,6 +880,14 @@ export function TourViewer({
             className="rounded border border-ink-500 px-3 py-1 text-xs text-mist-200 transition hover:bg-ink-600 disabled:opacity-35"
           >
             Dollhouse
+          </button>
+          <button
+            onClick={showStreet}
+            data-street-toggle
+            disabled={view.mode === "street"}
+            className="rounded border border-ink-500 px-3 py-1 text-xs text-mist-200 transition hover:bg-ink-600 disabled:opacity-35"
+          >
+            Street
           </button>
           {/* Only a house that knows its neighbours can hide them. */}
           {hasSurroundings && (
@@ -1079,6 +1125,8 @@ export function TourViewer({
             quality={quality}
             furnished={furnished}
             showNeighbours={showNeighbours}
+            streetStart={streetStart}
+            tourBeatKind={tourBeatKind}
           />
         </Canvas>
         )}
@@ -1222,7 +1270,9 @@ export function TourViewer({
         <div className="pointer-events-none absolute bottom-3 left-1/2 -translate-x-1/2 rounded bg-ink-800/85 px-3 py-1.5 text-[11px] text-mist-400 backdrop-blur">
           {view.mode === "dollhouse"
             ? "Drag to orbit · scroll to zoom · double-click a room to walk in"
-            : view.mode === "walk"
+            : view.mode === "street"
+              ? "From the kerb · drag to walk round the house · scroll to come closer"
+              : view.mode === "walk"
               ? "Walking · W A S D to move · Esc to release the pointer"
               : measuring
                 ? "Click two points to measure between them"

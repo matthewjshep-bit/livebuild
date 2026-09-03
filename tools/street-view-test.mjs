@@ -87,7 +87,14 @@ const open = async (doc) => {
     localStorage.setItem("mattermatt:index", JSON.stringify(index));
   }, doc);
   await page.goto(`${BASE}/tour/${doc.id}`, { waitUntil: "networkidle" });
-  await page.waitForFunction(() => window.__scene && window.__scene.meshes > 0, { timeout: 45_000 });
+  try {
+    await page.waitForFunction(() => window.__scene && window.__scene.meshes > 0, { timeout: 45_000 });
+  } catch (error) {
+    // Say what the page said, or a timeout is all anyone learns.
+    console.log("  the scene never appeared:", errors.slice(0, 3).join(" | ") || "no page errors");
+    console.log("  page said:", (await page.evaluate(() => document.body.innerText)).slice(0, 240).replace(/\n/g, " | "));
+    throw error;
+  }
   await page.waitForTimeout(2500);
   return page.evaluate(() => window.__scene);
 };
@@ -114,6 +121,83 @@ check("the name to the east runs away from the house", turns["Oak Avenue"] === 9
 check("the map is credited", (await page.locator("[data-site-attribution]").count()) === 1);
 check("the lot is called an estimate", /estimate/i.test(await page.locator("[data-site-attribution]").innerText()));
 await page.screenshot({ path: "shots/ST1-street-dollhouse.png" });
+
+// --- from the kerb ---
+//
+// The Street button stands the camera at the kerb at eye height, looking at
+// the house with its facades solid. The camera's own readout says where it is.
+/**
+ * Wait for the camera to stop.
+ *
+ * A full second of stillness, not two close samples: without a GPU the eased
+ * flight advances in steps of a few hundred milliseconds, and two samples in
+ * one step read as "settled" halfway there.
+ */
+const settle = async () => {
+  const recent = [];
+  for (let i = 0; i < 100; i++) {
+    await page.waitForTimeout(250);
+    const now = await page.evaluate(() => window.__camera?.position ?? null);
+    if (!now) continue;
+    recent.push(now);
+    if (recent.length > 4) recent.shift();
+    if (recent.length === 4 && recent.every((p) => Math.hypot(p[0] - now[0], p[1] - now[1], p[2] - now[2]) < 0.01)) return now;
+  }
+  return recent[recent.length - 1] ?? null;
+};
+// The street orbit is the only thing that looks at the house 1.2m up; the
+// scene readout that names the mode lags a second behind it.
+const lookingFromStreet = () => page.waitForFunction(() => window.__camera?.target?.[1] === 1.2, { timeout: 20_000 }).catch(() => {});
+const lookingFromAbove = () => page.waitForFunction(() => window.__camera?.target?.[1] === 0, { timeout: 20_000 }).catch(() => {});
+await page.locator("[data-street-toggle]").click();
+await lookingFromStreet();
+await page.waitForFunction(() => window.__scene?.mode === "street", { timeout: 20_000 }).catch(() => {});
+const kerbPos = await settle();
+const kerbCam = await page.evaluate(() => window.__camera);
+check("the street view is a mode of its own", (await page.evaluate(() => window.__scene?.mode)) === "street");
+check("the camera stands at eye height", kerbPos !== null && kerbPos[1] > 0.8 && kerbPos[1] < 3, `${kerbPos}`);
+check("out on the street, not in the house",
+  kerbCam !== null && Math.hypot(kerbCam.position[0] - kerbCam.target[0], kerbCam.position[2] - kerbCam.target[2]) >= 6,
+  JSON.stringify(kerbCam));
+// The road is along y = -12, in front of the -y side: the kerb is north of the house.
+check("on the road side of the house", kerbPos !== null && kerbPos[2] < 0, `${kerbPos}`);
+const streetScene = await page.evaluate(() => window.__scene);
+check("the roof is there from the street", (streetScene.bySurface?.roof ?? 0) > 0);
+check("and the names are", (await page.locator("[data-street-name]").count()) === 2);
+await page.screenshot({ path: "shots/ST2-street-view.png" });
+
+// Drag walks round; the wheel comes closer but never inside the lot line.
+const box = await page.locator("canvas").first().boundingBox();
+await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+await page.mouse.down();
+await page.mouse.move(box.x + box.width / 2 + 220, box.y + box.height / 2, { steps: 20 });
+await page.mouse.up();
+const dragged = await settle();
+check("dragging walks round the house", dragged !== null && kerbPos !== null && Math.hypot(dragged[0] - kerbPos[0], dragged[2] - kerbPos[2]) > 1, `${kerbPos} → ${dragged}`);
+check("and stays at eye height", dragged !== null && dragged[1] > 0.5 && dragged[1] < 6, `${dragged}`);
+for (let i = 0; i < 12; i++) await page.mouse.wheel(0, -400);
+const closer = await settle();
+const closerCam = await page.evaluate(() => window.__camera);
+check("the wheel comes closer but not into the house",
+  closerCam !== null && Math.hypot(closerCam.position[0] - closerCam.target[0], closerCam.position[2] - closerCam.target[2]) >= 5.9,
+  JSON.stringify(closerCam));
+void closer;
+
+// The tour opens from the kerb.
+await page.locator("[data-tour-toggle]").click();
+await page.waitForTimeout(900);
+const caption = await page.locator("[data-tour-caption]").innerText().catch(() => "");
+check("the tour's first shot is the house from the street", caption.trim() === "Street Fixture", caption);
+await page.locator("[data-tour-toggle]").click();
+await page.waitForTimeout(500);
+
+// The tour runs in the dollhouse, so stopping it leaves us there - and the
+// camera has to come back up, not stay down on the kerb's orbit.
+await page.waitForFunction(() => window.__scene?.mode === "dollhouse", { timeout: 20_000 }).catch(() => {});
+check("the tour hands back to the dollhouse", (await page.evaluate(() => window.__scene?.mode)) === "dollhouse");
+await lookingFromAbove();
+const up = await settle();
+check("and the camera comes back up", up !== null && up[1] > 5, `${up}`);
 
 // The neighbours can be put away.
 await page.locator("[data-neighbours-toggle]").click();

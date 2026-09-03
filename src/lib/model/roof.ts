@@ -33,7 +33,7 @@ export type SiteRead = { planXBearing?: number | null } | null | undefined;
  */
 
 export type RoofFace = {
-  /** Corners, wound counter-clockwise seen from outside. Three or four. */
+  /** Corners, wound counter-clockwise seen from outside. Three to five, convex. */
   points: Array<[number, number, number]>;
   /** What it is, which decides what it is made of. */
   kind: "slope" | "gable" | "flat";
@@ -151,8 +151,12 @@ function roofOverRect(
 
   if (shape === "shed") {
     faces.push(face([P(x0, eaveY, y1), P(x1, eaveY, y1), P(x1, eaveY + 2 * rise, y0), P(x0, eaveY + 2 * rise, y0)], "slope", [0, 1, 0]));
-    faces.push(face([P(r.x0, eaveY, r.y0), P(r.x0, eaveY, r.y1), P(r.x0, eaveY + 2 * rise, r.y0)], "gable", alongX ? [-1, 0, 0] : [0, 0, -1]));
-    faces.push(face([P(r.x1, eaveY, r.y0), P(r.x1, eaveY, r.y1), P(r.x1, eaveY + 2 * rise, r.y0)], "gable", alongX ? [1, 0, 0] : [0, 0, 1]));
+    // The ends, in the wall plane, up to where the slope crosses it.
+    const grade = (2 * rise) / (y1 - y0);
+    const low = eaveY + OVERHANG * grade;
+    const high = eaveY + 2 * rise - OVERHANG * grade;
+    faces.push(face([P(r.x0, eaveY, r.y0), P(r.x0, eaveY, r.y1), P(r.x0, low, r.y1), P(r.x0, high, r.y0)], "gable", alongX ? [-1, 0, 0] : [0, 0, -1]));
+    faces.push(face([P(r.x1, eaveY, r.y1), P(r.x1, eaveY, r.y0), P(r.x1, high, r.y0), P(r.x1, low, r.y1)], "gable", alongX ? [1, 0, 0] : [0, 0, 1]));
     return faces;
   }
 
@@ -170,12 +174,21 @@ function roofOverRect(
     return faces;
   }
 
-  // Gable: two slopes to a ridge, and a triangle closing each end, flush with
-  // the wall rather than overhanging - a gable end is wall, not roof.
+  // Gable: two slopes to a ridge, and a face closing each end in the wall
+  // plane - a gable end is wall, not roof. It spans the wall, not the
+  // overhang: the first version reached the eaves' corners and stood out from
+  // the house as a wedge at each end. It runs from the eave up to where the
+  // slopes cross the wall line, then to the ridge, so no sky shows under the
+  // rake.
+  const atWall = eaveY + OVERHANG * Math.tan((pitchDeg * Math.PI) / 180);
   faces.push(face([P(x0, eaveY, y0), P(x1, eaveY, y0), P(x1, top, ym), P(x0, top, ym)], "slope", [0, 1, -1]));
   faces.push(face([P(x1, eaveY, y1), P(x0, eaveY, y1), P(x0, top, ym), P(x1, top, ym)], "slope", [0, 1, 1]));
-  faces.push(face([P(r.x0, eaveY, y0), P(r.x0, eaveY, y1), P(r.x0, top, ym)], "gable", alongX ? [-1, 0, 0] : [0, 0, -1]));
-  faces.push(face([P(r.x1, eaveY, y1), P(r.x1, eaveY, y0), P(r.x1, top, ym)], "gable", alongX ? [1, 0, 0] : [0, 0, 1]));
+  faces.push(
+    face([P(r.x0, eaveY, r.y0), P(r.x0, eaveY, r.y1), P(r.x0, atWall, r.y1), P(r.x0, top, ym), P(r.x0, atWall, r.y0)], "gable", alongX ? [-1, 0, 0] : [0, 0, -1]),
+  );
+  faces.push(
+    face([P(r.x1, eaveY, r.y1), P(r.x1, eaveY, r.y0), P(r.x1, atWall, r.y0), P(r.x1, top, ym), P(r.x1, atWall, r.y1)], "gable", alongX ? [1, 0, 0] : [0, 0, 1]),
+  );
   return faces;
 }
 

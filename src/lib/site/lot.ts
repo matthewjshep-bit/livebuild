@@ -1,5 +1,5 @@
 import { planFromBearing } from "@/lib/model/sun";
-import { boundsOf } from "@/lib/plan/geometry";
+import { boundsOf, centroid } from "@/lib/plan/geometry";
 import { roomKind } from "@/lib/plan/room-kind";
 import { type PlanSite, closestPointOnWays, roadWidth } from "@/lib/site/plan-site";
 import type { Plan, Vec2 } from "@/lib/schema";
@@ -327,9 +327,14 @@ export function deriveLot(input: {
     }
   }
 
-  // --- the drive: toward the garage, else the wider side ---
+  // --- the drive: toward the garage - the map's own garage on this lot
+  // first, then the read's bearing - else the wider side ---
   let drivewaySide: "left" | "right" = setbacks.left >= setbacks.right ? "left" : "right";
-  if (typeof input.garageBearing === "number") {
+  const garageOnLot = site?.buildings.find((b) => isOutbuildingOf(house, b) && /garage|carport/.test(b.kind ?? ""));
+  if (garageOnLot) {
+    const gc = centroid(garageOnLot.outline);
+    drivewaySide = (gc[0] - c[0]) * leftAxis[0] + (gc[1] - c[1]) * leftAxis[1] >= 0 ? "left" : "right";
+  } else if (typeof input.garageBearing === "number") {
     const g = toPlan(input.garageBearing);
     drivewaySide = g[0] * leftAxis[0] + g[1] * leftAxis[1] >= 0 ? "left" : "right";
   }

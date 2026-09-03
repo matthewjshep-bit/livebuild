@@ -4,23 +4,41 @@ import { Html } from "@react-three/drei";
 import { useMemo } from "react";
 import * as THREE from "three";
 
+import { exteriorLook } from "@/lib/model/exterior-look";
+import { type Landscape, landscapeFor } from "@/lib/model/landscape";
+import { roofGeometry, roofOverRect } from "@/lib/model/roof";
+import { type Scheme, toHex } from "@/lib/model/schemes";
+import { sidingFinish } from "@/lib/model/siding";
 import { kerbGeometry, ribbonGeometry } from "@/lib/model/site-geometry";
-import { merged, slabGeometry } from "@/lib/model/solids";
-import { TEXTURE_METRES, applyWorldUvs, asphaltSurface, canTexture, floorSurface } from "@/lib/model/textures";
+import { windowsForLevel } from "@/lib/model/windows";
+import { boxGeometry, coneGeometry, cylinderGeometry, merged, slabGeometry, sphereGeometry } from "@/lib/model/solids";
+import {
+  type Surface,
+  TEXTURE_METRES,
+  applyWorldUvs,
+  asphaltSurface,
+  canTexture,
+  floorSurface,
+  foliageSurface,
+  roofSurface,
+  sidingSurface,
+} from "@/lib/model/textures";
 import { centroid, pointInPolygon } from "@/lib/plan/geometry";
 import { type Lot, deriveLot, houseBounds } from "@/lib/site/lot";
 import { type PlanSite, closestPointOnWays, roadWidth } from "@/lib/site/plan-site";
+import type { HouseSpec } from "@/lib/spec/schema";
 import type { Exterior, Plan, Site, Vec2 } from "@/lib/schema";
 
 /**
- * The house on its street.
+ * The house on its street, and its garden.
  *
  * Everything outside the walls: the lot, the roads with their names where
- * they pass the house, the buildings next door as grey masses, and the ground
- * beyond all of it. All of it in the plan's own metres, projected from the
- * map through the same frame the building was squared up in - so a road is
- * at its true angle and distance to the wall, which is what a photograph
- * taken from it shows.
+ * they pass the house, the buildings next door as grey masses, the ground
+ * beyond all of it - and on the lot, what the photographs said is there: the
+ * door, the path, the drive, a porch, a fence, the trees. All of it in the
+ * plan's own metres, projected from the map through the same frame the
+ * building was squared up in, so a road is at its true angle and distance
+ * to the wall, which is what a photograph taken from it shows.
  *
  * Nothing here when the house has no surroundings. A house drawn by hand
  * floats where it always floated.
@@ -29,12 +47,45 @@ import type { Exterior, Plan, Site, Vec2 } from "@/lib/schema";
 const LAWN = "#8fa37a";
 const TERRAIN = "#7d8a70";
 const NEIGHBOUR = "#b9b7b2";
+const TRUNK = "#5b4636";
+const CONCRETE = "#b9b5ad";
+const GRAVEL = "#a39c8f";
+
+type Textured = { geometry: THREE.BufferGeometry; surface: Surface | null; colour: string; element: string };
+
+/** A material for a surface, or a flat colour when textures cannot be made. */
+function Material({ surface, colour, roughness = 0.95, env = 0.3 }: { surface: Surface | null; colour: string; roughness?: number; env?: number }) {
+  return (
+    <meshStandardMaterial
+      color={surface ? "#ffffff" : colour}
+      map={surface?.map}
+      normalMap={surface?.normalMap}
+      aoMap={surface?.ormMap}
+      roughnessMap={surface?.ormMap}
+      metalnessMap={surface?.ormMap}
+      roughness={surface ? 1 : roughness}
+      metalness={surface ? 1 : 0}
+      envMapIntensity={env}
+    />
+  );
+}
+
+/** A box along a segment on the ground. */
+function alongSegment(a: Vec2, b: Vec2, y: number, height: number, depth: number, inset = 0): THREE.BufferGeometry | null {
+  const dx = b[0] - a[0];
+  const dz = b[1] - a[1];
+  const len = Math.hypot(dx, dz) - inset * 2;
+  if (len < 0.05) return null;
+  return boxGeometry([(a[0] + b[0]) / 2, y, (a[1] + b[1]) / 2], [len, height, depth], -Math.atan2(dz, dx));
+}
 
 export function SiteModel({
   plan,
   site,
   planSite,
   exterior,
+  spec,
+  scheme,
   showNeighbours,
   labels,
 }: {
@@ -42,6 +93,8 @@ export function SiteModel({
   site: Site | null | undefined;
   planSite: PlanSite | null;
   exterior: Exterior | null | undefined;
+  spec: HouseSpec | null | undefined;
+  scheme: Scheme;
   showNeighbours: boolean;
   labels: boolean;
 }) {
@@ -56,6 +109,7 @@ export function SiteModel({
       garageBearing: exterior?.garage?.bearing ?? null,
       planXBearing: site?.planXBearing ?? 90,
     });
+    const textures = canTexture();
 
     const lawn = slabGeometry(lot.polygon, -0.03, 0.05);
     if (lawn) applyWorldUvs(lawn, TEXTURE_METRES.floor);
@@ -73,14 +127,13 @@ export function SiteModel({
     );
 
     // Next door's buildings, and the ones on this lot - a detached garage -
-    // which are kept apart so the garden can clad its own later.
+    // which are the garden's to clad.
     const inLot = (outline: Vec2[]) => pointInPolygon(centroid(outline), lot.polygon);
-    const mass = (b: PlanSite["buildings"][number]) => slabGeometry(b.outline, b.heightM, b.heightM);
     const neighbours = merged(
-      planSite.buildings.filter((b) => !inLot(b.outline)).map(mass).filter((g): g is THREE.BufferGeometry => Boolean(g)),
-    );
-    const outbuildings = merged(
-      planSite.buildings.filter((b) => inLot(b.outline)).map(mass).filter((g): g is THREE.BufferGeometry => Boolean(g)),
+      planSite.buildings
+        .filter((b) => !inLot(b.outline))
+        .map((b) => slabGeometry(b.outline, b.heightM, b.heightM))
+        .filter((g): g is THREE.BufferGeometry => Boolean(g)),
     );
 
     /**
@@ -109,9 +162,144 @@ export function SiteModel({
       })
       .filter((n): n is { name: string; at: Vec2; deg: number } => Boolean(n));
 
-    const surfaces = canTexture() ? { grass: floorSurface("grass", LAWN), asphalt: asphaltSurface() } : null;
-    return { lot, lawn, roads, kerbs, neighbours, outbuildings, names, surfaces };
-  }, [plan, site, planSite, exterior]);
+    /**
+     * The garden: what the photographs said is there, where it goes.
+     *
+     * Hardstanding sits a centimetre above the lawn and a centimetre below
+     * anything standing on it, so nothing fights for the same plane.
+     */
+    const look = exteriorLook(spec, exterior);
+    const garden: Landscape = landscapeFor({
+      lot,
+      house,
+      features: spec?.exterior?.features ?? [],
+      outbuildings: planSite.buildings.filter((b) => inLot(b.outline)).map((b) => ({ outline: b.outline, kind: b.kind })),
+      garageBays: exterior?.garage?.bays ?? null,
+      doorColour: look.doorColour,
+      windows: windowsForLevel(plan, Math.min(...plan.rooms.map((r) => r.level))).map((w) => ({ center: w.center, width: w.width })),
+    });
+
+    const concrete = textures ? floorSurface("concrete", CONCRETE) : null;
+    const siding = textures ? sidingSurface(sidingFinish(look.wallMaterial), scheme.wallExterior) : null;
+    const roofColour = toHex(look.roofColour) ?? "#4b4b4d";
+    const roof = textures ? roofSurface(roofColour) : null;
+
+    const hard: Textured[] = [];
+    if (garden.driveway) {
+      const g = slabGeometry(garden.driveway.polygon, -0.02, 0.04);
+      if (g) {
+        applyWorldUvs(g, TEXTURE_METRES.floor);
+        const material = garden.driveway.material;
+        hard.push({
+          geometry: g,
+          surface: material === "asphalt" ? (textures ? asphaltSurface() : null) : material === "gravel" ? (textures ? floorSurface("concrete", GRAVEL) : null) : concrete,
+          colour: material === "asphalt" ? "#4a4b4d" : material === "gravel" ? GRAVEL : CONCRETE,
+          element: "driveway",
+        });
+      }
+    }
+    if (garden.path) {
+      const g = slabGeometry(garden.path, -0.015, 0.03);
+      if (g) {
+        applyWorldUvs(g, TEXTURE_METRES.floor);
+        hard.push({ geometry: g, surface: concrete, colour: CONCRETE, element: "driveway" });
+      }
+    }
+
+    const porch = merged([...garden.porch, ...garden.steps].map((b) => boxGeometry(b.center, b.size)));
+    const door = garden.door ? boxGeometry(garden.door.center, garden.door.size) : null;
+
+    const fenceParts: THREE.BufferGeometry[] = [];
+    for (const run of garden.fence) {
+      const len = Math.hypot(run.b[0] - run.a[0], run.b[1] - run.a[1]);
+      const posts = Math.max(1, Math.round(len / 2.4));
+      for (let i = 0; i <= posts; i++) {
+        const t = i / posts;
+        fenceParts.push(boxGeometry([run.a[0] + (run.b[0] - run.a[0]) * t, run.heightM / 2, run.a[1] + (run.b[1] - run.a[1]) * t], [0.1, run.heightM, 0.1]));
+      }
+      for (const y of [run.heightM * 0.4, run.heightM * 0.8]) {
+        const rail = alongSegment(run.a, run.b, y, 0.1, 0.04);
+        if (rail) fenceParts.push(rail);
+      }
+    }
+    const fence = merged(fenceParts);
+    const fenceColour = garden.fence[0]?.colour ?? "#8a6a45";
+
+    const trunks = merged(
+      garden.trees.map((t) => {
+        const trunkH = t.shape === "cone" ? t.heightM * 0.25 : t.heightM - t.canopyR * 1.6;
+        return cylinderGeometry([t.at[0], trunkH / 2, t.at[1]], t.trunkR, trunkH);
+      }),
+    );
+    const canopies = new Map<string, THREE.BufferGeometry[]>();
+    for (const t of garden.trees) {
+      const trunkH = t.shape === "cone" ? t.heightM * 0.25 : t.heightM - t.canopyR * 1.6;
+      const g =
+        t.shape === "cone"
+          ? coneGeometry([t.at[0], trunkH + (t.heightM - trunkH) / 2, t.at[1]], t.canopyR, t.heightM - trunkH)
+          : sphereGeometry([t.at[0], trunkH + t.canopyR * 0.9, t.at[1]], t.canopyR);
+      (canopies.get(t.colour) ?? canopies.set(t.colour, []).get(t.colour)!).push(g);
+    }
+    for (const s of garden.shrubs) {
+      (canopies.get(s.colour) ?? canopies.set(s.colour, []).get(s.colour)!).push(sphereGeometry([s.at[0], s.r * 0.8, s.at[1]], s.r));
+    }
+    for (const h of garden.hedges) {
+      const g = alongSegment(h.a, h.b, h.heightM / 2, h.heightM, h.depthM, 0.3);
+      if (g) (canopies.get(h.colour) ?? canopies.set(h.colour, []).get(h.colour)!).push(g);
+    }
+    const planting: Textured[] = [...canopies].flatMap(([colour, parts]) => {
+      const g = merged(parts);
+      if (!g) return [];
+      applyWorldUvs(g, 1.5);
+      return [{ geometry: g, surface: textures ? foliageSurface(colour) : null, colour, element: "planting" }];
+    });
+
+    // The house's own garage or shed, clad like the house, under its own gable.
+    const outWalls: THREE.BufferGeometry[] = [];
+    const outRoofs: THREE.BufferGeometry[] = [];
+    const outEnds: THREE.BufferGeometry[] = [];
+    for (const o of garden.outbuildings) {
+      const w = o.rect.x1 - o.rect.x0;
+      const d = o.rect.y1 - o.rect.y0;
+      outWalls.push(boxGeometry([(o.rect.x0 + o.rect.x1) / 2, o.eaveM / 2, (o.rect.y0 + o.rect.y1) / 2], [w, o.eaveM, d]));
+      const faces = roofOverRect(o.rect, "gable", o.eaveM, 25, w >= d);
+      const slopes = roofGeometry(faces, "slope");
+      const ends = roofGeometry(faces, "gable");
+      if (slopes) outRoofs.push(slopes);
+      if (ends) outEnds.push(ends);
+    }
+    const outbuildingWalls = merged(outWalls);
+    if (outbuildingWalls) applyWorldUvs(outbuildingWalls, TEXTURE_METRES.wall);
+    const outbuildingRoofs = merged(outRoofs);
+    if (outbuildingRoofs) applyWorldUvs(outbuildingRoofs, 2);
+    const outbuildingEnds = merged(outEnds);
+    if (outbuildingEnds) applyWorldUvs(outbuildingEnds, TEXTURE_METRES.wall);
+
+    const surfaces = textures ? { grass: floorSurface("grass", LAWN), asphalt: asphaltSurface() } : null;
+    return {
+      lot,
+      lawn,
+      roads,
+      kerbs,
+      neighbours,
+      names,
+      surfaces,
+      hard,
+      porch,
+      door,
+      doorColour: garden.door?.colour ?? "#3c3f42",
+      fence,
+      fenceColour,
+      trunks,
+      planting,
+      outbuildingWalls,
+      outbuildingRoofs,
+      outbuildingEnds,
+      siding,
+      roof,
+      roofColour,
+    };
+  }, [plan, site, planSite, exterior, spec, scheme]);
 
   if (!built) return null;
   const { surfaces } = built;
@@ -126,33 +314,13 @@ export function SiteModel({
 
       {built.lawn && (
         <mesh geometry={built.lawn} receiveShadow userData={{ element: "ground" }}>
-          <meshStandardMaterial
-            color={surfaces ? "#ffffff" : LAWN}
-            map={surfaces?.grass.map}
-            normalMap={surfaces?.grass.normalMap}
-            aoMap={surfaces?.grass.ormMap}
-            roughnessMap={surfaces?.grass.ormMap}
-            metalnessMap={surfaces?.grass.ormMap}
-            roughness={surfaces ? 1 : 0.95}
-            metalness={surfaces ? 1 : 0}
-            envMapIntensity={0.3}
-          />
+          <Material surface={surfaces?.grass ?? null} colour={LAWN} />
         </mesh>
       )}
 
       {built.roads && (
         <mesh geometry={built.roads} receiveShadow userData={{ element: "street" }}>
-          <meshStandardMaterial
-            color={surfaces ? "#ffffff" : "#4a4b4d"}
-            map={surfaces?.asphalt.map}
-            normalMap={surfaces?.asphalt.normalMap}
-            aoMap={surfaces?.asphalt.ormMap}
-            roughnessMap={surfaces?.asphalt.ormMap}
-            metalnessMap={surfaces?.asphalt.ormMap}
-            roughness={surfaces ? 1 : 0.92}
-            metalness={surfaces ? 1 : 0}
-            envMapIntensity={0.25}
-          />
+          <Material surface={surfaces?.asphalt ?? null} colour="#4a4b4d" roughness={0.92} env={0.25} />
         </mesh>
       )}
       {built.kerbs && (
@@ -161,13 +329,55 @@ export function SiteModel({
         </mesh>
       )}
 
-      {showNeighbours && built.neighbours && (
-        <mesh geometry={built.neighbours} castShadow receiveShadow userData={{ element: "neighbour" }}>
-          <meshStandardMaterial color={NEIGHBOUR} roughness={0.95} metalness={0} />
+      {built.hard.map((h, i) => (
+        <mesh key={`hard-${i}`} geometry={h.geometry} receiveShadow userData={{ element: h.element }}>
+          <Material surface={h.surface} colour={h.colour} roughness={0.9} env={0.25} />
+        </mesh>
+      ))}
+      {built.porch && (
+        <mesh geometry={built.porch} castShadow receiveShadow userData={{ element: "porch" }}>
+          <meshStandardMaterial color={CONCRETE} roughness={0.9} metalness={0} />
         </mesh>
       )}
-      {built.outbuildings && (
-        <mesh geometry={built.outbuildings} castShadow receiveShadow userData={{ element: "outbuilding" }}>
+      {built.door && (
+        <mesh geometry={built.door} castShadow receiveShadow userData={{ element: "porch" }}>
+          <meshStandardMaterial color={built.doorColour} roughness={0.6} metalness={0} />
+        </mesh>
+      )}
+      {built.fence && (
+        <mesh geometry={built.fence} castShadow receiveShadow userData={{ element: "fence" }}>
+          <meshStandardMaterial color={built.fenceColour} roughness={0.85} metalness={0} />
+        </mesh>
+      )}
+      {built.trunks && (
+        <mesh geometry={built.trunks} castShadow receiveShadow userData={{ element: "planting" }}>
+          <meshStandardMaterial color={TRUNK} roughness={0.95} metalness={0} />
+        </mesh>
+      )}
+      {built.planting.map((p, i) => (
+        <mesh key={`planting-${i}`} geometry={p.geometry} castShadow receiveShadow userData={{ element: p.element }}>
+          <Material surface={p.surface} colour={p.colour} env={0.35} />
+        </mesh>
+      ))}
+
+      {built.outbuildingWalls && (
+        <mesh geometry={built.outbuildingWalls} castShadow receiveShadow userData={{ element: "outbuilding" }}>
+          <Material surface={built.siding} colour={scheme.wallExterior} />
+        </mesh>
+      )}
+      {built.outbuildingRoofs && (
+        <mesh geometry={built.outbuildingRoofs} castShadow receiveShadow userData={{ element: "outbuilding" }}>
+          <Material surface={built.roof} colour={built.roofColour} />
+        </mesh>
+      )}
+      {built.outbuildingEnds && (
+        <mesh geometry={built.outbuildingEnds} castShadow receiveShadow userData={{ element: "outbuilding" }}>
+          <Material surface={built.siding} colour={scheme.wallExterior} />
+        </mesh>
+      )}
+
+      {showNeighbours && built.neighbours && (
+        <mesh geometry={built.neighbours} castShadow receiveShadow userData={{ element: "neighbour" }}>
           <meshStandardMaterial color={NEIGHBOUR} roughness={0.95} metalness={0} />
         </mesh>
       )}

@@ -137,3 +137,38 @@ export function merged(parts: THREE.BufferGeometry[]): THREE.BufferGeometry | nu
   for (const part of parts) part.dispose();
   return result;
 }
+
+/**
+ * The shapes a garden is made of, in the same idiom as the box.
+ *
+ * A trunk is a cylinder, a canopy is a sphere or a cone, and at the scale a
+ * lot is looked at that is a tree. Low segment counts on purpose: a read can
+ * plant eight of them, and they merge into one mesh per colour.
+ */
+export function cylinderGeometry(
+  center: [number, number, number],
+  radius: number,
+  height: number,
+  segments = 10,
+): THREE.BufferGeometry {
+  const geometry = new THREE.CylinderGeometry(radius, radius * 1.15, height, segments);
+  geometry.translate(center[0], center[1], center[2]);
+  return geometry;
+}
+
+export function coneGeometry(
+  center: [number, number, number],
+  radius: number,
+  height: number,
+  segments = 8,
+): THREE.BufferGeometry {
+  const geometry = new THREE.ConeGeometry(radius, height, segments);
+  geometry.translate(center[0], center[1], center[2]);
+  return geometry;
+}
+
+export function sphereGeometry(center: [number, number, number], radius: number, detail = 1): THREE.BufferGeometry {
+  const geometry = new THREE.IcosahedronGeometry(radius, detail);
+  geometry.translate(center[0], center[1], center[2]);
+  return geometry;
+}

@@ -625,6 +625,20 @@ wins for everything that is geometry; the roof's shape from a photograph
 fills in only where the map had none. "This house" wears the photographed
 colours, and an Outside panel says where each value came from.
 
+**The garden is planted from the read.** The reader's list - a large tree
+left of the door, a white fence along the street, a porch, an asphalt drive
+on the right - becomes a garden by rules that can each be checked alone: the
+door on the front wall in its own colour, a path from it to the street, the
+drive from the street past the house on the garage's side and back to the
+garage when the map or the photograph placed one, a porch and steps at the
+door when read, a fence on the sides and the back and along the street only
+when the read said so, trees by side and size - a pine is a cone - never on
+the house, the drive or the path, shrubs flanking the door, a hedge along
+the front. Without a read the house still gets its door, its path and its
+drive, and nothing else is invented. The house's own garage or shed is clad
+like the house under its own gable. Nothing is stored; a better rule
+replants every house.
+
 **And the outside is a house.** The site read returns what the walls are
 clad in and what shape the roof is, with its ridge bearing and pitch, and
 until now the street saw an untextured box with its top open. The free text

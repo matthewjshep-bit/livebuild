@@ -113,7 +113,7 @@ function face(points: Array<[number, number, number]>, kind: RoofFace["kind"], o
  * One rectangle's roof. Written for a ridge along x; a ridge along y is the
  * same roof with the axes swapped, done by `swapped` below.
  */
-function roofOverRect(
+export function roofOverRect(
   rect: Rect,
   shape: string,
   eaveY: number,

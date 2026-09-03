@@ -69,6 +69,30 @@ const withStreet = property("street-yes", {
   ],
   attribution: ["Map data © OpenStreetMap contributors (ODbL)"],
 });
+// What the photographs said is in the garden: two trees, a white fence
+// along the street, a porch, an asphalt drive, shrubs by the door.
+withStreet.spec = {
+  version: 1,
+  rooms: {},
+  exterior: {
+    siding: { material: "lap siding", finish: "lap", colour: "#9aa0a3" },
+    roof: { shape: "gable", material: "asphalt shingle", colour: "#4a4744" },
+    trim: { colour: "#f4f2ec" },
+    door: { colour: "#7a2e2a" },
+    features: [
+      { id: "t1", kind: "tree", material: "maple", colour: null, side: "left", alongStreet: false, size: "l" },
+      { id: "t2", kind: "tree", material: "pine", colour: null, side: "right", alongStreet: false, size: "m" },
+      { id: "fe", kind: "fence", material: "timber", colour: "#f0ede6", side: null, alongStreet: true, size: null },
+      { id: "po", kind: "porch", material: "concrete", colour: null, side: null, alongStreet: false, size: null },
+      { id: "dr", kind: "driveway", material: "asphalt", colour: null, side: "right", alongStreet: false, size: null },
+      { id: "sh", kind: "shrub", material: null, colour: null, side: "both", alongStreet: false, size: "s" },
+    ],
+    source: { "siding.colour": "read", features: "read" },
+    because: {},
+    observed: true,
+    notes: "",
+  },
+};
 const withoutFrame = property("street-no", { lat: LAT, lon: LON, planXBearing: 90 });
 
 const browser = await chromium.launch({
@@ -106,6 +130,11 @@ check("the roads are drawn", (by.street ?? 0) > 0, JSON.stringify(by));
 check("with kerbs", (by.kerb ?? 0) > 0);
 check("the neighbours are drawn", (by.neighbour ?? 0) > 0, JSON.stringify(by));
 check("the garage on this lot is an outbuilding, not a neighbour", (by.outbuilding ?? 0) > 0, JSON.stringify(by));
+// And the garden the photographs described.
+check("the trees and shrubs are planted", (by.planting ?? 0) > 0, JSON.stringify(by));
+check("the fence is up", (by.fence ?? 0) > 0, JSON.stringify(by));
+check("the porch and the door are there", (by.porch ?? 0) > 0, JSON.stringify(by));
+check("the drive and the path are paved", (by.driveway ?? 0) > 0, JSON.stringify(by));
 check("no photograph is on any of it", scene.photoTextures === 0, `${scene.photoTextures}`);
 check("nothing glows", scene.emissive === 0, `${scene.emissive}`);
 const names = await page.evaluate(() => [...document.querySelectorAll("[data-street-name]")].map((el) => el.textContent?.trim()));
@@ -152,6 +181,10 @@ const lookingFromAbove = () => page.waitForFunction(() => window.__camera?.targe
 await page.locator("[data-street-toggle]").click();
 await lookingFromStreet();
 await page.waitForFunction(() => window.__scene?.mode === "street", { timeout: 20_000 }).catch(() => {});
+// The flight itself takes under a second at any frame rate; give it that
+// before asking whether the camera has stopped, or a single slow frame
+// straight after a recompile reads as stillness.
+await page.waitForTimeout(2500);
 const kerbPos = await settle();
 const kerbCam = await page.evaluate(() => window.__camera);
 check("the street view is a mode of its own", (await page.evaluate(() => window.__scene?.mode)) === "street");
@@ -196,6 +229,7 @@ await page.waitForTimeout(500);
 await page.waitForFunction(() => window.__scene?.mode === "dollhouse", { timeout: 20_000 }).catch(() => {});
 check("the tour hands back to the dollhouse", (await page.evaluate(() => window.__scene?.mode)) === "dollhouse");
 await lookingFromAbove();
+await page.waitForTimeout(2500);
 const up = await settle();
 check("and the camera comes back up", up !== null && up[1] > 5, `${up}`);
 

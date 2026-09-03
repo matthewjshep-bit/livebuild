@@ -79,6 +79,15 @@ const containsHouse = (poly: Vec2[]) =>
   check("but not into the neighbour", right < 16, `${right}`);
 }
 
+// --- the map's garage on the lot decides the drive's side ---
+{
+  // The garage stands west of the house (the viewer's right from the street),
+  // and the read's bearing says nothing.
+  const garage = { outline: [[-4.5, 1], [-1.5, 1], [-1.5, 7], [-4.5, 7]] as Vec2[], kind: "garage", heightM: 2.8 };
+  const lot = deriveLot({ house, site: site([street("Maple Street", "residential", [[[-40, -12], [50, -12]]])], [garage]) });
+  check("the drive goes to the map's garage", lot.drivewaySide === "right", lot.drivewaySide);
+}
+
 // --- a road behind, nearer than the rear setback, cuts it ---
 {
   const lot = deriveLot({

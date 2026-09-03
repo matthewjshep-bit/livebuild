@@ -2,7 +2,7 @@
  * The roof covers the house, meets at a ridge where the read says, and comes
  * off in the shape the read named.
  */
-import { coverRects, roofFor } from "../src/lib/model/roof";
+import { coverRects, roofFor, roofOverRect } from "../src/lib/model/roof";
 import type { Plan } from "../src/lib/schema";
 
 let failures = 0;
@@ -84,6 +84,13 @@ const box = house([["a", [[0, 0], [10, 0], [10, 6], [0, 6]]]]);
   ]);
   const roof = roofFor(pair, { roof: { shape: "gable" } }, null)!;
   check("two rooms in a row share one roof", roof.faces.length === 4, `${roof.faces.length} faces`);
+}
+
+{
+  // A garage gets its own gable, from the same builder.
+  const faces = roofOverRect({ x0: 12, y0: 2, x1: 18, y1: 8 }, "gable", 2.6, 25, true);
+  check("a rectangle on its own gets a gable", faces.length === 4 && faces.filter((f) => f.kind === "slope").length === 2);
+  check("that sits on its eave", faces.every((f) => f.points.every((p) => p[1] >= 2.6 - 1e-9)));
 }
 
 console.log(

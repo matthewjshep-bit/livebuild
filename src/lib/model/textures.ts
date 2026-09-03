@@ -532,6 +532,35 @@ function stuccoSurface(colour: string): Surface {
 }
 
 /**
+ * Foliage: a canopy, a shrub, a hedge.
+ *
+ * Dense flecks in two tones over the leaf colour, rough, with enough relief
+ * that the light breaks over it. It does not try to be leaves; it tries to
+ * stop a sphere reading as a sphere.
+ */
+export function foliageSurface(tone: string): Surface {
+  return makeSurface(
+    `site|foliage|${tone}`,
+    WALL_PX,
+    (g, w, h, channel) => {
+      const albedo = channel === "albedo";
+      const rand = seeded(0xf011);
+      g.fillStyle = albedo ? tone : GROUND;
+      g.fillRect(0, 0, w, h);
+      for (let i = 0; i < 6000; i++) {
+        const light = rand() < 0.45;
+        const r = 2 + rand() * 5;
+        g.fillStyle = albedo ? shift(tone, light ? 26 : -30) : shift(GROUND, light ? 22 : -22);
+        g.beginPath();
+        g.ellipse(rand() * w, rand() * h, r, r * 0.6, rand() * Math.PI, 0, Math.PI * 2);
+        g.fill();
+      }
+    },
+    { roughness: 0.95, roughVariance: 0.05, relief: 2.4 },
+  );
+}
+
+/**
  * Asphalt, for the road outside.
  *
  * A fine aggregate speckle over a dark grey, a faint pale seam now and then

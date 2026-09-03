@@ -311,6 +311,8 @@ function Scene({
         site={property.site}
         planSite={planSite}
         exterior={property.exterior}
+        spec={property.spec}
+        scheme={scheme}
         showNeighbours={showNeighbours}
         labels={view.mode === "dollhouse" || view.mode === "street"}
       />

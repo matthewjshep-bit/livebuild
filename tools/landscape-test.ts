@@ -106,12 +106,15 @@ const onHouse = (p: Vec2, r = 0) => p[0] > house.x0 - r && p[0] < house.x1 + r &
     lot: lot2, house,
     features: [f("t1", "tree", { side: "left", size: "l" })],
     outbuildings: [{ outline: ring, kind: "garage" }],
-    windows: [{ center: [5, 0], width: 1.4 }],
   });
   check("a tree the read put where the garage stands is planted elsewhere, not dropped", g.trees.length === 1, `${g.trees.length}`);
   check("and not on the garage", g.trees.every((t) => !(t.at[0] > 10.5 && t.at[0] < 15.5 && t.at[1] > -1 && t.at[1] < 9)), JSON.stringify(g.trees.map((t) => t.at)));
-  check("the door steps aside from a window at the wall's middle", g.door !== null && Math.abs(g.door!.center[0] - 5) >= 1.4, `${g.door?.center[0]}`);
-  check("but stays on the front wall", g.door!.center[0] > 0.5 && g.door!.center[0] < 9.5);
+  // The lot decides where the door is - off any window - and the garden
+  // takes it as given.
+  const lot3 = deriveLot({ house, site: { ...site, buildings: [{ outline: ring, kind: "garage", heightM: 2.8 }] }, planXBearing: 90, windows: [{ center: [5, 0], width: 1.4 }] });
+  const g3 = landscapeFor({ lot: lot3, house, features: [], outbuildings: [{ outline: ring, kind: "garage" }] });
+  check("the garden's door is the lot's door, off the window", g3.door !== null && Math.abs(g3.door!.center[0] - lot3.frontDoor[0]) < 0.01 && Math.abs(g3.door!.center[0] - 5) >= 1.4, `${g3.door?.center[0]} vs ${lot3.frontDoor[0]}`);
+  check("but stays on the front wall", g3.door!.center[0] > 0.5 && g3.door!.center[0] < 9.5);
   // The wall stands outside the polygon to -0.2 and the cladding to -0.22.
   check("proud of the wall and its cladding", g.door!.center[2] - 0.03 < -0.22, `${g.door?.center[2]}`);
   const plain = landscapeFor({ lot: lot2, house, features: [], outbuildings: [] });

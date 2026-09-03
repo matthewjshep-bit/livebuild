@@ -32,6 +32,7 @@ await page.goto(`${BASE}/tour/showcase`, { waitUntil: "networkidle" });
 await page.waitForFunction(() => window.__scene && window.__scene.meshes > 0, { timeout: 60_000 });
 await page.waitForTimeout(3000);
 const scene = await page.evaluate(() => window.__scene);
+check("the showcase opens at the kerb", scene.mode === "street", scene.mode);
 const by = scene.bySurface ?? {};
 // No ceilings here: the dollhouse has none by design, or it would be a set
 // of closed boxes. They are checked on foot below.
@@ -46,16 +47,22 @@ check("the streets are named", names.includes("Maple Street") && names.includes(
 check("the outside panel is there", (await page.locator("[data-exterior-spec]").count()) === 1);
 check("the photographs are the evidence", /Built from\s+6\s+photos/i.test(await page.locator("[data-evidence]").innerText().catch(() => "")), (await page.locator("[data-evidence]").innerText().catch(() => "")).slice(0, 60));
 check("the lot is called an estimate", (await page.locator("[data-site-attribution]").count()) === 1);
-await page.screenshot({ path: "shots/SC1-showcase-dollhouse.png" });
-
-// From the kerb.
-await page.locator("[data-street-toggle]").click();
+// From the kerb, which is where it opened.
 await page.waitForFunction(() => window.__camera?.target?.[1] === 1.2, { timeout: 20_000 }).catch(() => {});
 await page.waitForTimeout(4000);
 const cam = await page.evaluate(() => window.__camera);
 check("the street view stands at eye height", cam !== null && cam.position[1] > 0.8 && cam.position[1] < 3, JSON.stringify(cam));
 check("on the road side", cam !== null && cam.position[2] < 0, JSON.stringify(cam));
 await page.screenshot({ path: "shots/SC2-showcase-street.png" });
+
+// The dollhouse is a click away, and Exit brings you back to the kerb.
+await page.locator("button", { hasText: "Dollhouse" }).click();
+await page.waitForFunction(() => window.__scene?.mode === "dollhouse", { timeout: 20_000 }).catch(() => {});
+await page.waitForTimeout(4000);
+await page.screenshot({ path: "shots/SC1-showcase-dollhouse.png" });
+await page.locator("[data-exit-view]").click();
+await page.waitForFunction(() => window.__scene?.mode === "street", { timeout: 20_000 }).catch(() => {});
+check("Exit returns to the kerb", (await page.evaluate(() => window.__scene?.mode)) === "street");
 
 // And on foot, in the kitchen: the read cabinets under a read wall.
 await page.goto(`${BASE}/tour/showcase?room=kitchen`, { waitUntil: "networkidle" });

@@ -177,12 +177,49 @@ function clipToLine(polygon: Vec2[], a: Vec2, b: Vec2, inside: Vec2): Vec2[] {
   return out;
 }
 
+/**
+ * The door, stepped sideways off any window at the wall's middle.
+ *
+ * The lot puts the door mid-wall when the map said nothing, and the model
+ * puts a window there too; a door through a window is not a door. Try the
+ * lot's spot, then a metre and a half either way, out to the corners.
+ */
+export function clearOfWindows(
+  door: Vec2,
+  house: Rect,
+  front: Side,
+  windows: Array<{ center: Vec2; width: number }>,
+): Vec2 {
+  const f = NORMAL[front];
+  const left: Vec2 = [-f[1], f[0]];
+  const right: Vec2 = [f[1], -f[0]];
+  const dot = (a: Vec2, b: Vec2) => a[0] * b[0] + a[1] * b[1];
+  const cornersOf = (r: Rect): Vec2[] => [[r.x0, r.y0], [r.x1, r.y0], [r.x1, r.y1], [r.x0, r.y1]];
+  const extent = (axis: Vec2) => cornersOf(house).reduce((m, p) => Math.max(m, dot(p, axis)), -Infinity);
+  const frontLine = extent(f);
+  const onFront = windows.filter((w) => Math.abs(dot(w.center, f) - frontLine) < 0.35);
+  const clear = (p: Vec2) => onFront.every((w) => Math.abs(dot(w.center, left) - dot(p, left)) > (w.width + 0.9) / 2 + 0.2);
+  if (clear(door)) return door;
+  const wallLeft = extent(left) - 0.6;
+  const wallRight = extent(right) - 0.6;
+  for (let step = 1.5; step < 20; step += 1.5) {
+    for (const axis of [left, right]) {
+      const p: Vec2 = [door[0] + axis[0] * step, door[1] + axis[1] * step];
+      if (dot(p, left) > wallLeft || dot(p, right) > wallRight) continue;
+      if (clear(p)) return p;
+    }
+  }
+  return door;
+}
+
 export function deriveLot(input: {
   house: Rect;
   site: PlanSite | null;
   frontDoorBearing?: number | null;
   garageBearing?: number | null;
   planXBearing?: number | null;
+  /** The house's windows, so the door is not put through one. */
+  windows?: Array<{ center: Vec2; width: number }>;
 }): Lot {
   const { house, site } = input;
   const c = centreOf(house);
@@ -192,7 +229,6 @@ export function deriveLot(input: {
   // --- the front: the nearest road, else the door's bearing, else +y ---
   let frontSide: Side = "+y";
   let frontStreet: string | null = null;
-  let kerb: Vec2 | null = null;
   // The nearest road fronts the house - among roads of the same standing. A
   // lane behind is nearer than the street in front on half the terraces in
   // the country, and nobody's front door opens onto it.
@@ -203,11 +239,6 @@ export function deriveLot(input: {
   if (nearest) {
     frontSide = sideFacing([nearest.near.point[0] - c[0], nearest.near.point[1] - c[1]]);
     frontStreet = nearest.street.name;
-    // The kerb: the road's centreline point, pulled to its near edge.
-    const p = nearest.near.point;
-    const back = Math.hypot(c[0] - p[0], c[1] - p[1]) || 1;
-    const half = roadWidth(nearest.street.kind) / 2;
-    kerb = [p[0] + ((c[0] - p[0]) / back) * half, p[1] + ((c[1] - p[1]) / back) * half];
   } else if (typeof input.frontDoorBearing === "number") {
     frontSide = sideFacing(toPlan(input.frontDoorBearing));
   }
@@ -311,7 +342,8 @@ export function deriveLot(input: {
     ];
   }
 
-  // --- the front door: where the bearing leaves the front wall, else its middle ---
+  // --- the front door: where the bearing leaves the front wall, else its
+  // middle - then off any window that stands there ---
   let frontDoor = sideMid(house, frontSide);
   if (typeof input.frontDoorBearing === "number") {
     const d = toPlan(input.frontDoorBearing);
@@ -325,6 +357,22 @@ export function deriveLot(input: {
           ? [clamp(hit[0], house.x0 + 0.6, house.x1 - 0.6), frontDoor[1]]
           : [frontDoor[0], clamp(hit[1], house.y0 + 0.6, house.y1 - 0.6)];
     }
+  }
+
+  if (input.windows?.length) frontDoor = clearOfWindows(frontDoor, house, frontSide, input.windows);
+
+  // --- the kerb: on the front street, opposite the door ---
+  //
+  // The first version stood at the street's nearest point to the middle of
+  // the house, which on a wide frontage with a door to one side looks past
+  // the door at a wall. A visitor stands opposite the door.
+  let kerb: Vec2 | null = null;
+  if (nearest) {
+    const near = closestPointOnWays(nearest.street.ways, frontDoor) ?? nearest.near;
+    const p = near.point;
+    const back = Math.hypot(frontDoor[0] - p[0], frontDoor[1] - p[1]) || 1;
+    const half = roadWidth(nearest.street.kind) / 2;
+    kerb = [p[0] + ((frontDoor[0] - p[0]) / back) * half, p[1] + ((frontDoor[1] - p[1]) / back) * half];
   }
 
   // --- the drive: toward the garage - the map's own garage on this lot

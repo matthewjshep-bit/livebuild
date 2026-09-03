@@ -100,7 +100,11 @@ const browser = await chromium.launch({
 });
 const page = await browser.newPage({ viewport: { width: 1280, height: 820 } });
 const errors = [];
-page.on("pageerror", (e) => errors.push(e.message));
+// Headless Chromium refuses the pointer lock, which walking asks for on a
+// click; that refusal is the browser's, not the page's.
+page.on("pageerror", (e) => {
+  if (!/pointer lock/i.test(e.message)) errors.push(e.message);
+});
 
 const open = async (doc) => {
   await page.goto(`${BASE}/`, { waitUntil: "networkidle" });
@@ -178,16 +182,19 @@ const settle = async () => {
 // scene readout that names the mode lags a second behind it.
 const lookingFromStreet = () => page.waitForFunction(() => window.__camera?.target?.[1] === 1.2, { timeout: 20_000 }).catch(() => {});
 const lookingFromAbove = () => page.waitForFunction(() => window.__camera?.target?.[1] === 0, { timeout: 20_000 }).catch(() => {});
-await page.locator("[data-street-toggle]").click();
+// A house with a street opens at the kerb, facing the door. The first read
+// of the mode came from the opening view; no button was pressed to get here.
+check("a house with a street opens at the kerb", scene.mode === "street", scene.mode);
 await lookingFromStreet();
-await page.waitForFunction(() => window.__scene?.mode === "street", { timeout: 20_000 }).catch(() => {});
-// The flight itself takes under a second at any frame rate; give it that
-// before asking whether the camera has stopped, or a single slow frame
-// straight after a recompile reads as stillness.
 await page.waitForTimeout(2500);
 const kerbPos = await settle();
 const kerbCam = await page.evaluate(() => window.__camera);
 check("the street view is a mode of its own", (await page.evaluate(() => window.__scene?.mode)) === "street");
+// The door is on the front wall (y = 0), stepped off the living room's
+// window, and the camera looks at it - not at the middle of the house - and
+// stands opposite it.
+check("and looks at the front door", kerbCam !== null && Math.abs(kerbCam.target[2]) < 0.05 && kerbCam.target[0] > 0.5 && kerbCam.target[0] < 9.5, JSON.stringify(kerbCam?.target));
+check("standing opposite it", kerbCam !== null && Math.abs(kerbCam.position[0] - kerbCam.target[0]) < 0.3, JSON.stringify(kerbCam));
 check("the camera stands at eye height", kerbPos !== null && kerbPos[1] > 0.8 && kerbPos[1] < 3, `${kerbPos}`);
 check("out on the street, not in the house",
   kerbCam !== null && Math.hypot(kerbCam.position[0] - kerbCam.target[0], kerbCam.position[2] - kerbCam.target[2]) >= 6,
@@ -224,14 +231,35 @@ check("the tour's first shot is the house from the street", caption.trim() === "
 await page.locator("[data-tour-toggle]").click();
 await page.waitForTimeout(500);
 
-// The tour runs in the dollhouse, so stopping it leaves us there - and the
-// camera has to come back up, not stay down on the kerb's orbit.
+// The tour runs in the dollhouse and hands back to where the tour opened:
+// the kerb, for a house with a street.
+await page.waitForFunction(() => window.__scene?.mode === "street", { timeout: 20_000 }).catch(() => {});
+check("the tour hands back to the kerb", (await page.evaluate(() => window.__scene?.mode)) === "street");
+
+// Exit goes back to the same place from anywhere: the dollhouse...
+await page.locator("button", { hasText: "Dollhouse" }).click();
 await page.waitForFunction(() => window.__scene?.mode === "dollhouse", { timeout: 20_000 }).catch(() => {});
-check("the tour hands back to the dollhouse", (await page.evaluate(() => window.__scene?.mode)) === "dollhouse");
 await lookingFromAbove();
 await page.waitForTimeout(2500);
 const up = await settle();
-check("and the camera comes back up", up !== null && up[1] > 5, `${up}`);
+check("the dollhouse stands the camera back up", up !== null && up[1] > 5, `${up}`);
+await page.locator("[data-exit-view]").click();
+await page.waitForFunction(() => window.__scene?.mode === "street", { timeout: 20_000 }).catch(() => {});
+check("Exit from the dollhouse returns to the kerb", (await page.evaluate(() => window.__scene?.mode)) === "street");
+// ...and from on foot, where the header is out of reach under a pointer
+// lock, so the walk overlay carries its own.
+await page.goto(`${BASE}/tour/${withStreet.id}?room=living`, { waitUntil: "networkidle" });
+await page.waitForFunction(() => window.__scene?.mode === "walk", { timeout: 45_000 }).catch(() => {});
+check("a room link still opens on foot", (await page.evaluate(() => window.__scene?.mode)) === "walk");
+await page.locator("[data-exit-walk]").click();
+await page.waitForFunction(() => window.__scene?.mode === "street", { timeout: 20_000 }).catch(() => {});
+check("Exit from on foot returns to the kerb", (await page.evaluate(() => window.__scene?.mode)) === "street");
+check("and forgets the room", !(await page.evaluate(() => new URL(window.location.href).searchParams.has("room"))));
+// Back to the dollhouse for the rest.
+await page.goto(`${BASE}/tour/${withStreet.id}`, { waitUntil: "networkidle" });
+await page.waitForFunction(() => window.__scene && window.__scene.meshes > 0, { timeout: 45_000 });
+await page.locator("button", { hasText: "Dollhouse" }).click();
+await page.waitForTimeout(2000);
 
 // The neighbours can be put away.
 await page.locator("[data-neighbours-toggle]").click();

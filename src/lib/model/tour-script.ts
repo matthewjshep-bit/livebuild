@@ -46,8 +46,8 @@ const SKIP = new Set(["closet", "outside", "stairs", "hallway"]);
 export function buildTour(
   plan: Plan,
   label: string,
-  /** The kerb in front of the house, when the map placed one. */
-  opening: { kerb: [number, number] } | null = null,
+  /** The kerb in front of the house, and the door it faces, when the map placed one. */
+  opening: { kerb: [number, number]; door?: [number, number] | null } | null = null,
 ): Beat[] {
   const level = Math.min(...plan.rooms.map((r) => r.level));
   const ground = plan.rooms.filter((r) => r.level === level);
@@ -64,10 +64,11 @@ export function buildTour(
   // From the kerb first, when there is one: the house as you would arrive at
   // it, before the dollhouse shows what is inside.
   if (opening) {
+    const door = opening.door ?? [cx, cy];
     beats.push({
       ms: ORBIT_MS,
       from: [opening.kerb[0], base + EYE_M, opening.kerb[1]],
-      at: [cx, base + 1.5, cy],
+      at: [door[0], base + 1.5, door[1]],
       caption: label,
       kind: "street",
     });

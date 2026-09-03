@@ -60,14 +60,43 @@ export function planCenter(plan: Plan): THREE.Vector3 {
   return new THREE.Vector3((min[0] + max[0]) / 2, midHeight, (min[1] + max[1]) / 2);
 }
 
-export function defaultOrbit(plan: Plan): Orbit {
+/** Which way the dollhouse opens: from the front of the house when it has one. */
+export function frontAzimuth(frontSide: "-y" | "+y" | "-x" | "+x" | null | undefined): number {
+  // `orbitPosition` puts the camera at sin(azimuth) along x and cos along z,
+  // so an azimuth of pi stands on the -z (north) side.
+  switch (frontSide) {
+    case "-y":
+      return Math.PI;
+    case "-x":
+      return -Math.PI / 2;
+    case "+x":
+      return Math.PI / 2;
+    default:
+      return 0;
+  }
+}
+
+export function defaultOrbit(plan: Plan, frontSide: "-y" | "+y" | "-x" | "+x" | null = null): Orbit {
   const { min, max } = planBounds(plan);
   // A taller house needs more distance, or the upper storeys leave the frame.
   const storeys = Math.max(levelsOf(plan).length, 1);
   const span = Math.max(max[0] - min[0], max[1] - min[1], 4) * (1 + (storeys - 1) * 0.28);
   // Roughly 40 degrees up: high enough to read the layout at a glance, shallow
-  // enough that the walls still convey height.
-  return { azimuth: 0, elevation: 0.66, distance: span * 1.35 };
+  // enough that the walls still convey height. From the front, when known.
+  return { azimuth: frontAzimuth(frontSide), elevation: 0.66, distance: span * 1.35 };
+}
+
+/** Where a tour opens: at the kerb when the map placed one, else the dollhouse. */
+export function defaultViewFor(streetStart: { kerb: [number, number] | null } | null | undefined): ViewState {
+  return streetStart?.kerb ? { mode: "street" } : { mode: "dollhouse" };
+}
+
+/** What the street camera looks at: the front door, a little above the ground. */
+export function streetTarget(plan: Plan, door: [number, number] | null): THREE.Vector3 {
+  const centre = planCenter(plan);
+  const at = door ? new THREE.Vector3(door[0], STREET_LOOK_Y, door[1]) : centre;
+  at.y = STREET_LOOK_Y;
+  return at;
 }
 
 /**
@@ -75,10 +104,15 @@ export function defaultOrbit(plan: Plan): Orbit {
  * house. Without a kerb - no map - it stands the default distance off, on
  * the side the dollhouse opens on, still at eye height.
  */
-export function streetOrbit(plan: Plan, kerb: [number, number] | null): Orbit {
-  const center = planCenter(plan);
-  center.y = STREET_LOOK_Y;
-  let azimuth = 0;
+export function streetOrbit(
+  plan: Plan,
+  kerb: [number, number] | null,
+  door: [number, number] | null = null,
+  frontSide: "-y" | "+y" | "-x" | "+x" | null = null,
+): Orbit {
+  // Looking at the door, standing opposite it at the kerb.
+  const center = streetTarget(plan, door);
+  let azimuth = frontAzimuth(frontSide);
   let distance = defaultOrbit(plan).distance;
   if (kerb) {
     const dx = kerb[0] - center.x;
@@ -122,8 +156,12 @@ export function CameraRig({
 }: {
   plan: Plan;
   view: ViewState;
-  /** The kerb in front of the house, where the street view starts. */
-  streetStart?: { kerb: [number, number] | null } | null;
+  /** The kerb in front of the house and the door it faces, where the street view starts. */
+  streetStart?: {
+    kerb: [number, number] | null;
+    door?: [number, number] | null;
+    frontSide?: "-y" | "+y" | "-x" | "+x" | null;
+  } | null;
   /**
    * One room being looked at on its own, or null for the whole house.
    *
@@ -141,7 +179,11 @@ export function CameraRig({
   const camera = useThree((s) => s.camera);
   const gl = useThree((s) => s.gl);
 
-  const orbit = useRef<Orbit>(defaultOrbit(plan));
+  const orbit = useRef<Orbit>(
+    view.mode === "street"
+      ? streetOrbit(plan, streetStart?.kerb ?? null, streetStart?.door ?? null, streetStart?.frontSide ?? null)
+      : defaultOrbit(plan, streetStart?.frontSide ?? null),
+  );
   const dragging = useRef(false);
   const lastPointer = useRef({ x: 0, y: 0 });
 
@@ -185,8 +227,11 @@ export function CameraRig({
     // dollhouse back up where it frames the house - a ground-level orbit
     // carried up into the dollhouse looks at the side of the roof.
     if (previous?.mode !== view.mode) {
-      if (view.mode === "street") orbit.current = streetOrbit(plan, streetStart?.kerb ?? null);
-      else if (view.mode === "dollhouse" && previous?.mode === "street") orbit.current = defaultOrbit(plan);
+      if (view.mode === "street") {
+        orbit.current = streetOrbit(plan, streetStart?.kerb ?? null, streetStart?.door ?? null, streetStart?.frontSide ?? null);
+      } else if (view.mode === "dollhouse" && previous?.mode === "street") {
+        orbit.current = defaultOrbit(plan, streetStart?.frontSide ?? null);
+      }
     }
     previousView.current = view;
   }, [view, camera, focusRoomId, plan, streetStart]);
@@ -243,7 +288,7 @@ export function CameraRig({
       element.removeEventListener("pointerup", stop);
       element.removeEventListener("pointercancel", stop);
     };
-  }, [gl, view.mode]);
+  }, [gl, view]);
 
   const scratch = useRef({
     position: new THREE.Vector3(),
@@ -277,8 +322,12 @@ export function CameraRig({
     const t = easeInOutCubic(raw);
 
     const room = focusRoomId ? plan.rooms.find((r) => r.id === focusRoomId) : null;
-    const center = room ? new THREE.Vector3(...frameRoom(plan, room).center) : planCenter(plan);
-    if (view.mode === "street") center.y = STREET_LOOK_Y;
+    const center =
+      view.mode === "street"
+        ? streetTarget(plan, streetStart?.door ?? null)
+        : room
+          ? new THREE.Vector3(...frameRoom(plan, room).center)
+          : planCenter(plan);
     // Pulling the house apart makes it bigger, so the camera has to give
     // ground or the pieces simply leave the frame - which is what happened
     // the first time, and looks like the rooms have been deleted.

@@ -71,8 +71,6 @@ export function landscapeFor(input: {
   outbuildings: Array<{ outline: Vec2[]; kind: string | null }>;
   garageBays?: number | null;
   doorColour?: string | null;
-  /** The windows on the house, so the door is not put through one. */
-  windows?: Array<{ center: Vec2; width: number }>;
 }): Landscape {
   const { lot, house, features } = input;
   const f = NORMAL[lot.front.side];
@@ -85,30 +83,8 @@ export function landscapeFor(input: {
   const houseRear = -extent(houseCorners, [-f[0], -f[1]]);
   const frontLine = extent(lot.polygon, f);
 
-  // --- the door: where the lot put it, stepped sideways off any window ---
-  //
-  // The lot's rule puts the door mid-wall when the map said nothing, and
-  // the model puts a window there too; a door through a window is not a
-  // door. Try the lot's spot, then a metre and a half either way, out to the
-  // corners.
-  const frontWindows = (input.windows ?? []).filter((w) => Math.abs(dot(w.center, f) - houseFront) < 0.35);
-  const clear = (p: Vec2) =>
-    frontWindows.every((w) => Math.abs(dot(w.center, left) - dot(p, left)) > (w.width + 0.9) / 2 + 0.2);
-  const wallLeft = extent(houseCorners, left) - 0.6;
-  const wallRight = extent(houseCorners, right) - 0.6;
-  let door = lot.frontDoor;
-  if (!clear(door)) {
-    outer: for (let step = 1.5; step < 20; step += 1.5) {
-      for (const axis of [left, right]) {
-        const p = add(lot.frontDoor, axis, step);
-        if (dot(p, left) > wallLeft || dot(p, right) > wallRight) continue;
-        if (clear(p)) {
-          door = p;
-          break outer;
-        }
-      }
-    }
-  }
+  // --- the door: where the lot put it, which is already off any window ---
+  const door = lot.frontDoor;
   // Proud of the cladding. An exterior wall stands wholly outside the room's
   // polygon - the full twenty centimetres of it - and the siding a hand
   // outside that; the first door was sixteen centimetres out, inside the

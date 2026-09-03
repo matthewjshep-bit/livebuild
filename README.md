@@ -614,9 +614,14 @@ road edge. It is an estimate, and the tour says so beside the map credit.
 The neighbours are grey masses at the height the map gives them, and can be
 put away.
 
-**And you can stand on the street.** A Street button holds the same orbit
-down at eye height and starts it at the kerb in front of the house, looking
-back at it. From there the facades stay solid - the dollhouse fades the two
+**And you can stand on the street - it is where a tour opens.** A house with
+a street opens at the kerb opposite its front door, looking at it; a house
+without one opens in the dollhouse, seen from its front. An Exit button,
+always in the header and repeated on foot where the pointer lock puts the
+header out of reach, returns to exactly that from anywhere - a tour, the
+plan, a focused room, a house pulled apart, a walk - and the second Escape
+on foot does the same. The Street button holds the same orbit down at eye
+height at the kerb, looking at the door. From there the facades stay solid - the dollhouse fades the two
 walls between you and the rooms, which is right from above and wrong from
 the pavement - and the roof is solid too, casting the shadow on the lawn
 that a house from the street has. The scripted tour opens with that shot

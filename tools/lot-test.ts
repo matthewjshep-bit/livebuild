@@ -132,12 +132,26 @@ const containsHouse = (poly: Vec2[]) =>
   const lot = deriveLot({ house, site: s, frontDoorBearing: 350, planXBearing: 90 });
   check("the door is on the front wall", lot.frontDoor[1] === 0);
   check("and west of centre for a bearing west of north", lot.frontDoor[0] < 5, `${lot.frontDoor[0].toFixed(2)}`);
+  // A visitor stands opposite the door, not opposite the middle of the house.
+  check("the kerb is opposite the door", lot.front.kerb !== null && Math.abs(lot.front.kerb![0] - lot.frontDoor[0]) < 0.01, `${lot.front.kerb} vs ${lot.frontDoor}`);
+  check("on the near edge of the road", lot.front.kerb !== null && Math.abs(lot.front.kerb![1] - -8.5) < 0.01);
   // A garage to the east: facing the house from the street (looking south),
   // east is on your left.
   const east = deriveLot({ house, site: s, garageBearing: 90, planXBearing: 90 });
   check("a garage to the east puts the drive on the viewer's left", east.drivewaySide === "left", east.drivewaySide);
   const west = deriveLot({ house, site: s, garageBearing: 270, planXBearing: 90 });
   check("and to the west on the right", west.drivewaySide === "right", west.drivewaySide);
+}
+
+// --- the door steps aside from a window at the wall's middle ---
+{
+  const s = site([street("Maple Street", "residential", [[[-40, -12], [50, -12]]])]);
+  const lot = deriveLot({ house, site: s, windows: [{ center: [5, 0], width: 1.4 }] });
+  check("the door steps off a window at the wall's middle", Math.abs(lot.frontDoor[0] - 5) >= 1.4, `${lot.frontDoor[0]}`);
+  check("but stays on the front wall", lot.frontDoor[0] > 0.5 && lot.frontDoor[0] < 9.5 && lot.frontDoor[1] === 0);
+  check("and the kerb follows it", lot.front.kerb !== null && Math.abs(lot.front.kerb![0] - lot.frontDoor[0]) < 0.01);
+  const plain = deriveLot({ house, site: s });
+  check("with no window in the way the door stays mid-wall", Math.abs(plain.frontDoor[0] - 5) < 0.01);
 }
 
 // --- determinism ---

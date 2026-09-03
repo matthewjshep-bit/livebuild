@@ -5,7 +5,7 @@ import * as THREE from "three";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 
-import { CameraRig, type ViewState } from "@/components/tour/CameraRig";
+import { CameraRig, type ViewState, defaultViewFor } from "@/components/tour/CameraRig";
 import { Lighting } from "@/components/tour/Lighting";
 import { Measure, type MeasurePoints } from "@/components/tour/Measure";
 import { ScriptedTour, recordCanvas, supportedFormat } from "@/components/tour/ScriptedTour";
@@ -45,6 +45,7 @@ import { SiteModel } from "@/components/tour/SiteModel";
 import { siteInPlan } from "@/lib/site/plan-site";
 import { exteriorLook } from "@/lib/model/exterior-look";
 import { deriveLot, houseBounds } from "@/lib/site/lot";
+import { windowsForLevel } from "@/lib/model/windows";
 
 /**
  * What is actually on screen, for the browser suite.
@@ -377,8 +378,9 @@ function Scene({
         // stand rather than a photograph to step into. Underfoot on the stairs
         // it is a way up; in the dollhouse it is a way in.
         mode={view.mode === "walk" ? "walk" : "dollhouse"}
-        // Walking into a house in pieces means nothing.
-        hidden={explode > 0}
+        // Walking into a house in pieces means nothing, and from the street
+        // the rings are behind solid walls.
+        hidden={explode > 0 || view.mode === "street"}
         onlyLevel={onlyLevel}
         walkLevel={walkLevel}
         onEnterRoom={onEnterRoom}
@@ -481,7 +483,34 @@ export function TourViewer({
   // someone directly rather than "open the tour and walk to the kitchen". It
   // replaces `?node=`, which named a photograph - a thing the tour no longer
   // has - and it drops you on your feet inside the room rather than at a lens.
-  const [view, setView] = useState<ViewState>({ mode: "dollhouse" });
+  /**
+   * Where the street view and the tour's opening shot stand: the kerb
+   * opposite the front door, and the door they look at.
+   *
+   * Above the view state, because the view a tour opens in is decided by it.
+   */
+  const streetStart = useMemo(() => {
+    const planSite = siteInPlan(property.site);
+    const house = houseBounds(property.plan);
+    if (!house) return null;
+    const lowest = Math.min(...property.plan.rooms.map((r) => r.level));
+    const lot = deriveLot({
+      house,
+      site: planSite,
+      frontDoorBearing: property.exterior?.frontDoorBearing ?? null,
+      garageBearing: property.exterior?.garage?.bearing ?? null,
+      planXBearing: property.site?.planXBearing ?? 90,
+      windows: windowsForLevel(property.plan, lowest).map((w) => ({ center: w.center, width: w.width })),
+    });
+    return {
+      kerb: lot.front.kerb ? ([lot.front.kerb[0], lot.front.kerb[1]] as [number, number]) : null,
+      door: [lot.frontDoor[0], lot.frontDoor[1]] as [number, number],
+      frontSide: lot.front.side,
+    };
+  }, [property.site, property.plan, property.exterior]);
+  /** Where a tour opens, and where Exit goes: the kerb when the map placed one, else the dollhouse. */
+  const defaultView = useMemo(() => defaultViewFor(streetStart), [streetStart]);
+  const [view, setView] = useState<ViewState>(() => defaultView);
 
   // Storeys stack in the same plan coordinates, so an unfiltered dollhouse of a
   // two-floor house shows an upstairs bedroom sitting inside the kitchen. The
@@ -564,23 +593,8 @@ export function TourViewer({
   const [tourBeatKind, setTourBeatKind] = useState<Beat["kind"] | null>(null);
   const [recording, setRecording] = useState(false);
   const stopRecording = useRef<null | (() => void)>(null);
-  /** Where the street view and the tour's opening shot stand: the kerb. */
-  const streetStart = useMemo(() => {
-    const planSite = siteInPlan(property.site);
-    const house = houseBounds(property.plan);
-    if (!house) return null;
-    const lot = deriveLot({
-      house,
-      site: planSite,
-      frontDoorBearing: property.exterior?.frontDoorBearing ?? null,
-      garageBearing: property.exterior?.garage?.bearing ?? null,
-      planXBearing: property.site?.planXBearing ?? 90,
-    });
-    return { kerb: lot.front.kerb ? ([lot.front.kerb[0], lot.front.kerb[1]] as [number, number]) : null };
-  }, [property.site, property.plan, property.exterior]);
-
   const tourBeats = useMemo(
-    () => buildTour(property.plan, property.label || "This house", streetStart?.kerb ? { kerb: streetStart.kerb } : null),
+    () => buildTour(property.plan, property.label || "This house", streetStart?.kerb ? { kerb: streetStart.kerb, door: streetStart.door } : null),
     [property.plan, property.label, streetStart],
   );
 
@@ -596,7 +610,9 @@ export function TourViewer({
     stopRecording.current?.();
     stopRecording.current = null;
     setRecording(false);
-  }, []);
+    // Back to where the tour opens: the kerb, or the dollhouse.
+    setView(defaultView);
+  }, [defaultView]);
 
   const startTour = useCallback(
     (record: boolean) => {
@@ -822,6 +838,51 @@ export function TourViewer({
   }, []);
 
   /**
+   * Exit: back to where the tour opened, from anywhere.
+   *
+   * One button that always does the same thing. On foot the only way out
+   * used to be the header, which the pointer lock made unreachable; from a
+   * tour, the plan, a focused room, a house pulled apart - each had its own
+   * way back or none. This is all of them: let the pointer go, stop the
+   * tour, put the house together, drop the focus, forget where the walker
+   * was to be dropped, and stand at the kerb or over the dollhouse.
+   */
+  const exitToDefault = useCallback(() => {
+    if (typeof document !== "undefined" && document.pointerLockElement) document.exitPointerLock?.();
+    setTouring(false);
+    setTourCaption("");
+    setTourBeatKind(null);
+    stopRecording.current?.();
+    stopRecording.current = null;
+    setRecording(false);
+    setWalkStart(null);
+    setFocusRoomId(null);
+    setPick(null);
+    setExplode(0);
+    setOnlyLevel(null);
+    setView(defaultView);
+    const url = new URL(window.location.href);
+    url.searchParams.delete("room");
+    window.history.replaceState(null, "", url);
+  }, [defaultView]);
+
+  /**
+   * Escape on foot, once the pointer is free, is Exit.
+   *
+   * The first Escape is the browser's: it hands the pointer back, and
+   * stealing it would leave someone locked in. The second, with the pointer
+   * free, is a person saying "out".
+   */
+  useEffect(() => {
+    if (view.mode !== "walk" || locked) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") exitToDefault();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [view.mode, locked, exitToDefault]);
+
+  /**
    * `?room=` drops you inside that room, on your feet.
    *
    * After mount rather than in the initial state, because it walks: `enterRoom`
@@ -896,6 +957,14 @@ export function TourViewer({
               {activeRoom.label}
             </span>
           )}
+          <button
+            onClick={exitToDefault}
+            data-exit-view
+            title="Back to where the tour opens"
+            className="rounded border border-accent/60 px-3 py-1 text-xs text-accent transition hover:bg-ink-600"
+          >
+            Exit
+          </button>
           <button
             onClick={() => {
               setExplode(0);
@@ -1226,10 +1295,25 @@ export function TourViewer({
               <p className="mt-1 text-[11px] leading-relaxed text-mist-400">
                 W A S D or the arrow keys to move · shift to hurry
                 <br />
-                Esc to let the pointer go
+                Esc to let the pointer go · Esc again to leave
               </p>
             </div>
           </div>
+        )}
+        {/*
+          Exit on foot, beside the overlay rather than inside it. The overlay
+          is the pointer lock's click target, and a native listener on it
+          fires before React can stop a child button's click from reaching
+          it - so an Exit inside it asked for the lock on the way out.
+        */}
+        {view.mode === "walk" && !locked && (
+          <button
+            data-exit-walk
+            onClick={exitToDefault}
+            className="absolute bottom-16 left-1/2 z-20 -translate-x-1/2 rounded border border-accent/60 bg-ink-800/85 px-4 py-1.5 text-xs text-accent backdrop-blur transition hover:bg-ink-600"
+          >
+            Exit
+          </button>
         )}
 
         {/*
@@ -1308,7 +1392,7 @@ export function TourViewer({
           {view.mode === "dollhouse"
             ? "Drag to orbit · scroll to zoom · double-click a room to walk in"
             : view.mode === "street"
-              ? "From the kerb · drag to walk round the house · scroll to come closer"
+              ? "From the kerb · drag to walk round the house · scroll to come closer · double-click a room to walk in"
               : view.mode === "walk"
               ? "Walking · W A S D to move · Esc to release the pointer"
               : measuring

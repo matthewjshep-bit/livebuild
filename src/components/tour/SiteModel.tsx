@@ -108,6 +108,7 @@ export function SiteModel({
       frontDoorBearing: exterior?.frontDoorBearing ?? null,
       garageBearing: exterior?.garage?.bearing ?? null,
       planXBearing: site?.planXBearing ?? 90,
+      windows: windowsForLevel(plan, Math.min(...plan.rooms.map((r) => r.level))).map((w) => ({ center: w.center, width: w.width })),
     });
     const textures = canTexture();
 
@@ -176,7 +177,6 @@ export function SiteModel({
       outbuildings: planSite.buildings.filter((b) => inLot(b.outline)).map((b) => ({ outline: b.outline, kind: b.kind })),
       garageBays: exterior?.garage?.bays ?? null,
       doorColour: look.doorColour,
-      windows: windowsForLevel(plan, Math.min(...plan.rooms.map((r) => r.level))).map((w) => ({ center: w.center, width: w.width })),
     });
 
     const concrete = textures ? floorSurface("concrete", CONCRETE) : null;

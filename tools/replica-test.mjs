@@ -60,6 +60,13 @@ await check("street", "/tour/demo-house", async () => {
   await page.waitForTimeout(2500);
 });
 
+// The showcase opens at its kerb, and Exit from on foot returns there.
+await check("showcase kerb", "/tour/showcase");
+await check("showcase after exit", "/tour/showcase?room=kitchen", async () => {
+  await page.locator("[data-exit-walk]").click();
+  await page.waitForTimeout(2500);
+});
+
 const offenders = readings.filter((r) => r.photoTextures !== 0);
 const rendered = readings.every((r) => r.meshes > 0 && r.triangles > 0);
 const ok = offenders.length === 0 && rendered && errors.length === 0;

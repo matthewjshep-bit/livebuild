@@ -65,6 +65,7 @@ import {
   storeIntakePhoto,
 } from "@/lib/storage/intake";
 import { M_PER_FT } from "@/lib/units";
+import { SITE_ATTRIBUTION } from "@/lib/site/plan-site";
 
 /**
  * Three screens, and the middle one runs itself.
@@ -794,7 +795,21 @@ function NewTourInner() {
         // east.
         site:
           listingSite && prepared
-            ? { ...listingSite, planXBearing: 90 + prepared.rotationDeg }
+            ? {
+                ...listingSite,
+                planXBearing: 90 + prepared.rotationDeg,
+                // And the surroundings, kept as geography with the frame to
+                // project them: the streets, the neighbours, and the credit
+                // the map's licence asks for wherever they are drawn.
+                ...(evidence.surroundings
+                  ? {
+                      frame: evidence.surroundings.frame,
+                      streets: evidence.surroundings.streets,
+                      buildings: evidence.surroundings.buildings,
+                      attribution: [SITE_ATTRIBUTION],
+                    }
+                  : {}),
+              }
             : listingSite
               ? { ...listingSite, planXBearing: 90 }
               : null,

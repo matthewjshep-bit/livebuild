@@ -1,7 +1,7 @@
 import type { Exterior } from "@/lib/schema";
 
 /** What a listing lookup returns. Shared by the server route and the wizard. */
-import type { Street } from "@/lib/listing/streets";
+import type { NearbyBuilding, Street } from "@/lib/listing/streets";
 
 export type ListingFacts = {
   beds: number | null;
@@ -64,6 +64,8 @@ export type ListingFootprint = {
   };
   /** The roads round it, for orienting a drawing. Empty when the map has none. */
   streets?: Street[];
+  /** The other buildings within eighty metres, for showing the house among them. */
+  buildings?: NearbyBuilding[];
 };
 
 /**

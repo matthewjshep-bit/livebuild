@@ -532,6 +532,46 @@ function stuccoSurface(colour: string): Surface {
 }
 
 /**
+ * Asphalt, for the road outside.
+ *
+ * A fine aggregate speckle over a dark grey, a faint pale seam now and then
+ * where a repair was made, and almost no relief - a road is the flattest
+ * thing in the scene, and the texture's job is to stop it reading as a strip
+ * of paint.
+ */
+export function asphaltSurface(tone = "#4a4b4d"): Surface {
+  return makeSurface(
+    `site|asphalt|${tone}`,
+    WALL_PX,
+    (g, w, h, channel) => {
+      const albedo = channel === "albedo";
+      const rand = seeded(0xa5fa);
+      g.fillStyle = albedo ? tone : GROUND;
+      g.fillRect(0, 0, w, h);
+      // Aggregate.
+      g.globalAlpha = albedo ? 0.22 : 0.3;
+      for (let i = 0; i < 9000; i++) {
+        const bright = rand() < 0.5;
+        g.fillStyle = albedo ? (bright ? "#fff" : "#000") : bright ? shift(GROUND, 10) : shift(GROUND, -8);
+        g.fillRect(rand() * w, rand() * h, 1.2, 1.2);
+      }
+      g.globalAlpha = 1;
+      // A repair seam or two.
+      for (let i = 0; i < 3; i++) {
+        const x = rand() * w;
+        g.strokeStyle = albedo ? "rgba(255,255,255,0.08)" : shift(GROUND, -6);
+        g.lineWidth = 3;
+        g.beginPath();
+        g.moveTo(x, 0);
+        g.lineTo(x + (rand() - 0.5) * 40, h);
+        g.stroke();
+      }
+    },
+    { roughness: 0.92, roughVariance: 0.05, relief: 0.6 },
+  );
+}
+
+/**
  * Asphalt shingle on the roof: courses of tabs, staggered, with a dark
  * line at each course. The colour is the read's roof colour or a dark grey.
  */

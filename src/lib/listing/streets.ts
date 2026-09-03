@@ -19,6 +19,8 @@
 
 export type Street = {
   name: string;
+  /** The `highway` tag of its first way: residential, tertiary, primary... */
+  kind?: string;
   /**
    * The centreline as OpenStreetMap holds it, in [lat, lon], one run per way.
    *
@@ -70,7 +72,7 @@ export type OverpassWay = {
  * would otherwise be labelled five times down its own length.
  */
 export function streetsFrom(elements: OverpassWay[]): Street[] {
-  const byName = new Map<string, Array<Array<[number, number]>>>();
+  const byName = new Map<string, { kind: string; ways: Array<Array<[number, number]>> }>();
 
   for (const element of elements) {
     if (element.type !== "way") continue;
@@ -93,9 +95,26 @@ export function streetsFrom(elements: OverpassWay[]): Street[] {
         [Math.round(p.lat * 1e6) / 1e6, Math.round(p.lon * 1e6) / 1e6] as [number, number],
     );
     const existing = byName.get(name);
-    if (existing) existing.push(points);
-    else byName.set(name, [points]);
+    if (existing) existing.ways.push(points);
+    else byName.set(name, { kind, ways: [points] });
   }
 
-  return [...byName].map(([name, ways]) => ({ name, ways }));
+  return [...byName].map(([name, { kind, ways }]) => ({ name, kind, ways }));
 }
+
+/**
+ * A building near the house, as the map holds it.
+ *
+ * The outline in [lat, lon] like a street, and what the map knows of its
+ * height - which is usually nothing, sometimes a storey count, rarely metres.
+ * Kept so the house can be shown among its neighbours rather than alone on a
+ * lawn: how a building sits on its street is half of what a photograph of it
+ * shows, and none of it was being kept.
+ */
+export type NearbyBuilding = {
+  ring: Array<[number, number]>;
+  kind: string | null;
+  levels: number | null;
+  heightM: number | null;
+  wayId: number;
+};

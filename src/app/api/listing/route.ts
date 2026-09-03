@@ -106,6 +106,7 @@ async function outlineFor(
         attribution: OSM_ATTRIBUTION,
         frame: prepared.frame,
         streets: found.streets,
+        buildings: found.buildings,
       },
       point: located,
       exterior: exterior

@@ -9,6 +9,7 @@ import { GOOGLE_ATTRIBUTION } from "@/lib/site/geo";
 import { mergeExterior } from "@/lib/site/osm";
 import { syntheticRing } from "@/lib/site/trace";
 import type { Exterior } from "@/lib/schema";
+import type { NearbyBuilding, Street } from "@/lib/listing/streets";
 
 /**
  * Everything known about a house before anything is built.
@@ -53,6 +54,16 @@ export type BuildEvidence = {
   storeys: number;
   /** What it worked out and why, in the order it worked it out. */
   notes: string[];
+  /**
+   * The streets and neighbours the map returned, with the frame to put them
+   * on the plan. Optional: an evidence record saved before this existed
+   * resumes without them, and a house with no map has none.
+   */
+  surroundings?: {
+    frame: NonNullable<ListingFootprint["frame"]>;
+    streets: Street[];
+    buildings: NearbyBuilding[];
+  } | null;
 };
 
 export type GatherInput<T extends BuildPhoto> = {
@@ -334,6 +345,22 @@ export async function gatherEvidence<T extends BuildPhoto>(
     shapeFrom,
     storeys,
     notes,
+    // The frame the drawing pad drew against comes first: that is what the
+    // rooms were registered to. A traced or invented ring has its own frame
+    // and whatever roads the listing found.
+    surroundings: input.footprint?.frame
+      ? {
+          frame: input.footprint.frame,
+          streets: input.footprint.streets ?? [],
+          buildings: input.footprint.buildings ?? [],
+        }
+      : footprint?.frame
+        ? {
+            frame: footprint.frame,
+            streets: input.footprint?.streets ?? [],
+            buildings: input.footprint?.buildings ?? [],
+          }
+        : null,
   };
 
   return { evidence, photos: labelled };

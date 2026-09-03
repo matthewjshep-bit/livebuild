@@ -43,6 +43,7 @@ export function Lighting({
   explode = 0,
   levels = null,
   quality = "medium",
+  fog = false,
 }: {
   site: Site | null | undefined;
   dayOfYear: number;
@@ -62,6 +63,8 @@ export function Lighting({
   levels?: number[] | null;
   /** Decides the shadow map's resolution, and nothing else here. */
   quality?: Quality;
+  /** Haze toward the edge of the ground, when there is ground to have an edge. */
+  fog?: boolean;
 }) {
   const scene = useThree((s) => s.scene);
   const sun = useMemo(
@@ -75,8 +78,15 @@ export function Lighting({
     // zenith blue was here, flat and saturated, and the model sat in it like a
     // specimen in a tank. The horizon, lifted towards white, reads as air.
     const [r, g, b] = sun.sky.horizon;
-    scene.background = new THREE.Color(r, g, b).lerp(new THREE.Color("#ffffff"), 0.45);
-  }, [scene, sun]);
+    const background = new THREE.Color(r, g, b).lerp(new THREE.Color("#ffffff"), 0.45);
+    scene.background = background;
+    // The ground disc ends at two hundred metres, which is also the far
+    // plane. Fogged to the background from ninety, its edge is never seen.
+    scene.fog = fog ? new THREE.Fog(background, 90, 190) : null;
+    return () => {
+      scene.fog = null;
+    };
+  }, [scene, sun, fog]);
 
   const lampLights = lamps ? <Lamps plan={plan} explode={explode} /> : null;
 

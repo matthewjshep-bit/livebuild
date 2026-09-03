@@ -41,6 +41,8 @@ import { RoomSpecPanel } from "@/components/tour/RoomSpecPanel";
 import { walkStartFor } from "@/lib/model/focus";
 import { levelName, levelsOf } from "@/lib/plan/geometry";
 import type { Plan, Property } from "@/lib/schema";
+import { SiteModel } from "@/components/tour/SiteModel";
+import { siteInPlan } from "@/lib/site/plan-site";
 
 /**
  * What is actually on screen, for the browser suite.
@@ -206,6 +208,7 @@ function Scene({
   walkStart,
   quality,
   furnished,
+  showNeighbours,
 }: {
   property: Property;
   view: ViewState;
@@ -231,10 +234,13 @@ function Scene({
   walkStart: { position: [number, number]; level: number; yaw: number } | null;
   quality: Quality;
   furnished: boolean;
+  showNeighbours: boolean;
 }) {
   // Which storey the walker is standing on, which changes under them on the
   // stairs rather than being chosen from the toolbar.
   const [walkLevel, setWalkLevel] = useState(0);
+  // The surroundings in plan metres, or null for a house that has none.
+  const planSite = useMemo(() => siteInPlan(property.site), [property.site]);
   const walkState = useRef<WalkState>({ x: 0, y: 0, level: 0, yaw: 0 });
 
   return (
@@ -253,6 +259,9 @@ function Scene({
         // you. It changes on the stairs without being asked.
         levels={view.mode === "walk" ? [walkLevel] : null}
         quality={quality}
+        // Air between the house and the edge of its ground, so the ground
+        // ends in haze rather than a line. Indoors there is no horizon.
+        fog={planSite !== null && view.mode !== "walk"}
       />
 
       <CameraRig
@@ -285,6 +294,15 @@ function Scene({
         explode={explode}
         exterior={property.exterior}
         site={property.site}
+      />
+
+      <SiteModel
+        plan={property.plan}
+        site={property.site}
+        planSite={planSite}
+        exterior={property.exterior}
+        showNeighbours={showNeighbours}
+        labels={view.mode === "dollhouse"}
       />
 
       <Measure points={measurePoints} displayUnits={property.displayUnits} />
@@ -560,6 +578,14 @@ export function TourViewer({
    * are part of what is being bought and part of what the scope prices.
    */
   const [furnished, setFurnished] = useState(false);
+  /**
+   * Whether the buildings next door are drawn.
+   *
+   * On by default: how a house sits among its neighbours is half of what a
+   * photograph of it shows. Off when they are in the way of the house.
+   */
+  const [showNeighbours, setShowNeighbours] = useState(true);
+  const hasSurroundings = useMemo(() => siteInPlan(property.site) !== null, [property.site]);
 
   // Which storey the drawing shows. Separate from the dollhouse's floor filter:
   // a plan is always of one floor, whereas the model can show them stacked.
@@ -817,6 +843,20 @@ export function TourViewer({
           >
             Dollhouse
           </button>
+          {/* Only a house that knows its neighbours can hide them. */}
+          {hasSurroundings && (
+            <button
+              onClick={() => setShowNeighbours((v) => !v)}
+              data-neighbours-toggle
+              className={`rounded border px-3 py-1 text-xs transition ${
+                showNeighbours
+                  ? "border-ink-500 text-mist-200 hover:bg-ink-600"
+                  : "border-ink-600 text-mist-500 hover:bg-ink-600"
+              }`}
+            >
+              Neighbours
+            </button>
+          )}
           <button
             onClick={() => (touring ? finishTour() : startTour(false))}
             data-tour-toggle
@@ -1038,6 +1078,7 @@ export function TourViewer({
             walkStart={walkStart}
             quality={quality}
             furnished={furnished}
+            showNeighbours={showNeighbours}
           />
         </Canvas>
         )}
@@ -1167,6 +1208,13 @@ export function TourViewer({
               Sun {Math.round(solarPosition(property.site, dayOfYearValue, hour).altitudeDeg)}° up,
               bearing {Math.round(solarPosition(property.site, dayOfYearValue, hour).azimuthDeg)}°
             </div>
+            {/* The map's licence asks for the credit wherever its data is
+                drawn, and the lot is a guess and should say so. */}
+            {hasSurroundings && (
+              <div className="mt-1 text-[10px] text-mist-500" data-site-attribution>
+                Map data © OpenStreetMap contributors · lot boundary estimated
+              </div>
+            )}
           </div>
         )}
 

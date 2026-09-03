@@ -124,6 +124,44 @@ export const Grade = z.enum(["good", "fair", "dated", "poor", "not_visible"]);
  * Nullish because a house drawn by hand or built from photographs has no site,
  * and the lighting falls back to a fixed studio key light for those.
  */
+const LatLon = z.tuple([z.number(), z.number()]);
+
+/**
+ * How a point on the map becomes a point on this plan.
+ *
+ * The same four numbers `prepareFootprint` works out while squaring the
+ * building up - the centroid it projected about, the turn, the corner it
+ * moved to zero, the area nudge. The wizard has carried them since the
+ * satellite backdrop; the built house threw them away, which is why nothing
+ * outside the walls could ever be put where it really is.
+ */
+export const SitePlanFrame = z.object({
+  centre: z.object({ lat: z.number(), lon: z.number() }),
+  rotationDeg: z.number(),
+  offset: z.tuple([z.number(), z.number()]),
+  scale: z.number().positive(),
+});
+export type SitePlanFrame = z.infer<typeof SitePlanFrame>;
+
+/** A named road near the house, as OpenStreetMap holds it, one run per way. */
+export const SiteStreet = z.object({
+  name: z.string(),
+  /** The `highway` tag: residential, tertiary... Decides how wide it is drawn. */
+  kind: z.string().nullish(),
+  ways: z.array(z.array(LatLon)),
+});
+export type SiteStreet = z.infer<typeof SiteStreet>;
+
+/** A building near the house: its outline, and what the map says of its height. */
+export const SiteBuilding = z.object({
+  ring: z.array(LatLon).min(3),
+  kind: z.string().nullish(),
+  levels: z.number().int().positive().nullish(),
+  heightM: z.number().positive().nullish(),
+  wayId: z.number().nullish(),
+});
+export type SiteBuilding = z.infer<typeof SiteBuilding>;
+
 export const Site = z.object({
   lat: z.number().min(-90).max(90),
   lon: z.number().min(-180).max(180),
@@ -135,6 +173,22 @@ export const Site = z.object({
    * degrees round from east.
    */
   planXBearing: z.number().default(90),
+  /**
+   * The surroundings, kept as geography plus the frame to project it with.
+   *
+   * Lat/lon rather than plan metres, because that is what the map lookup
+   * returns and what a later re-fit of the building would have to re-project
+   * anyway; the one projection lives in `siteInPlan`, on top of the
+   * round-tripped `latLonToPlan`. All absent on a house built before this
+   * existed, or drawn by hand - and absence draws nothing, as it always did.
+   */
+  frame: SitePlanFrame.nullish(),
+  // Optional rather than defaulted, so a site written by hand - every suite
+  // and every older document does - is still a site without them.
+  streets: z.array(SiteStreet).nullish(),
+  buildings: z.array(SiteBuilding).nullish(),
+  /** ODbL requires it wherever the map's data is shown. */
+  attribution: z.array(z.string()).nullish(),
 });
 export type Site = z.infer<typeof Site>;
 

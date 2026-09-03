@@ -1,6 +1,6 @@
 import "server-only";
 
-import { type Street, streetsFrom } from "@/lib/listing/streets";
+import { type Street, streetsFrom, type NearbyBuilding } from "@/lib/listing/streets";
 
 /**
  * The building's real outline, from OpenStreetMap.
@@ -39,6 +39,15 @@ const MIRRORS = [
 
 /** How far from the point to look for a building, in metres. */
 const SEARCH_RADIUS_M = 30;
+/**
+ * How far out the neighbours are fetched.
+ *
+ * Wide enough for the houses either side and across the road, which is what
+ * a photograph from the street shows behind and beside the house. Bounded,
+ * because a dense terrace at twice this returns a hundred buildings for a
+ * lookup that is supposed to feel instant.
+ */
+const NEIGHBOUR_RADIUS_M = 80;
 
 /**
  * How far to look for streets. Far enough to see the corner, near enough to
@@ -92,6 +101,14 @@ export type FetchedFootprint = {
    * rather than discarding with it.
    */
   outbuildings: Array<{ bearing: number; kind: string }>;
+  /**
+   * Every other building the query returned, outline and all.
+   *
+   * The neighbours used to be fetched and thrown away. They are what puts the
+   * house on its street rather than on a lawn in a void, so they are kept -
+   * as geography, to be projected with the same frame as everything else.
+   */
+  buildings: NearbyBuilding[];
 };
 
 async function overpass(query: string): Promise<unknown> {
@@ -176,7 +193,7 @@ export async function fetchFootprint(
    */
   const query = `[out:json][timeout:25];
 (
-  way(around:${SEARCH_RADIUS_M},${lat},${lon})["building"];
+  way(around:${NEIGHBOUR_RADIUS_M},${lat},${lon})["building"];
   way(around:${STREET_RADIUS_M},${lat},${lon})["highway"]["name"];
 );
 out geom;`;
@@ -233,16 +250,25 @@ out geom;`;
         }
       }
 
+      // How near the building comes to the query point at all - what the
+      // old thirty-metre query answered by returning it or not.
+      const nearest = points.reduce((m, [x, y]) => Math.min(m, Math.hypot(x, y)), Infinity);
+
       return {
         element,
         areaSqm,
         inside,
         centroid,
         distance: Math.hypot(centroid[0], centroid[1]),
+        nearest,
       };
     });
 
+  // The query reaches eighty metres now, for the neighbours. The house is
+  // still chosen among the buildings the thirty-metre query would have
+  // returned: any that comes within that of the point, or contains it.
   const candidates = measured
+    .filter((c) => c.inside || c.nearest <= SEARCH_RADIUS_M)
     .filter((c) => !OUTBUILDINGS.has(c.element.tags?.building ?? ""))
     .filter((c) => c.areaSqm >= MIN_HOUSE_SQM);
 
@@ -270,6 +296,13 @@ out geom;`;
   const outbuildings = measured
     .filter((c) => c.element.id !== chosen.id)
     .filter((c) => OUTBUILDINGS.has(c.element.tags?.building ?? ""))
+    // On this parcel, not the neighbour's: the wider query would otherwise
+    // hand the driveway to next door's garage.
+    .filter(
+      (c) =>
+        Math.hypot(c.centroid[0] - chosenCentroid[0], c.centroid[1] - chosenCentroid[1]) <=
+        SEARCH_RADIUS_M,
+    )
     .map((c) => ({
       kind: c.element.tags?.building ?? "",
       bearing:
@@ -279,12 +312,39 @@ out geom;`;
         360,
     }));
 
+  const buildings: NearbyBuilding[] = measured
+    .filter((c) => c.element.id !== chosen.id)
+    .map((c) => {
+      const tags = c.element.tags ?? {};
+      const ring = c.element.geometry!.map(
+        (p) => [Math.round(p.lat * 1e6) / 1e6, Math.round(p.lon * 1e6) / 1e6] as [number, number],
+      );
+      if (
+        ring.length > 1 &&
+        ring[0][0] === ring[ring.length - 1][0] &&
+        ring[0][1] === ring[ring.length - 1][1]
+      ) {
+        ring.pop();
+      }
+      const levels = Number.parseInt(tags["building:levels"] ?? "", 10);
+      const heightM = Number.parseFloat((tags.height ?? "").replace(/[^0-9.]/g, ""));
+      return {
+        ring,
+        kind: tags.building && tags.building !== "yes" ? tags.building : null,
+        levels: Number.isFinite(levels) && levels > 0 ? levels : null,
+        heightM: Number.isFinite(heightM) && heightM > 0 ? heightM : null,
+        wayId: c.element.id,
+      };
+    })
+    .filter((b) => b.ring.length >= 3);
+
   return {
     ring,
     tags: chosen.tags ?? {},
     wayId: chosen.id,
     outbuildings,
     streets: streetsFrom(data.elements ?? []),
+    buildings,
   };
 }
 

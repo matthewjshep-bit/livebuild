@@ -589,6 +589,20 @@ just proud of the partition's, following the same door-cut segments the
 exploded view uses, with the windows cut out so a brick wall does not cover
 its own glass. Every other room draws nothing extra.
 
+**The house is on its street.** The map lookup has always returned the
+named roads round the building and the buildings next door in the same
+request as the outline, and the drawing pad has drawn the roads for
+orientation - then the built house threw all of it away, and the tour showed
+a building floating in a void. The site now keeps the streets and the
+neighbours as the map holds them, with the frame the building was squared up
+in, and one projection puts them on the plan at their true angle and distance
+to the walls. The lot is *derived*: no data source has the parcel, so the
+nearest road is the front, typical setbacks fill the other sides, a
+neighbour or a second road shortens them, and the lawn is cut back from every
+road edge. It is an estimate, and the tour says so beside the map credit.
+The neighbours are grey masses at the height the map gives them, and can be
+put away.
+
 **And the outside is a house.** The site read returns what the walls are
 clad in and what shape the roof is, with its ridge bearing and pitch, and
 until now the street saw an untextured box with its top open. The free text

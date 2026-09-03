@@ -93,11 +93,54 @@ const beyond = Math.hypot(pressed.x - forward.x, pressed.y - forward.y);
 check("holding forward against a wall does not push through it", beyond < 0.6,
   `drifted a further ${beyond.toFixed(2)} m`);
 
+// --- the new controls: a drag looks, Q turns, a click walks ---
+const box = await page.locator("canvas").boundingBox();
+const cx = box.x + box.width / 2;
+const cy = box.y + box.height / 2;
+const before = await walker();
+await page.mouse.move(cx, cy);
+await page.mouse.down();
+await page.mouse.move(cx + 220, cy, { steps: 12 });
+await page.mouse.up();
+await page.waitForTimeout(600);
+const dragged = await walker();
+check("dragging turns the head", Math.abs(dragged.yaw - before.yaw) > 0.3, `${before.yaw?.toFixed(2)} → ${dragged.yaw?.toFixed(2)}`);
+check("and does not move the feet", Math.hypot(dragged.x - before.x, dragged.y - before.y) < 0.05);
+await page.keyboard.down("q");
+await page.waitForTimeout(700);
+await page.keyboard.up("q");
+await page.waitForTimeout(300);
+const turned = await walker();
+check("Q turns without the mouse", turned.yaw > dragged.yaw + 0.2, `${dragged.yaw?.toFixed(2)} → ${turned.yaw?.toFixed(2)}`);
+// Look level and click on the floor a little ahead: the walker glides there.
+await page.mouse.move(cx, cy);
+await page.mouse.down();
+await page.mouse.move(cx, cy - Math.round(turned.pitch / 0.0045), { steps: 6 });
+await page.mouse.up();
+await page.waitForTimeout(400);
+const standing = await walker();
+// Down the floor from the horizon until a click lands on floor with room to
+// stand: how far ahead a pixel is depends on where the wall is.
+let asked = null;
+for (const dy of [300, 240, 180, 340, 120]) {
+  await page.mouse.click(cx, cy + dy);
+  await page.waitForTimeout(250);
+  asked = await walker();
+  if (asked?.gliding) break;
+}
+check("a click on the floor starts a walk", asked?.gliding === true, JSON.stringify({ gliding: asked?.gliding }));
+await page.waitForTimeout(3000);
+const walked = await walker();
+const glided = Math.hypot(walked.x - standing.x, walked.y - standing.y);
+check("and the walker gets there", glided > 0.4, `${glided.toFixed(2)} m`);
+check("still inside the house", walked.x > -0.1 && walked.x < 9.6 && walked.y > -0.1 && walked.y < 10.1);
+check("no pointer lock is asked for", (await page.evaluate(() => document.pointerLockElement)) === null);
+
 check("no console errors", errors.length === 0, errors.slice(0, 2).join(" | "));
 
 console.log(
   failures === 0
-    ? `WALK MODEL OK - dropped into a room at eye height, walked ${travelled.toFixed(1)} m, stopped by a wall`
+    ? `WALK MODEL OK - dropped into a room at eye height, walked ${travelled.toFixed(1)} m, stopped by a wall; a drag looks, Q turns, a click walks`
     : `WALK MODEL BROKEN - ${failures} failures`,
 );
 await browser.close();

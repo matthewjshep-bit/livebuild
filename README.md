@@ -621,7 +621,21 @@ always in the header and repeated on foot where the pointer lock puts the
 header out of reach, returns to exactly that from anywhere - a tour, the
 plan, a focused room, a house pulled apart, a walk - and the second Escape
 on foot does the same. The Street button holds the same orbit down at eye
-height at the kerb, looking at the door. From there the facades stay solid - the dollhouse fades the two
+height at the kerb, looking at the door.
+
+**On foot, you click where you want to stand.** The walker took its heading
+from a pointer lock, which a browser may refuse, a touch screen never has,
+and Escape gives back - so the arrow keys could strafe but never turn, a
+step over a threshold stopped you dead with no sign of why, and the only
+way out was a header the lock put out of reach. Now a drag anywhere on the
+canvas turns the head, with a little momentum after letting go; a click is
+a place to walk to, reached through the doorways at walking pace
+(`src/lib/model/route.ts` finds the way, breadth first over the plan's
+doors); the rings on the floor are the other rooms, and the mini-map and
+the scope rail take you to a room by name; W A S D still walk and Q and E
+turn; a pad on screen does the same for a finger. A step that would be
+refused is tried each way on its own first, so a threshold crossed on the
+diagonal does not stop you. Escape leaves. From there the facades stay solid - the dollhouse fades the two
 walls between you and the rooms, which is right from above and wrong from
 the pavement - and the roof is solid too, casting the shadow on the lawn
 that a house from the street has. The scripted tour opens with that shot

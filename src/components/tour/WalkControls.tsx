@@ -1,6 +1,5 @@
 "use client";
 
-import { PointerLockControls } from "@react-three/drei";
 import { useFrame, useThree } from "@react-three/fiber";
 import { useEffect, useMemo, useRef } from "react";
 import * as THREE from "three";
@@ -8,45 +7,44 @@ import * as THREE from "three";
 import {
   EYE_HEIGHT,
   type Collider,
+  blocked,
   collidersFor,
   groundAt,
   moveWithSliding,
+  roomAt,
   startingPoint,
 } from "@/lib/model/collide";
+import { DRAG_SENSITIVITY, LOOK_DAMPING, type Look, damped, headingVector, turnBy } from "@/lib/model/look";
+import { routeTo } from "@/lib/model/route";
 import { MAX_STEP } from "@/lib/model/stairs";
 import type { Plan, Vec2 } from "@/lib/schema";
 
 /**
- * Walking through the model on your own feet.
+ * On foot: click where you want to stand, drag to look around.
  *
- * The tour could already step between photographs and orbit the dollhouse, and
- * neither is the same thing as being inside the house. This is the mode where
- * the model stops being a diagram you inspect and becomes somewhere you are -
- * and it is the reason to have built real walls, headers above the doors and
- * textured floors at all, since none of that is legible from twenty metres up.
- *
- * Three things make the difference between this feeling smooth and feeling
- * like a prototype, all learned from reading a build that got it right:
- *
- * - Pointer lock owns the mouse look. Deltas are applied to a Euler as they
- *   arrive and the camera is never re-aimed with `lookAt`, so there is no
- *   per-frame correction to jitter against.
- * - Movement runs on a fixed timestep rather than per frame. A dropped frame
- *   then costs a dropped step instead of one enormous one, which is what
- *   otherwise throws a walker through a wall.
- * - Velocity is damped toward its target instead of snapped to it, and the eye
- *   height eases, so a stairwell reads as a climb rather than a jolt.
+ * The first walker took its heading from a pointer lock. Without the lock -
+ * which a browser may refuse, a touch screen never has, and Escape gives
+ * back - the arrow keys could strafe but never turn, and there was no way
+ * to say "over there". This one owns its own heading. A drag anywhere on
+ * the canvas turns the head, with a little momentum after letting go; a
+ * click - a press that did not drag - is a place to walk to, reached through
+ * the doorways at walking pace; the keys still work, and Q and E turn
+ * without the mouse. Nothing here can be got stuck in.
  */
 
 const WALK_SPEED = 1.5; // m/s, an unhurried indoor pace
 const RUN_SPEED = 3.0;
 const ACCEL = 11;
 const STEP = 1 / 120;
-/** How fast the eye settles to the height of the floor underfoot. */
 const EYE_EASE = 7;
+/** Radians per second, holding Q or E. */
+const TURN_RATE = 1.8;
+/** A press that moved less than this is a click, not a drag. */
+const CLICK_PIXELS = 6;
+/** Close enough to a waypoint to count as reached. */
+const ARRIVE_M = 0.15;
 
 export type WalkState = {
-  /** Plan-space position, read by the minimap without re-rendering React. */
   x: number;
   y: number;
   level: number;
@@ -64,20 +62,12 @@ export function WalkControls({
   plan: Plan;
   level: number;
   onLevelChange: (level: number) => void;
-  /** Written every frame; a ref so walking costs no React renders. */
   state: React.MutableRefObject<WalkState>;
-  /**
-   * Where to be dropped in, when somewhere in particular was asked for.
-   *
-   * Absent, the walker lands in the middle of the largest room on the storey,
-   * which is the right answer when "walk the house" is the whole instruction.
-   * It is the wrong one when a specific room was double-clicked, and there was
-   * previously no way to say so.
-   */
   start?: { position: Vec2; level: number; yaw: number } | null;
   enabled: boolean;
 }) {
   const camera = useThree((s) => s.camera);
+  const gl = useThree((s) => s.gl);
   const keys = useRef<Record<string, boolean>>({});
   const velocity = useRef(new THREE.Vector2());
   const carry = useRef(0);
@@ -86,6 +76,11 @@ export function WalkControls({
   // look of it, and lags - using it to decide which surface you are on would
   // pick the wrong one halfway up a flight.
   const foot = useRef(0);
+  const look = useRef<Look>({ yaw: 0, pitch: 0 });
+  const lookVelocity = useRef<Look>({ yaw: 0, pitch: 0 });
+  const drag = useRef<{ id: number; x: number; y: number; moved: number; lastAt: number; vx: number; vy: number } | null>(null);
+  /** Where a click asked to walk to: the doorways on the way, then the spot. */
+  const glide = useRef<{ waypoints: Vec2[]; index: number; since: number; at: Vec2 } | null>(null);
 
   const colliders = useMemo(() => {
     const byLevel = new Map<number, Collider[]>();
@@ -99,6 +94,8 @@ export function WalkControls({
     if (!enabled) return;
     const down = (e: KeyboardEvent) => {
       keys.current[e.key.toLowerCase()] = true;
+      // A key cancels a click's walk: the person has taken over.
+      glide.current = null;
     };
     const up = (e: KeyboardEvent) => {
       keys.current[e.key.toLowerCase()] = false;
@@ -118,6 +115,96 @@ export function WalkControls({
     };
   }, [enabled]);
 
+  /**
+   * The pointer: a drag looks, a click walks.
+   *
+   * On the canvas in the capture phase, ahead of the renderer's own
+   * handlers, and stopped there: on foot a click on a cabinet is a place to
+   * walk to, not a fitting to price. Pointer events cover a finger as well
+   * as a mouse, so a touch screen drags and taps the same way.
+   */
+  useEffect(() => {
+    if (!enabled) return;
+    const element = gl.domElement;
+    element.style.cursor = "grab";
+
+    const onDown = (e: PointerEvent) => {
+      if (e.button !== 0 && e.pointerType === "mouse") return;
+      e.stopImmediatePropagation();
+      drag.current = { id: e.pointerId, x: e.clientX, y: e.clientY, moved: 0, lastAt: performance.now(), vx: 0, vy: 0 };
+      lookVelocity.current = { yaw: 0, pitch: 0 };
+      element.setPointerCapture(e.pointerId);
+      element.style.cursor = "grabbing";
+    };
+    const onMove = (e: PointerEvent) => {
+      const d = drag.current;
+      if (!d || d.id !== e.pointerId) return;
+      e.stopImmediatePropagation();
+      const dx = e.clientX - d.x;
+      const dy = e.clientY - d.y;
+      d.moved += Math.hypot(dx, dy);
+      d.x = e.clientX;
+      d.y = e.clientY;
+      const now = performance.now();
+      const dt = Math.max(1, now - d.lastAt) / 1000;
+      d.lastAt = now;
+      // Pixels per second, for the momentum after letting go.
+      d.vx = dx / dt;
+      d.vy = dy / dt;
+      look.current = turnBy(look.current, dx, dy);
+      // A drag cancels a click's walk as a key does.
+      if (d.moved > CLICK_PIXELS) glide.current = null;
+    };
+    const onUp = (e: PointerEvent) => {
+      const d = drag.current;
+      if (!d || d.id !== e.pointerId) return;
+      e.stopImmediatePropagation();
+      drag.current = null;
+      element.style.cursor = "grab";
+      if (element.hasPointerCapture(e.pointerId)) element.releasePointerCapture(e.pointerId);
+      if (d.moved > CLICK_PIXELS) {
+        // Let the turn run on a little.
+        lookVelocity.current = { yaw: -d.vx * DRAG_SENSITIVITY, pitch: -d.vy * DRAG_SENSITIVITY };
+        return;
+      }
+      // A click: where on the floor was it?
+      const rect = element.getBoundingClientRect();
+      const ndc = new THREE.Vector2(
+        ((e.clientX - rect.left) / rect.width) * 2 - 1,
+        -((e.clientY - rect.top) / rect.height) * 2 + 1,
+      );
+      const ray = new THREE.Raycaster();
+      ray.setFromCamera(ndc, camera);
+      const floor = new THREE.Plane(new THREE.Vector3(0, 1, 0), -foot.current);
+      const hit = new THREE.Vector3();
+      if (!ray.ray.intersectPlane(floor, hit)) return;
+      const here = state.current;
+      const to: Vec2 = [hit.x, hit.z];
+      // Only a spot in a room, with room to stand: a click on a wall or out
+      // of the house walks nowhere.
+      if (!roomAt(plan, here.level, to[0], to[1])) return;
+      if (blocked(colliders.get(here.level) ?? [], to[0], to[1])) return;
+      const waypoints = routeTo(plan, here.level, [here.x, here.y], to);
+      if (!waypoints) return;
+      glide.current = { waypoints, index: 0, since: performance.now(), at: [here.x, here.y] };
+    };
+    const onCancel = (e: PointerEvent) => {
+      if (drag.current?.id === e.pointerId) drag.current = null;
+      element.style.cursor = "grab";
+    };
+    element.addEventListener("pointerdown", onDown, true);
+    element.addEventListener("pointermove", onMove, true);
+    element.addEventListener("pointerup", onUp, true);
+    element.addEventListener("pointercancel", onCancel, true);
+    return () => {
+      element.removeEventListener("pointerdown", onDown, true);
+      element.removeEventListener("pointermove", onMove, true);
+      element.removeEventListener("pointerup", onUp, true);
+      element.removeEventListener("pointercancel", onCancel, true);
+      element.style.cursor = "";
+    };
+  }, [enabled, gl, camera, plan, colliders, state]);
+
   // Drop the walker into the house when the mode opens.
   useEffect(() => {
     if (!enabled) return;
@@ -128,23 +215,21 @@ export function WalkControls({
     eye.current = ground.height + EYE_HEIGHT;
     foot.current = ground.height;
     velocity.current.set(0, 0);
+    glide.current = null;
     camera.position.set(sx, eye.current, sy);
     // Dropping upstairs has to tell the viewer, or it goes on drawing the floor
     // below and the walker stands on geometry that is not there.
     if (at.level !== level) onLevelChange(at.level);
-
-    // Level the camera. Entering walk mode inherits whatever angle the
-    // dollhouse orbit was left at, which is steeply downward - so the first
-    // thing you see on foot is the floor at your feet, and since pointer lock
-    // only changes yaw and pitch from wherever it starts, it stays wrong.
-    //
-    // The yaw is inherited too, and that is fine walking into a house from
-    // nowhere in particular. Dropped into one named room it is not: you arrive
-    // facing whichever way the orbit happened to be left, which in a narrow
-    // room is a wall a metre from your face.
-    camera.rotation.set(0, at.yaw ?? camera.rotation.y, 0, "YXZ");
+    // Level, facing the way the room was entered - or whichever way the orbit
+    // was left, walking into a house from nowhere in particular. The orbit's
+    // facing is read as a direction, not as `rotation.y`: an orbit camera's
+    // Euler order is not the walker's, and the number is not a yaw.
+    const facing = new THREE.Vector3();
+    camera.getWorldDirection(facing);
+    look.current = { yaw: at.yaw ?? Math.atan2(facing.x, facing.z), pitch: 0 };
+    lookVelocity.current = { yaw: 0, pitch: 0 };
+    camera.rotation.set(0, look.current.yaw, 0, "YXZ");
     camera.up.set(0, 1, 0);
-
     // Wider than the dollhouse uses. A 55-degree lens indoors feels like
     // looking down a tube - rooms read as narrower than they are and you
     // cannot see the floor near your feet, which is most of what tells you
@@ -162,61 +247,94 @@ export function WalkControls({
   useFrame((_, delta) => {
     if (!enabled) return;
 
+    // The head: a released drag runs on and dies away; Q and E turn.
+    const k = keys.current;
+    const turn = (k.q ? 1 : 0) - (k.e ? 1 : 0);
+    const dt = Math.min(delta, 0.25);
+    look.current = {
+      yaw: look.current.yaw + lookVelocity.current.yaw * dt + turn * TURN_RATE * dt,
+      pitch: look.current.pitch,
+    };
+    look.current = turnBy(look.current, 0, -lookVelocity.current.pitch * dt / DRAG_SENSITIVITY);
+    lookVelocity.current = {
+      yaw: damped(lookVelocity.current.yaw, dt, LOOK_DAMPING),
+      pitch: damped(lookVelocity.current.pitch, dt, LOOK_DAMPING),
+    };
+
     // Fixed steps, with the remainder carried into the next frame. Capped so a
     // long stall - a tab in the background - cannot run hundreds of steps at
     // once when it resumes.
     carry.current = Math.min(carry.current + delta, 0.25);
-
     while (carry.current >= STEP) {
       carry.current -= STEP;
-
-      const k = keys.current;
       const forward = (k.w || k.arrowup ? 1 : 0) - (k.s || k.arrowdown ? 1 : 0);
       const strafe = (k.d || k.arrowright ? 1 : 0) - (k.a || k.arrowleft ? 1 : 0);
       const speed = k.shift ? RUN_SPEED : WALK_SPEED;
-
-      // Heading straight from the camera, so you walk where you look.
-      const facing = new THREE.Vector3();
-      camera.getWorldDirection(facing);
-      const yaw = Math.atan2(facing.x, facing.z);
-
+      const yaw = look.current.yaw;
+      const [hx, hy] = headingVector(yaw);
+      const here = state.current;
       const target = new THREE.Vector2(
-        (Math.sin(yaw) * forward + Math.cos(yaw) * strafe) * speed,
-        (Math.cos(yaw) * forward - Math.sin(yaw) * strafe) * speed,
+        (hx * forward + hy * strafe) * speed,
+        (hy * forward - hx * strafe) * speed,
       );
-      if (forward === 0 && strafe === 0) target.set(0, 0);
 
+      // A click's walk: toward the next doorway, then the spot.
+      const g = glide.current;
+      if (g && forward === 0 && strafe === 0) {
+        const goal = g.waypoints[g.index];
+        const dx = goal[0] - here.x;
+        const dy = goal[1] - here.y;
+        const far = Math.hypot(dx, dy);
+        if (far < ARRIVE_M) {
+          g.index += 1;
+          if (g.index >= g.waypoints.length) glide.current = null;
+        } else {
+          target.set((dx / far) * WALK_SPEED, (dy / far) * WALK_SPEED);
+          // Stuck - against something the route did not know about - for
+          // half a second is stuck; stop rather than shove.
+          const now = performance.now();
+          if (now - g.since > 500) {
+            if (Math.hypot(here.x - g.at[0], here.y - g.at[1]) < 0.01) glide.current = null;
+            g.since = now;
+            g.at = [here.x, here.y];
+          }
+        }
+      }
+      if (target.lengthSq() === 0) target.set(0, 0);
       velocity.current.lerp(target, 1 - Math.exp(-ACCEL * STEP));
 
-      const here = state.current;
       const walls = colliders.get(here.level) ?? [];
-      const [nx, ny] = moveWithSliding(
-        walls,
-        [here.x, here.y],
-        velocity.current.x * STEP,
-        velocity.current.y * STEP,
-      );
-
-      const ground = groundAt(plan, here.level, nx, ny, foot.current);
-
-      // Refuse a step no person could take. This is what stops you walking
-      // sideways off a flight into the stairwell, or out of an upstairs door
-      // that opens onto the void - and it needs no extra colliders, because it
-      // is read from the same tread heights the staircase was drawn from. The
-      // largest legitimate move is one riser, comfortably under the limit.
+      let [nx, ny] = moveWithSliding(walls, [here.x, here.y], velocity.current.x * STEP, velocity.current.y * STEP);
+      let ground = groundAt(plan, here.level, nx, ny, foot.current);
+      // Refuse a step no person could take - off a flight into the stairwell,
+      // out of an upstairs door onto the void - but try each direction on its
+      // own first, so a threshold that is fine to cross straight on does not
+      // stop a diagonal step dead with no sign of why.
       if (Math.abs(ground.height - foot.current) > MAX_STEP) {
-        velocity.current.set(0, 0);
-        continue;
+        const alongX: Vec2 = [nx, here.y];
+        const alongY: Vec2 = [here.x, ny];
+        const gx = groundAt(plan, here.level, alongX[0], alongX[1], foot.current);
+        const gy = groundAt(plan, here.level, alongY[0], alongY[1], foot.current);
+        if (Math.abs(gx.height - foot.current) <= MAX_STEP) {
+          [nx, ny] = alongX;
+          ground = gx;
+        } else if (Math.abs(gy.height - foot.current) <= MAX_STEP) {
+          [nx, ny] = alongY;
+          ground = gy;
+        } else {
+          velocity.current.set(0, 0);
+          glide.current = null;
+          continue;
+        }
       }
       foot.current = ground.height;
-
       if (ground.level !== here.level) onLevelChange(ground.level);
-
       state.current = { x: nx, y: ny, level: ground.level, yaw };
       eye.current += (ground.height + EYE_HEIGHT - eye.current) * (1 - Math.exp(-EYE_EASE * STEP));
     }
 
     camera.position.set(state.current.x, eye.current, state.current.y);
+    camera.rotation.set(look.current.pitch, look.current.yaw, 0, "YXZ");
 
     // A readout for tests and for anyone debugging where the walker thinks it
     // is. Writing to a global rather than React state deliberately: this runs
@@ -227,9 +345,11 @@ export function WalkControls({
       level: state.current.level,
       eye: eye.current,
       camera: [camera.position.x, camera.position.y, camera.position.z],
+      yaw: look.current.yaw,
+      pitch: look.current.pitch,
+      gliding: glide.current !== null,
     };
   });
 
-  if (!enabled) return null;
-  return <PointerLockControls makeDefault selector="[data-walk-lock]" />;
+  return null;
 }

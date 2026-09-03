@@ -95,7 +95,7 @@ if (entered) {
   // Wait for the scene to say it is describing the walk, rather than waiting a
   // fixed time and hoping - the readout publishes once a second.
   await page.waitForFunction(() => window.__scene?.mode === "walk", { timeout: 15_000 });
-  walking = await page.evaluate(() => Boolean(document.querySelector("[data-walk-lock]")));
+  walking = await page.evaluate(() => Boolean(document.querySelector("[data-walk-ui]")));
   await page.screenshot({ path: "shots/11-after-walk.png" });
 }
 

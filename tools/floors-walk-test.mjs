@@ -103,8 +103,10 @@ if (onFoot) {
   // Wait for the readout to be describing the walk, rather than waiting a
   // fixed time and hoping. The counts below are only meaningful once it is.
   await page.waitForFunction(() => window.__scene?.mode === "walk", { timeout: 15_000 });
-  stairMarkers = await page.evaluate(() => window.__scene.markers);
-  walking = await page.evaluate(() => Boolean(document.querySelector("[data-walk-lock]")));
+  // The stair chevrons alone: the rings on foot are the other rooms now,
+  // places a click walks to, and are counted apart.
+  stairMarkers = await page.evaluate(() => window.__scene.stairMarkers);
+  walking = await page.evaluate(() => Boolean(document.querySelector("[data-walk-ui]")));
 }
 
 const photos = await page.evaluate(() => window.__scene.photoTextures);

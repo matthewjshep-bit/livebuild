@@ -158,7 +158,7 @@ export function Minimap({
         </div>
       ) : (
         <div className="px-2.5 pt-1 pb-2 text-[10px] leading-tight text-mist-400">
-          Tap a room to walk in
+          Tap a room to go there
         </div>
       )}
     </div>

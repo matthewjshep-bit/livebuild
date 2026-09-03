@@ -6,7 +6,7 @@ import * as THREE from "three";
 import { runsAtLevel } from "@/lib/model/stairs";
 import { walkStartFor } from "@/lib/model/focus";
 import { levelBase, planToWorld } from "@/lib/plan/geometry";
-import type { Plan, Room, Vec2 } from "@/lib/schema";
+import type { Plan, Vec2 } from "@/lib/schema";
 
 /**
  * The places you can stand.
@@ -100,6 +100,8 @@ function Marker({
           rotation={[stairs === "up" ? 0 : Math.PI, 0, 0]}
           renderOrder={RING_RENDER_ORDER}
           raycast={() => null}
+          // Counted apart from the rings by the scene readout.
+          userData={{ stairs: true }}
         >
           <coneGeometry args={[0.2, 0.34, 4]} />
           <meshBasicMaterial
@@ -159,10 +161,13 @@ export function RoomMarkers({
   hidden?: boolean;
 }) {
   const rooms = useMemo(() => {
-    if (mode === "walk") return [] as Room[];
+    // On foot the rings are the other rooms on this storey: places to go,
+    // now that a click walks there. They used to vanish on foot, when the
+    // only way to move was the keys.
+    if (mode === "walk") return plan.rooms.filter((r) => r.level === walkLevel);
     if (onlyLevel === null || onlyLevel === undefined) return plan.rooms;
     return plan.rooms.filter((r) => r.level === onlyLevel);
-  }, [plan.rooms, mode, onlyLevel]);
+  }, [plan.rooms, mode, onlyLevel, walkLevel]);
 
   const stairs = useMemo(() => {
     // In the dollhouse the whole stack is on screen and the staircase is
@@ -190,7 +195,7 @@ export function RoomMarkers({
             key={room.id}
             at={start.position}
             baseY={levelBase(plan, room.level)}
-            dimmed={false}
+            dimmed={mode === "walk"}
             onEnter={() => onEnterRoom(room.id)}
           />
         );

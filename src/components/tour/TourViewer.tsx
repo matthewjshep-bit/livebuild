@@ -76,6 +76,7 @@ function SceneReadout({ mode, furnished }: { mode: ViewState["mode"]; furnished:
 
     let meshes = 0;
     let markers = 0;
+    let stairMarkers = 0;
     let photoTextures = 0;
     let triangles = 0;
     const markerAt: Array<[number, number]> = [];
@@ -91,6 +92,7 @@ function SceneReadout({ mode, furnished }: { mode: ViewState["mode"]; furnished:
       meshes++;
       const geometry = mesh.geometry;
       if (geometry?.type === "RingGeometry") markers++;
+      if (mesh.userData?.stairs) stairMarkers++;
       // Counted off the geometry rather than read from `gl.info.render`.
       // The effect composer runs several full-screen passes after the scene
       // and the renderer's counters are reset between them, so by the time a
@@ -149,6 +151,7 @@ function SceneReadout({ mode, furnished }: { mode: ViewState["mode"]; furnished:
       furnished,
       meshes,
       markers,
+      stairMarkers,
       markerAt,
       bySurface,
       emissive,
@@ -443,6 +446,33 @@ function formatHour(hour: number): string {
   return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
 }
 
+/**
+ * One key of the walk pad. Presses and releases the same key the keyboard
+ * would, through the window, so the walker needs no second set of inputs -
+ * and a finger held on it keeps walking until it lifts.
+ */
+function WalkPad({ k, label, title }: { k: string; label: string; title: string }) {
+  const press = (down: boolean) => window.dispatchEvent(new KeyboardEvent(down ? "keydown" : "keyup", { key: k }));
+  return (
+    <button
+      type="button"
+      title={title}
+      aria-label={title}
+      data-walk-key={k}
+      onPointerDown={(e) => {
+        e.preventDefault();
+        press(true);
+      }}
+      onPointerUp={() => press(false)}
+      onPointerLeave={() => press(false)}
+      onPointerCancel={() => press(false)}
+      className="h-8 w-8 select-none rounded border border-ink-500 text-sm text-mist-200 transition hover:bg-ink-600 active:bg-ink-500"
+    >
+      {label}
+    </button>
+  );
+}
+
 export function TourViewer({
   property: raw,
   onPropertyChange,
@@ -710,12 +740,7 @@ export function TourViewer({
     return () => window.removeEventListener("keydown", onKey);
   }, [focusRoomId, view.mode]);
 
-  const [locked, setLocked] = useState(false);
-  useEffect(() => {
-    const onChange = () => setLocked(Boolean(document.pointerLockElement));
-    document.addEventListener("pointerlockchange", onChange);
-    return () => document.removeEventListener("pointerlockchange", onChange);
-  }, []);
+
 
   const bom = useMemo(
     () =>
@@ -874,13 +899,13 @@ export function TourViewer({
    * free, is a person saying "out".
    */
   useEffect(() => {
-    if (view.mode !== "walk" || locked) return;
+    if (view.mode !== "walk") return;
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") exitToDefault();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [view.mode, locked, exitToDefault]);
+  }, [view.mode, exitToDefault]);
 
   /**
    * `?room=` drops you inside that room, on your feet.
@@ -1140,6 +1165,12 @@ export function TourViewer({
             onGrade={grade}
             focusRoomId={focusRoomId}
             onSelectRoom={(roomId) => {
+              // On foot, naming a room in the rail is asking to be taken
+              // there, the way the mini-map does; from above it is a focus.
+              if (view.mode === "walk") {
+                enterRoom(roomId);
+                return;
+              }
               setPick({ roomId, element: null });
               setFocusRoomId(roomId);
             }}
@@ -1284,36 +1315,39 @@ export function TourViewer({
           explicit panel rather than the bare canvas also gives somewhere to put
           the controls, which are not guessable - nothing on screen says WASD.
         */}
-        {view.mode === "walk" && !locked && (
-          <div
-            data-walk-lock
-            className="absolute inset-0 grid place-items-center"
-            style={{ cursor: "crosshair" }}
-          >
-            <div className="rounded-lg bg-ink-800/85 px-5 py-4 text-center backdrop-blur">
-              <p className="text-sm text-mist-200">Click to look around</p>
-              <p className="mt-1 text-[11px] leading-relaxed text-mist-400">
-                W A S D or the arrow keys to move · shift to hurry
-                <br />
-                Esc to let the pointer go · Esc again to leave
-              </p>
-            </div>
-          </div>
-        )}
         {/*
-          Exit on foot, beside the overlay rather than inside it. The overlay
-          is the pointer lock's click target, and a native listener on it
-          fires before React can stop a child button's click from reaching
-          it - so an Exit inside it asked for the lock on the way out.
+          On foot: a pad for a finger or for anyone who would rather press
+          than click, and the way out. Click on the canvas walks; a drag
+          looks; these press the same keys the keyboard does.
         */}
-        {view.mode === "walk" && !locked && (
-          <button
-            data-exit-walk
-            onClick={exitToDefault}
-            className="absolute bottom-16 left-1/2 z-20 -translate-x-1/2 rounded border border-accent/60 bg-ink-800/85 px-4 py-1.5 text-xs text-accent backdrop-blur transition hover:bg-ink-600"
+        {view.mode === "walk" && (
+          <div
+            data-walk-ui
+            className="absolute bottom-32 left-1/2 z-20 flex -translate-x-1/2 items-center gap-2 rounded-lg bg-ink-800/85 px-3 py-2 backdrop-blur"
           >
-            Exit
-          </button>
+            <WalkPad k="q" label="↺" title="Turn left (Q)" />
+            <div className="grid grid-cols-3 gap-1">
+              <span />
+              <WalkPad k="w" label="▲" title="Forward (W)" />
+              <span />
+              <WalkPad k="a" label="◀" title="Left (A)" />
+              <WalkPad k="s" label="▼" title="Back (S)" />
+              <WalkPad k="d" label="▶" title="Right (D)" />
+            </div>
+            <WalkPad k="e" label="↻" title="Turn right (E)" />
+            <span className="mx-1 hidden text-[11px] leading-tight text-mist-400 sm:block">
+              Click where you want to stand
+              <br />
+              drag to look around
+            </span>
+            <button
+              data-exit-walk
+              onClick={exitToDefault}
+              className="rounded border border-accent/60 px-3 py-1.5 text-xs text-accent transition hover:bg-ink-600"
+            >
+              Exit
+            </button>
+          </div>
         )}
 
         {/*
@@ -1332,10 +1366,7 @@ export function TourViewer({
           </div>
         )}
 
-        {/* A crosshair, so it is obvious where the pointer went. */}
-        {view.mode === "walk" && locked && (
-          <div className="pointer-events-none absolute left-1/2 top-1/2 h-1 w-1 -translate-x-1/2 -translate-y-1/2 rounded-full bg-mist-200/60" />
-        )}
+
 
         {/*
           Daylight controls, shown only when the house has coordinates.
@@ -1394,7 +1425,7 @@ export function TourViewer({
             : view.mode === "street"
               ? "From the kerb · drag to walk round the house · scroll to come closer · double-click a room to walk in"
               : view.mode === "walk"
-              ? "Walking · W A S D to move · Esc to release the pointer"
+              ? "Walking · click where you want to stand · drag to look around · W A S D · Esc to leave"
               : measuring
                 ? "Click two points to measure between them"
                 : "Drag to look"}

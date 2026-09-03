@@ -1,6 +1,7 @@
 "use client";
 
 import { Canvas, useFrame, useThree } from "@react-three/fiber";
+import { PerformanceMonitor } from "@react-three/drei";
 import * as THREE from "three";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
@@ -28,7 +29,7 @@ import { captureFromPose, type CapturePose } from "@/lib/render/capture";
 import { inferHouse } from "@/lib/spec/infer";
 import { HouseSpec } from "@/lib/spec/schema";
 import { Post } from "@/components/tour/Post";
-import { MAX_DPR, QUALITY_LABEL, TIERS, type Quality, detectQuality, rendererName } from "@/lib/render/quality";
+import { MAX_DPR, QUALITY_LABEL, TIERS, type Quality, detectQuality, isSoftwareRenderer, rendererName, steppedQuality } from "@/lib/render/quality";
 import { isBundledUrl } from "@/lib/model/assets";
 import { enableAssets, pendingAssets } from "@/lib/model/asset-surfaces";
 import { buildBom } from "@/lib/bom/build";
@@ -773,6 +774,16 @@ export function TourViewer({
   // lie about is the renderer's name - a headless browser reports a dozen
   // cores and draws with a CPU.
   const [quality, setQuality] = useState<Quality>("medium");
+  // What the device was judged able to run, which the monitor below steps
+  // down from when frames drop and back up to when they recover - unless the
+  // person chose a tier themselves, in which case their choice stands.
+  const detectedQuality = useRef<Quality>("medium");
+  const manualQuality = useRef(false);
+  const [software, setSoftware] = useState(false);
+  const stepQuality = useCallback((delta: -1 | 1) => {
+    if (manualQuality.current) return;
+    setQuality((current) => steppedQuality(current, delta, detectedQuality.current));
+  }, []);
 
   /**
    * Escape lets go of the room.
@@ -1163,7 +1174,10 @@ export function TourViewer({
           )}
           <select
             value={quality}
-            onChange={(e) => setQuality(e.target.value as Quality)}
+            onChange={(e) => {
+              manualQuality.current = true;
+              setQuality(e.target.value as Quality);
+            }}
             aria-label="Render quality"
             title="How much rendering this machine does. Drop it if the view stutters."
             className="rounded border border-ink-500 bg-ink-700 px-2 py-1 text-xs text-mist-200 outline-none focus:border-accent-dim"
@@ -1290,11 +1304,24 @@ export function TourViewer({
             // it twice, and the result is a flat, washed image that looks like
             // a rendering problem and is actually an arithmetic one.
             gl.toneMapping = THREE.NoToneMapping;
-            setQuality(detectQuality(rendererName(gl.getContext())));
+            const renderer = rendererName(gl.getContext());
+            const detected = detectQuality(renderer);
+            detectedQuality.current = detected;
+            setSoftware(isSoftwareRenderer(renderer));
+            setQuality(detected);
           }}
           className="touch-none"
         >
           <color attach="background" args={["#0f1216"]} />
+          {/*
+            Frames dropped for a while step the tier down; frames recovered
+            step it back up, never past the tier the device was judged to
+            run. Not on a software renderer, which is at the bottom already
+            and whose frame rate would only ever say "down".
+          */}
+          {!software && (
+            <PerformanceMonitor ms={300} iterations={8} threshold={0.7} onDecline={() => stepQuality(-1)} onIncline={() => stepQuality(1)} />
+          )}
           <Scene
             property={property}
             view={view}

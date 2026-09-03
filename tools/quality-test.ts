@@ -2,7 +2,7 @@
  * The quality tiers say something, and a CPU pretending to be a GPU never
  * gets the top one.
  */
-import { TIERS, detectQuality, isSoftwareRenderer } from "../src/lib/render/quality";
+import { TIERS, detectQuality, isSoftwareRenderer, steppedQuality } from "../src/lib/render/quality";
 
 let failures = 0;
 const check = (name: string, ok: boolean, detail = "") => {
@@ -22,6 +22,10 @@ check("only the top tier softens shadows and focuses a lens",
 check("the bottom tier keeps the frame cheap",
   TIERS.low.occlusion === "none" && !TIERS.low.bloom && !TIERS.low.assets);
 check("the middle tier still has contact shadow", TIERS.medium.occlusion === "half");
+
+check("a dropped frame rate steps one tier down", steppedQuality("high", -1, "high") === "medium" && steppedQuality("medium", -1, "high") === "low");
+check("and no further than the bottom", steppedQuality("low", -1, "high") === "low");
+check("recovery climbs back, but not past what was detected", steppedQuality("low", 1, "medium") === "medium" && steppedQuality("medium", 1, "medium") === "medium");
 
 check("SwiftShader is software", isSoftwareRenderer("ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver)"));
 check("llvmpipe is software", isSoftwareRenderer("Mesa/X.org, llvmpipe (LLVM 15.0.7, 256 bits)"));

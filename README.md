@@ -967,45 +967,45 @@ one - which is how both walk tests were flaky before they waited on state.
 
 ## Status
 
-- **Photographs off the model** - done. The shell renderer, the depth pass and
-  the node-teleport camera are gone; `@huggingface/transformers` with them.
-- **Materials and light** - done, and recently corrected. Procedurally derived
-  normal, occlusion and roughness maps; a procedural environment map for
-  image-based lighting; one sun instead of six shadow maps; windows as real
-  area lights; bevelled edges on everything that is an object; SMAA, occlusion
-  and a restrained bloom behind a three-tier quality setting. The environment
-  map was, for a while, one saturated blue painted into its zenith, its horizon
-  *and its ground* - a light dome three to four times more blue than red on
-  every surface, which is why every house came out looking like a clay model in
-  a fish tank. The sky is three colours now, the ground is a warm floor bounce,
-  the windows light the dollhouse as well as the walk, and the default scheme
-  is the warm one.
-- **The interior spec** - done, and described above. Read per room, reasoned
-  across the house for the rooms nobody photographed, snapped to the sizes
-  things are actually built to, and checked against the photographs it came
-  from. What remains is breadth - more fields, read more reliably - rather than
-  a thing that does not exist.
-- **The parts library** - started. Cabinet doors are drawn in their style -
-  shaker, raised-panel, glazed, beadboard - with knobs or bars, and worktops
-  take the light like what they are made of. Still to come: lathe
-  sanitaryware, real window assemblies with reveals and mullions, and the
-  loose furniture, which is still the one-to-three-slab builders in
-  `src/lib/model/furniture.ts`.
-- **The outside** - done, as far as the map and the photographs take it. The
-  house sits on a lot derived from the map, on its named streets at their
-  true angle and distance, between its neighbours; a Street view stands you
-  at the kerb; the facade, roof, trim and door are read from the owner's own
-  photographs and the garden they describe is planted by rules; the sun's
-  shadow box covers the lot; a tour built before any of this gains its
-  street the moment it is reshaped from the map. Still to come: terrain from
-  Elevation, roof valleys where two wings meet, walking outside, and a real
-  exterior photograph in the repository so the live read can be tested.
+- **Photographs off the model** - done, and the rule refined rather than
+  relaxed. Nothing on the model is a photograph *of this house*; the bundled
+  CC0 scans under `public/textures/` and the sky are the app's own, the
+  readout tells the two apart by origin and path, and a suite watches every
+  request a tour makes and fails on the first that leaves this origin.
+- **Materials and light** - done. Scanned surfaces for everything the
+  procedural drawing used to stand in for, tinted to the colours the reader
+  gave; the drawn surfaces stay as the immediate and the no-asset fallback. A
+  sited house stands under the analytic sky, driven by the same sun as the
+  light and the shadows. AgX with a light grade and a vignette. Three quality
+  tiers that differ, stepped down and back by a frame-rate monitor unless a
+  person chose one, and a software renderer held at the bottom.
+- **Walking** - click where you want to stand, drag to look; no pointer
+  lock; a route through the doorways; a pad for a finger; Escape leaves; a
+  tour opens at the kerb facing the door, and Exit always goes back there.
+- **The assembly** - done, outside and in. Fitted windows with reveals,
+  sills, casing, bars and a pane per light; a fitted front door; fascias,
+  gutters, downpipes, rake boards and ridge caps read off the roof's own
+  faces; corner boards, a foundation band, a chimney on the fireplace's wall;
+  porch posts and a roof, pickets. Inside, a door in every doorway standing
+  open, switches and outlets, a fitting under every lamp with the one bulb
+  that glows, and furniture with the parts it is recognised by.
+- **The garden** - lobed crowns darker underneath, tiered conifers, clumped
+  shrubs, neighbours with hip roofs, a centre line down the road, a lawn that
+  is not camouflage.
+- **What "real" still lacks.** Glass does not transmit - a pane reflects the
+  sky and shows a room only by being nearly clear - because transmission is a
+  second render of the scene per frame, and it is a candidate for the top
+  tier alone. Terrain is a disc; the lot is flat. You cannot walk outside.
+  Roof valleys where two wings meet are still two roofs overlapping. Trees
+  are lobes, not leaves. The neighbours are grey. And every surface is a
+  box: a tap, a handle, a pendant shade are boxes with the right proportions
+  and the right sheen, which reads from across a room and not from a hand's
+  breadth away.
 
 ## The next thing to do
 
-Build what the spec can already describe. The reading pass got ahead of the
-geometry: a room can now report its worktop material, its door style and its
-skirting profile, and `furniture.ts` will draw between one and three boxes for
-each of them. Every improvement to the parts library improves every tour already
-built, because furniture is derived and never stored - the same property that
-made walls and windows cheap to get right.
+Walk outside. Everything else on the list above is polish; standing on the
+porch and looking back at the house you have just been through is a thing a
+tour should be able to do and cannot. The walker knows rooms and doorways;
+the lot, the path and the porch would have to become places it can stand,
+and the front door a doorway it can pass through.

@@ -116,6 +116,20 @@ export function rendererName(gl: WebGLRenderingContext | WebGL2RenderingContext)
   }
 }
 
+const ORDER: Quality[] = ["low", "medium", "high"];
+
+/**
+ * One tier down or up from the current one, never above what the machine
+ * was judged able to run: the performance monitor steps down when frames
+ * are dropped and back up when they recover, and "recover" must not climb
+ * past the tier the device detected as its own.
+ */
+export function steppedQuality(current: Quality, delta: -1 | 1, ceiling: Quality): Quality {
+  const top = ORDER.indexOf(ceiling);
+  const next = ORDER.indexOf(current) + delta;
+  return ORDER[Math.max(0, Math.min(top, next))];
+}
+
 export function detectQuality(renderer?: string | null): Quality {
   if (typeof navigator === "undefined") return "medium";
 

@@ -874,8 +874,15 @@ one - which is how both walk tests were flaky before they waited on state.
   sanitaryware, real window assemblies with reveals and mullions, and the
   loose furniture, which is still the one-to-three-slab builders in
   `src/lib/model/furniture.ts`.
-- **The outside** - not started. Google Solar for real roof planes, Elevation
-  for terrain, a harder Street View read for the facade.
+- **The outside** - done, as far as the map and the photographs take it. The
+  house sits on a lot derived from the map, on its named streets at their
+  true angle and distance, between its neighbours; a Street view stands you
+  at the kerb; the facade, roof, trim and door are read from the owner's own
+  photographs and the garden they describe is planted by rules; the sun's
+  shadow box covers the lot; a tour built before any of this gains its
+  street the moment it is reshaped from the map. Still to come: terrain from
+  Elevation, roof valleys where two wings meet, walking outside, and a real
+  exterior photograph in the repository so the live read can be tested.
 
 ## The next thing to do
 

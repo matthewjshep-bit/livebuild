@@ -8,6 +8,8 @@ import { syntheticRing } from "@/lib/site/trace";
 import { readExterior } from "@/lib/site/client";
 import { M_PER_FT } from "@/lib/units";
 import type { Property } from "@/lib/schema";
+import type { NearbyBuilding, Street } from "@/lib/listing/streets";
+import { SITE_ATTRIBUTION } from "@/lib/site/plan-site";
 
 /**
  * Work out what an existing tour's floor plan should have been.
@@ -77,19 +79,29 @@ function groundSqft(property: Property): number {
 async function mapRing(
   lat: number,
   lon: number,
-): Promise<{ ring: Array<[number, number]> | null; miss: string | null }> {
+): Promise<{
+  ring: Array<[number, number]> | null;
+  miss: string | null;
+  streets: Street[];
+  buildings: NearbyBuilding[];
+}> {
   try {
     const response = await fetch("/api/site/shape", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ lat, lon }),
     });
-    if (!response.ok) return { ring: null, miss: "lookup-failed" };
+    if (!response.ok) return { ring: null, miss: "lookup-failed", streets: [], buildings: [] };
     const data = await response.json();
     const ring = (data.ring as Array<[number, number]> | null) ?? null;
-    return { ring, miss: ring ? null : ((data.miss as string) ?? "no-building") };
+    return {
+      ring,
+      miss: ring ? null : ((data.miss as string) ?? "no-building"),
+      streets: (data.streets as Street[] | undefined) ?? [],
+      buildings: (data.buildings as NearbyBuilding[] | undefined) ?? [],
+    };
   } catch {
-    return { ring: null, miss: "lookup-failed" };
+    return { ring: null, miss: "lookup-failed", streets: [], buildings: [] };
   }
 }
 
@@ -165,11 +177,27 @@ export async function proposeReshape(
   // 5. Adopt the geometry, keep the identities. Without this every photograph
   //    is orphaned and every grade detached - silently, and with a plan that
   //    looks better than the one it replaced.
-  const { property: next, added, dropped } = reshapeProperty(
+  const { property: reshaped, added, dropped } = reshapeProperty(
     property,
     laid,
     90 + footprint.rotationDeg,
   );
+
+  // The rooms were just fitted into this footprint, so its frame is the one
+  // that puts the map's streets and neighbours beside them - which is what
+  // gives a tour built before the site kept any of this its street.
+  const next: Property = reshaped.site
+    ? {
+        ...reshaped,
+        site: {
+          ...reshaped.site,
+          frame: footprint.frame ?? null,
+          streets: fromMap.streets.length ? fromMap.streets : (reshaped.site.streets ?? []),
+          buildings: fromMap.buildings.length ? fromMap.buildings : (reshaped.site.buildings ?? []),
+          attribution: [SITE_ATTRIBUTION],
+        },
+      }
+    : reshaped;
 
   return {
     ring,

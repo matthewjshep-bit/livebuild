@@ -207,6 +207,11 @@ const widths = new Set(
 );
 check("the rooms are no longer all the same width", widths.size > 1, `${widths.size} distinct widths`);
 check("the plan bearing was updated from the outline", after.site.planXBearing !== 90 || true);
+// The rooms were just fitted into this footprint, so its frame is kept with
+// the site: it is what puts the map's streets beside them, and it is how a
+// tour built before the site kept any of this gains its street.
+check("the reshaped site keeps the frame the rooms were fitted to", Boolean(after.site?.frame), JSON.stringify(after.site));
+check("and credits the map", Array.isArray(after.site?.attribution) && after.site.attribution.length > 0);
 
 /**
  * A refused arrangement is not an error, and the code says so.

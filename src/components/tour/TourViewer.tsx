@@ -39,7 +39,7 @@ import { PublishPanel } from "@/components/tour/PublishPanel";
 import { Evidence } from "@/components/tour/Evidence";
 import { ExteriorSpecPanel, RoomSpecPanel } from "@/components/tour/RoomSpecPanel";
 import { walkStartFor } from "@/lib/model/focus";
-import { levelName, levelsOf } from "@/lib/plan/geometry";
+import { levelName, levelsOf, boundsOf } from "@/lib/plan/geometry";
 import type { Plan, Property } from "@/lib/schema";
 import { SiteModel } from "@/components/tour/SiteModel";
 import { siteInPlan } from "@/lib/site/plan-site";
@@ -247,6 +247,27 @@ function Scene({
   const [walkLevel, setWalkLevel] = useState(0);
   // The surroundings in plan metres, or null for a house that has none.
   const planSite = useMemo(() => siteInPlan(property.site), [property.site]);
+  // What the sun looks at and how far its shadows reach: the lot when there
+  // is one, the house otherwise.
+  const ground = useMemo(() => {
+    const house = houseBounds(property.plan);
+    if (!house) return null;
+    const box = planSite
+      ? boundsOf(
+          deriveLot({
+            house,
+            site: planSite,
+            frontDoorBearing: property.exterior?.frontDoorBearing ?? null,
+            garageBearing: property.exterior?.garage?.bearing ?? null,
+            planXBearing: property.site?.planXBearing ?? 90,
+          }).polygon,
+        )
+      : house;
+    return {
+      centre: [(box.x0 + box.x1) / 2, (box.y0 + box.y1) / 2] as [number, number],
+      half: Math.max(box.x1 - box.x0, box.y1 - box.y0) / 2,
+    };
+  }, [property.plan, property.site, property.exterior, planSite]);
   const walkState = useRef<WalkState>({ x: 0, y: 0, level: 0, yaw: 0 });
 
   return (
@@ -268,6 +289,8 @@ function Scene({
         // Air between the house and the edge of its ground, so the ground
         // ends in haze rather than a line. Indoors there is no horizon.
         fog={planSite !== null && view.mode !== "walk"}
+        target={ground?.centre ?? null}
+        shadowExtent={ground ? Math.max(26, ground.half + 6) : undefined}
       />
 
       <CameraRig

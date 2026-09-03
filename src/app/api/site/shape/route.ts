@@ -41,10 +41,14 @@ export async function POST(request: Request) {
     // The ring only. Area and rotation come from `prepareFootprint`, which the
     // caller has to run anyway and which needs the room count to decide how
     // much of the outline's detail to keep.
+    // And the surroundings, which came back in the same answer: a tour built
+    // before the site kept them gains its street the moment it is reshaped.
     return Response.json({
       ring: found.ring,
       wayId: found.wayId,
       attribution: OSM_ATTRIBUTION,
+      streets: found.streets,
+      buildings: found.buildings,
     });
   } catch {
     // Overpass returns 504 often enough under load that treating it as fatal

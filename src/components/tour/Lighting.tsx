@@ -44,6 +44,8 @@ export function Lighting({
   levels = null,
   quality = "medium",
   fog = false,
+  target = null,
+  shadowExtent,
 }: {
   site: Site | null | undefined;
   dayOfYear: number;
@@ -65,7 +67,23 @@ export function Lighting({
   quality?: Quality;
   /** Haze toward the edge of the ground, when there is ground to have an edge. */
   fog?: boolean;
+  /**
+   * What the sun looks at, in plan metres, and how far its shadow box
+   * reaches from there. The box used to be a fixed 26m about the world
+   * origin, aimed at nothing - fine for a house at the origin, and nothing
+   * on a lot 30m out cast or caught a shadow.
+   */
+  target?: [number, number] | null;
+  shadowExtent?: number;
 }) {
+  const extent = shadowExtent ?? SHADOW_EXTENT;
+  // The light aims at this. three.js aims a directional light at its target
+  // object's position, and the default target sits at the origin.
+  const aim = useMemo(() => new THREE.Object3D(), []);
+  const tx = target?.[0] ?? 0;
+  const tz = target?.[1] ?? 0;
+  aim.position.set(tx, 0, tz);
+  aim.updateMatrixWorld();
   const scene = useThree((s) => s.scene);
   const sun = useMemo(
     () => (site ? sunState(site, dayOfYear, hour) : null),
@@ -110,17 +128,19 @@ export function Lighting({
         */}
         <hemisphereLight args={["#eef4fb", "#6f6b64", 0.22]} />
         <ambientLight intensity={0.04} />
+        <primitive object={aim} />
         <directionalLight
-          position={[9, 16, 7]}
+          position={[tx + 9, 16, tz + 7]}
+          target={aim}
           intensity={1.9}
           castShadow
           shadow-mapSize={[SHADOW_SIZE[quality], SHADOW_SIZE[quality]]}
-          shadow-camera-left={-SHADOW_EXTENT}
-          shadow-camera-right={SHADOW_EXTENT}
-          shadow-camera-top={SHADOW_EXTENT}
-          shadow-camera-bottom={-SHADOW_EXTENT}
+          shadow-camera-left={-extent}
+          shadow-camera-right={extent}
+          shadow-camera-top={extent}
+          shadow-camera-bottom={-extent}
           shadow-camera-near={0.5}
-          shadow-camera-far={80}
+          shadow-camera-far={80 + extent}
           shadow-bias={-0.0004}
         />
         <directionalLight position={[-8, 6, -6]} intensity={0.28} />
@@ -136,18 +156,20 @@ export function Lighting({
         The map is the same 2048 it always was, but it is now the only one,
         which is what pays for the occlusion pass and the antialiasing.
       */}
+      <primitive object={aim} />
       <directionalLight
-        position={sun.direction}
+        position={[tx + sun.direction[0], sun.direction[1], tz + sun.direction[2]]}
+        target={aim}
         intensity={sun.intensity}
         color={new THREE.Color(sun.colour[0], sun.colour[1], sun.colour[2])}
         castShadow
         shadow-mapSize={[SHADOW_SIZE[quality], SHADOW_SIZE[quality]]}
-        shadow-camera-left={-SHADOW_EXTENT}
-        shadow-camera-right={SHADOW_EXTENT}
-        shadow-camera-top={SHADOW_EXTENT}
-        shadow-camera-bottom={-SHADOW_EXTENT}
+        shadow-camera-left={-extent}
+        shadow-camera-right={extent}
+        shadow-camera-top={extent}
+        shadow-camera-bottom={-extent}
         shadow-camera-near={0.5}
-        shadow-camera-far={140}
+        shadow-camera-far={140 + extent}
         shadow-bias={-0.0004}
         shadow-normalBias={0.02}
       />

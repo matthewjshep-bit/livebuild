@@ -283,6 +283,8 @@ function Scene({
         walking={view.mode === "walk"}
         scheme={scheme}
         explode={explode}
+        exterior={property.exterior}
+        site={property.site}
       />
 
       <Measure points={measurePoints} displayUnits={property.displayUnits} />

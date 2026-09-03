@@ -589,6 +589,17 @@ just proud of the partition's, following the same door-cut segments the
 exploded view uses, with the windows cut out so a brick wall does not cover
 its own glass. Every other room draws nothing extra.
 
+**And the outside is a house.** The site read returns what the walls are
+clad in and what shape the roof is, with its ridge bearing and pitch, and
+until now the street saw an untextured box with its top open. The free text
+("wood siding", "asbestos shingle", "brick veneer", "stucco") folds to a
+cladding that is drawn - lap boards with the shadow line under each course,
+shingles with their staggered joints, brick, render, board and batten - as a
+skin over each exterior wall, with the windows already cut. The roof is built
+over the top storey's rooms, a gable or hip or shed or flat with a parapet,
+the ridge along the read bearing, and it is solid from the street and a ghost
+from above, where it would put a lid on the dollhouse.
+
 **And what is in the room is read too.** The prompt used to say "ignore
 furniture, rugs, curtains, art, plants and anything the seller will take with
 them" - which meant a brick fireplace, the most fixed thing in a living room

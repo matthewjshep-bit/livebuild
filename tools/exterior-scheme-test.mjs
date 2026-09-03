@@ -93,6 +93,14 @@ await seed(`ext-yes-${Date.now().toString(36)}`, {
 });
 
 const surveyed = await schemeState();
+
+// And the building itself: the read said brick under a hip roof, so from the
+// street that is what there is. Neither existed before - the outside was an
+// untextured box with its top open.
+await page.waitForFunction(() => window.__scene && window.__scene.meshes > 0, { timeout: 30_000 }).catch(() => {});
+const outside = await page.evaluate(() => window.__scene?.bySurface ?? {});
+check("the surveyed house has a roof", (outside.roof ?? 0) > 0, JSON.stringify(outside));
+check("and is clad", (outside.siding ?? 0) > 0, JSON.stringify(outside));
 check("the house's own colours are offered", surveyed.options.includes("This house"), surveyed.options.join(", "));
 check("they come first", surveyed.options[0] === "This house", surveyed.options[0]);
 check("and are chosen by default", surveyed.selected === "This house", surveyed.selected);
@@ -108,6 +116,9 @@ await seed(`ext-no-${Date.now().toString(36)}`, null);
 const plain = await schemeState();
 check("an untagged house offers only the canned schemes", plain.options.length === 4, `${plain.options.length}`);
 check("'This house' is not offered", !plain.options.includes("This house"));
+// An unread house is still a house: a gable and lap siding by default.
+const plainOutside = await page.evaluate(() => window.__scene?.bySurface ?? {});
+check("an untagged house still has a roof", (plainOutside.roof ?? 0) > 0, JSON.stringify(plainOutside));
 check("the default still wins", plain.selected === "Warm minimal", plain.selected);
 
 check("no page errors", errors.length === 0, errors.slice(0, 2).join(" | "));

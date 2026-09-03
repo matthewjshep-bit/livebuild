@@ -1,5 +1,7 @@
 import * as THREE from "three";
 
+import type { SidingFinish } from "@/lib/model/siding";
+
 import { heightFromImageData, normalBytes, ormBytes } from "@/lib/model/maps";
 import { type RoomKind, roomKind } from "@/lib/plan/room-kind";
 
@@ -418,6 +420,155 @@ function wallpaperSurface(colour: string): Surface {
       g.globalAlpha = 1;
     },
     { roughness: 0.9, roughVariance: 0.05, relief: 0.35 },
+  );
+}
+
+/* ---------------------------------------------------------------- outside */
+
+/**
+ * The outside of the house.
+ *
+ * Every wall generator above is what a room looks like from inside. These
+ * are what the building looks like from the street, which is where a house
+ * is judged first - and until now the street saw an untextured box.
+ */
+export function sidingSurface(finish: SidingFinish | null, colour: string): Surface {
+  switch (finish) {
+    case "brick":
+      return brickSurface(colour);
+    case "board-and-batten":
+      return boardSurface(colour, "vertical", 0.3, true);
+    case "stucco":
+      return stuccoSurface(colour);
+    case "shingle":
+      return courseSurface(colour, "shingle");
+    default:
+      return courseSurface(colour, "lap");
+  }
+}
+
+/**
+ * Horizontal courses: lap boards, or shingles with their staggered joints.
+ *
+ * The look is the shadow line under each course - a lap board is thicker at
+ * its bottom edge and casts a line on the one below - so in height each
+ * course thickens downward and ends in a dark step. Shingles are the same
+ * courses cut into tabs of uneven width, offset course to course.
+ */
+function courseSurface(colour: string, kind: "lap" | "shingle"): Surface {
+  return makeSurface(
+    `siding|${kind}|${colour}`,
+    WALL_PX,
+    (g, w, h, channel) => {
+      const albedo = channel === "albedo";
+      const rand = seeded(kind === "lap" ? 0x1a9 : 0x5b1);
+      g.fillStyle = albedo ? colour : GROUND;
+      g.fillRect(0, 0, w, h);
+
+      const course = (kind === "lap" ? 0.15 : 0.2) * WALL_PX_PER_M;
+      const shadow = 3;
+      const courses = Math.ceil(h / course) + 1;
+      for (let c = 0; c < courses; c++) {
+        const y = c * course;
+        if (kind === "lap") {
+          const tone = (rand() - 0.5) * 8;
+          if (albedo) {
+            g.fillStyle = shift(colour, tone);
+            g.fillRect(0, y, w, course - shadow);
+          } else {
+            // Thickening toward the bottom edge, then the step.
+            const grad = g.createLinearGradient(0, y, 0, y + course - shadow);
+            grad.addColorStop(0, shift(GROUND, 2));
+            grad.addColorStop(1, shift(GROUND, 16));
+            g.fillStyle = grad;
+            g.fillRect(0, y, w, course - shadow);
+          }
+          g.fillStyle = albedo ? "rgba(0,0,0,0.28)" : shift(GROUND, -40);
+          g.fillRect(0, y + course - shadow, w, shadow);
+        } else {
+          const offset = rand() * 0.2 * WALL_PX_PER_M;
+          for (let x = -0.3 * WALL_PX_PER_M + offset; x < w; ) {
+            const tab = (0.1 + rand() * 0.15) * WALL_PX_PER_M;
+            const tone = (rand() - 0.5) * 18;
+            g.fillStyle = albedo ? shift(colour, tone) : shift(GROUND, 6 + (rand() - 0.5) * 6);
+            g.fillRect(x, y, tab - 2, course - shadow);
+            x += tab;
+          }
+          g.fillStyle = albedo ? "rgba(0,0,0,0.3)" : shift(GROUND, -40);
+          g.fillRect(0, y + course - shadow, w, shadow);
+        }
+      }
+    },
+    { roughness: 0.85, roughVariance: 0.06, relief: 2.2 },
+  );
+}
+
+/** Render: the plaster pass with a coarser hand and real relief. */
+function stuccoSurface(colour: string): Surface {
+  return makeSurface(
+    `siding|stucco|${colour}`,
+    WALL_PX,
+    (g, w, h, channel) => {
+      const albedo = channel === "albedo";
+      const rand = seeded(0x57cc);
+      g.fillStyle = albedo ? colour : GROUND;
+      g.fillRect(0, 0, w, h);
+      // Trowelled: overlapping soft blobs, each a little up or down.
+      for (let i = 0; i < 900; i++) {
+        const r = 4 + rand() * 18;
+        const x = rand() * w;
+        const y = rand() * h;
+        const up = rand() < 0.5;
+        const grad = g.createRadialGradient(x, y, 0, x, y, r);
+        const tone = albedo ? (up ? "255,255,255" : "0,0,0") : up ? "255,255,255" : "0,0,0";
+        grad.addColorStop(0, `rgba(${tone},${albedo ? 0.06 : 0.16})`);
+        grad.addColorStop(1, `rgba(${tone},0)`);
+        g.fillStyle = grad;
+        g.fillRect(x - r, y - r, r * 2, r * 2);
+      }
+    },
+    { roughness: 0.95, roughVariance: 0.05, relief: 3.4 },
+  );
+}
+
+/**
+ * Asphalt shingle on the roof: courses of tabs, staggered, with a dark
+ * line at each course. The colour is the read's roof colour or a dark grey.
+ */
+export function roofSurface(colour: string): Surface {
+  return makeSurface(
+    `roof|${colour}`,
+    WALL_PX,
+    (g, w, h, channel) => {
+      const albedo = channel === "albedo";
+      const rand = seeded(0x400f);
+      g.fillStyle = albedo ? colour : GROUND;
+      g.fillRect(0, 0, w, h);
+      const course = 0.3 * WALL_PX_PER_M;
+      const tab = 0.45 * WALL_PX_PER_M;
+      const courses = Math.ceil(h / course) + 1;
+      for (let c = 0; c < courses; c++) {
+        const y = c * course;
+        const offset = (c % 2) * (tab / 2) + (rand() - 0.5) * 6;
+        for (let x = -tab + offset; x < w; x += tab) {
+          const tone = (rand() - 0.5) * 20;
+          g.fillStyle = albedo ? shift(colour, tone) : shift(GROUND, 8 + (rand() - 0.5) * 6);
+          g.fillRect(x, y, tab - 2, course - 3);
+          if (albedo) {
+            // Granules.
+            g.globalAlpha = 0.14;
+            for (let k = 0; k < 10; k++) {
+              g.fillStyle = rand() < 0.5 ? "#000" : "#fff";
+              g.fillRect(x + rand() * tab, y + rand() * course, 1.5, 1.5);
+            }
+            g.globalAlpha = 1;
+          }
+        }
+        g.fillStyle = albedo ? "rgba(0,0,0,0.35)" : shift(GROUND, -44);
+        g.fillRect(0, y + course - 3, w, 3);
+      }
+    },
+    { roughness: 0.96, roughVariance: 0.04, relief: 2.0 },
   );
 }
 

@@ -8,13 +8,15 @@ import { boxGeometry, merged, slabGeometry, solid } from "@/lib/model/solids";
 import { runGeometry } from "@/lib/model/profiles";
 import { joineryFor } from "@/lib/model/joinery";
 import { fixturesFor } from "@/lib/model/fixtures";
+import { roofFor, roofGeometry } from "@/lib/model/roof";
+import { sidingFinish } from "@/lib/model/siding";
 import { ceilingParts } from "@/lib/model/ceiling";
 
 import { type Element } from "@/lib/bom/condition";
 import { elementForPiece, type Pick } from "@/lib/bom/pickable";
 import { piecesFor } from "@/lib/model/staging";
 import { BASEBOARD_DEPTH, BASEBOARD_HEIGHT, PALETTE } from "@/lib/model/materials";
-import { DEFAULT_SCHEME, type Scheme, floorToneFor, recolour } from "@/lib/model/schemes";
+import { DEFAULT_SCHEME, type Scheme, floorToneFor, recolour, toHex } from "@/lib/model/schemes";
 import { explodeLift, explodeOffset, roomShell, wallSkins } from "@/lib/model/room-shell";
 import {
   ceilingHolesFor,
@@ -22,8 +24,7 @@ import {
   stairPieces,
   subtractRects,
 } from "@/lib/model/stairs";
-import {
-  type Surface,
+import { type Surface,
   TEXTURE_METRES,
   type WallFinish,
   applyWorldUvs,
@@ -31,15 +32,14 @@ import {
   floorFinish,
   floorSurface,
   wallMaterialSurface,
-  wallSurface,
-} from "@/lib/model/textures";
+  wallSurface, roofSurface, sidingSurface } from "@/lib/model/textures";
 import { type WallSolid, roomIsRectilinear, wallsForLevel } from "@/lib/model/walls";
 import { wallPiecesAround, windowsForLevel } from "@/lib/model/windows";
 
 import { area, boundsOf, centroid, fromFrame, levelBase, levelsOf, signedArea, wallSegmentsForRoom } from "@/lib/plan/geometry";
 import { decompose } from "@/lib/plan/footprint";
 import type { HouseSpec } from "@/lib/spec/schema";
-import type { Plan, Room } from "@/lib/schema";
+import type { Plan, Room, Exterior, Site } from "@/lib/schema";
 import { formatArea } from "@/lib/units";
 
 /**
@@ -93,12 +93,31 @@ function wallGeometry(wall: WallSolid, baseY: number): THREE.BufferGeometry {
  */
 const UNFOCUSED_OPACITY = 0.16;
 
+/**
+ * The cladding, as a skin a finger thick just outside each exterior wall.
+ *
+ * The shell's solid is plaster on its inside face - that is what you see on
+ * foot - and the street sees this, over it. The exterior walls arrive with
+ * their windows already cut, so the skin has the same holes.
+ */
+function skinGeometry(wall: WallSolid, baseY: number): THREE.BufferGeometry {
+  const angle = (wall.angleDeg * Math.PI) / 180;
+  const out = wall.outward ?? [0, 0];
+  const off = wall.thickness / 2 + 0.01;
+  return boxGeometry(
+    [wall.center[0] + out[0] * off, baseY + wall.base + wall.height / 2, wall.center[1] + out[1] * off],
+    [wall.length, wall.height, 0.02],
+    angle,
+  );
+}
+
 function ExteriorShell({
   walls,
   baseY,
   opacity = 1,
   walking,
   colour,
+  siding = null,
 }: {
   walls: WallSolid[];
   baseY: number;
@@ -106,14 +125,17 @@ function ExteriorShell({
   opacity?: number;
   walking: boolean;
   colour: string;
+  /** What the outside is clad in; null draws the bare shell as before. */
+  siding?: Surface | null;
 }) {
   const groups = useMemo(() => {
-    const byFacing = new Map<string, { normal: [number, number]; parts: THREE.BufferGeometry[] }>();
+    const byFacing = new Map<string, { normal: [number, number]; parts: THREE.BufferGeometry[]; skins: THREE.BufferGeometry[] }>();
     for (const wall of walls) {
       if (!wall.outward) continue;
       const key = `${wall.outward[0]},${wall.outward[1]}`;
-      const entry = byFacing.get(key) ?? { normal: wall.outward as [number, number], parts: [] };
+      const entry = byFacing.get(key) ?? { normal: wall.outward as [number, number], parts: [], skins: [] };
       entry.parts.push(wallGeometry(wall, baseY));
+      entry.skins.push(skinGeometry(wall, baseY));
       byFacing.set(key, entry);
     }
 
@@ -121,21 +143,25 @@ function ExteriorShell({
       .map((entry) => {
         const geometry = merged(entry.parts);
         if (!geometry) return null;
+        const skin = merged(entry.skins);
+        if (skin) applyWorldUvs(skin, TEXTURE_METRES.wall);
         // Centre computed once here rather than per frame: it never moves, and
         // culling runs on every frame for every group.
         geometry.computeBoundingBox();
         const centre = new THREE.Vector3();
         geometry.boundingBox?.getCenter(centre);
-        return { normal: entry.normal, geometry, centre };
+        return { normal: entry.normal, geometry, skin, centre };
       })
       .filter(Boolean) as Array<{
         normal: [number, number];
         geometry: THREE.BufferGeometry;
+        skin: THREE.BufferGeometry | null;
         centre: THREE.Vector3;
       }>;
   }, [walls, baseY]);
 
   const materials = useRef<Array<THREE.MeshStandardMaterial | null>>([]);
+  const skinMaterials = useRef<Array<THREE.MeshStandardMaterial | null>>([]);
 
   useFrame(({ camera }) => {
     for (let i = 0; i < groups.length; i++) {
@@ -154,6 +180,9 @@ function ExteriorShell({
       material.opacity = walking
         ? opacity
         : opacity * THREE.MathUtils.clamp(-toCamera / 2.5, 0.05, 1);
+      // The cladding fades with the wall it is on.
+      const skin = skinMaterials.current[i];
+      if (skin) skin.opacity = material.opacity;
     }
   });
 
@@ -174,7 +203,141 @@ function ExteriorShell({
           />
         </mesh>
       ))}
+      {siding &&
+        groups.map(
+          (group, i) =>
+            group.skin && (
+              <mesh key={`skin-${i}`} geometry={group.skin} castShadow receiveShadow userData={{ element: "siding" }}>
+                <meshStandardMaterial
+                  ref={(m) => {
+                    skinMaterials.current[i] = m;
+                  }}
+                  color="#ffffff"
+                  map={siding.map}
+                  normalMap={siding.normalMap}
+                  aoMap={siding.ormMap}
+                  roughnessMap={siding.ormMap}
+                  metalnessMap={siding.ormMap}
+                  aoMapIntensity={0.9}
+                  roughness={1}
+                  metalness={1}
+                  envMapIntensity={0.35}
+                  // Fading is a dollhouse need. On foot the cladding is solid
+                  // and writes depth, which is not only cheaper than a
+                  // transparent skin - without a GPU, four large transparent
+                  // textured quads behind every wall tripled the frame time
+                  // and the walker crawled - it also occludes what is behind.
+                  transparent={!walking}
+                  opacity={opacity}
+                  depthWrite={walking}
+                />
+              </mesh>
+            ),
+        )}
     </>
+  );
+}
+
+/**
+ * The roof, from what the site read said it is.
+ *
+ * Solid when the camera is below the eave - which is the street, where a
+ * house has a roof - and a ghost of itself from above, where a roof would
+ * put a lid on the dollhouse. It casts no shadow for the same reason: a
+ * ghosted roof still shading the rooms under it would darken every room in
+ * the house from the one view that shows them.
+ */
+function Roof({
+  plan,
+  exterior,
+  site,
+  scheme,
+  siding,
+}: {
+  plan: Plan;
+  exterior: Exterior | null;
+  site: Site | null;
+  scheme: Scheme;
+  siding: Surface | null;
+}) {
+  const built = useMemo(() => {
+    const model = roofFor(plan, exterior, site);
+    if (!model) return null;
+    const slopes = roofGeometry(model.faces, "slope");
+    if (slopes) applyWorldUvs(slopes, 2);
+    const ends = roofGeometry(model.faces, "gable");
+    if (ends) applyWorldUvs(ends, TEXTURE_METRES.wall);
+    const deck = roofGeometry(model.faces, "flat");
+    const colour = toHex(exterior?.roof?.colour) ?? "#4b4b4d";
+    const surface = canTexture() && slopes ? roofSurface(colour) : null;
+    return { model, slopes, ends, deck, colour, surface };
+  }, [plan, exterior, site]);
+
+  const materials = useRef<Array<THREE.MeshStandardMaterial | null>>([]);
+  useFrame(({ camera }) => {
+    if (!built) return;
+    const fade = THREE.MathUtils.clamp((built.model.eaveY + 0.6 - camera.position.y) / 3, 0.06, 1);
+    for (const material of materials.current) if (material) material.opacity = fade;
+  });
+
+  if (!built) return null;
+  const textured = (surface: Surface | null, flat: string) =>
+    surface
+      ? {
+          color: "#ffffff",
+          map: surface.map,
+          normalMap: surface.normalMap,
+          aoMap: surface.ormMap,
+          roughnessMap: surface.ormMap,
+          metalnessMap: surface.ormMap,
+          roughness: 1,
+          metalness: 1,
+        }
+      : { color: flat, roughness: 0.95, metalness: 0 };
+
+  return (
+    <group>
+      {built.slopes && (
+        <mesh geometry={built.slopes} receiveShadow userData={{ element: "roof" }}>
+          <meshStandardMaterial
+            ref={(m) => {
+              materials.current[0] = m;
+            }}
+            {...textured(built.surface, built.colour)}
+            side={THREE.DoubleSide}
+            transparent
+            depthWrite={false}
+          />
+        </mesh>
+      )}
+      {built.ends && (
+        <mesh geometry={built.ends} receiveShadow userData={{ element: "roof" }}>
+          <meshStandardMaterial
+            ref={(m) => {
+              materials.current[1] = m;
+            }}
+            {...textured(siding, scheme.wallExterior)}
+            side={THREE.DoubleSide}
+            transparent
+            depthWrite={false}
+          />
+        </mesh>
+      )}
+      {built.deck && (
+        <mesh geometry={built.deck} receiveShadow userData={{ element: "roof" }}>
+          <meshStandardMaterial
+            ref={(m) => {
+              materials.current[2] = m;
+            }}
+            color="#3a3a3c"
+            roughness={0.95}
+            side={THREE.DoubleSide}
+            transparent
+            depthWrite={false}
+          />
+        </mesh>
+      )}
+    </group>
   );
 }
 
@@ -187,6 +350,7 @@ function LevelModel({
   walking,
   scheme,
   explode,
+  siding,
   focusRoomId,
   pick,
   onPick,
@@ -199,6 +363,8 @@ function LevelModel({
   /** What each room is made of, when anything has read or inferred it. */
   spec: HouseSpec | null | undefined;
   level: number;
+  /** The outside's cladding, or null before textures can be made. */
+  siding?: Surface | null;
   opacity: number;
   furnished: boolean;
   walking: boolean;
@@ -914,6 +1080,7 @@ function LevelModel({
           opacity={dimmed}
           walking={walking}
           colour={walking ? built.houseWall : scheme.wallExterior}
+          siding={siding}
         />
       )}
 
@@ -973,10 +1140,15 @@ export function Model({
   scheme = DEFAULT_SCHEME,
   explode = 0,
   focusRoomId = null,
+  exterior = null,
+  site = null,
 }: {
   plan: Plan;
   /** What each room is made of. Absent means fall back to the scheme. */
   spec?: HouseSpec | null;
+  /** What the outside is like, from the site read. Absent means a default house. */
+  exterior?: Exterior | null;
+  site?: Site | null;
   /**
    * Below 1 only while the house is being ghosted for focus.
    *
@@ -1048,6 +1220,18 @@ export function Model({
     [plan.rooms, levels],
   );
 
+  /**
+   * What the outside is clad in, once for every storey.
+   *
+   * The site read's free text ("wood siding", "brick veneer") folds to a
+   * cladding `textures.ts` can draw, in the exterior colour the scheme
+   * already carries - which is the read colour when there was one.
+   */
+  const siding = useMemo(
+    () => (canTexture() ? sidingSurface(sidingFinish(exterior?.walls?.material), scheme.wallExterior) : null),
+    [exterior?.walls?.material, scheme.wallExterior],
+  );
+
   if (opacity <= 0.001) return null;
 
   return (
@@ -1063,6 +1247,7 @@ export function Model({
           walking={walking}
           scheme={scheme}
           explode={explode}
+          siding={siding}
           focusRoomId={focusRoomId}
           pick={pick}
           onPick={onPick}
@@ -1072,6 +1257,12 @@ export function Model({
           onMeasurePoint={onMeasurePoint}
         />
       ))}
+
+      {/* A roof, from the street. Not when the house is pulled apart, and
+          not on foot - inside there is a ceiling between you and it. */}
+      {explode <= 0 && !walking && (onlyLevel === null || onlyLevel === undefined) && (
+        <Roof plan={plan} exterior={exterior} site={site} scheme={scheme} siding={siding} />
+      )}
 
       {showLabels &&
         labelled.map((room: Room) => {

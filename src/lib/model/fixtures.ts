@@ -160,30 +160,54 @@ function offset(piece: Piece, wall: Wall, side: -1 | 0 | 1, width: number, depth
   };
 }
 
-export function fixturesFor(room: Room, spec: RoomSpec | undefined, plan: Plan): Piece[] {
+/**
+ * The wall a room's fireplace stands on, or null when the room has none.
+ *
+ * An outside wall, and of those the one the door does not open onto -
+ * `clearestWall` ranks that - and failing that not the cabinet run's wall.
+ * Exported because a chimney is built over it, outside, by `facade-trim.ts`.
+ */
+export function fireplaceWall(
+  room: Room,
+  spec: RoomSpec | undefined,
+  plan: Plan,
+  /**
+   * A wall not to use when any other will do: the house's front. The plan
+   * does not hold the front door - the site puts it on the front wall - so
+   * without this a living room on the front put its fireplace over the
+   * door and its chimney in front of it.
+   */
+  avoid: Wall | null = null,
+): Wall | null {
+  if (!spec?.fixtures?.some((f) => f.kind === "fireplace")) return null;
+  const outside = exteriorWalls(room, plan);
+  const run = runWall(room, spec, plan);
+  const preferred = clearestWall(room, plan)?.side as Wall | undefined;
+  const candidates = avoid ? outside.filter((w) => w !== avoid) : outside;
+  return (
+    candidates.find((w) => w === preferred) ??
+    candidates.find((w) => w !== run) ??
+    candidates[0] ??
+    outside[0] ??
+    preferred ??
+    "north"
+  );
+}
+
+export function fixturesFor(room: Room, spec: RoomSpec | undefined, plan: Plan, avoid: Wall | null = null): Piece[] {
   if (!spec?.fixtures?.length) return [];
   const b = boundsOf(room.polygon);
   const width = b.x1 - b.x0;
   const depth = b.y1 - b.y0;
   if (width < 1.5 || depth < 1.5) return [];
 
-  const outside = exteriorWalls(room, plan);
   const run = runWall(room, spec, plan);
   const pieces: Piece[] = [];
 
   for (const item of spec.fixtures) {
     switch (item.kind) {
       case "fireplace": {
-        // An outside wall, and of those the one the door does not open onto
-        // - `clearestWall` ranks that - and failing that not the run's wall.
-        const preferred = clearestWall(room, plan)?.side as Wall | undefined;
-        const wall =
-          outside.find((w) => w === preferred) ??
-          outside.find((w) => w !== run) ??
-          outside[0] ??
-          preferred ??
-          "north";
-        pieces.push(fireplace(item, wall, width, depth));
+        pieces.push(fireplace(item, fireplaceWall(room, spec, plan, avoid) ?? "north", width, depth));
         break;
       }
       case "range":

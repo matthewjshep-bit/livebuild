@@ -35,6 +35,13 @@ await page.waitForFunction(() => window.__scene && window.__scene.meshes > 0, { 
 await page.selectOption('select[aria-label="Render quality"]', "medium");
 await page.waitForTimeout(3000);
 const scene = await page.evaluate(() => window.__scene);
+// The exterior assembly, from the street: windows fitted rather than drawn,
+// a chimney where the living room's fireplace is, the roof finished at its
+// edges, a fitted door.
+check("the windows are fitted", (scene.bySurface?.window ?? 0) > 0, JSON.stringify(scene.bySurface));
+check("a chimney stands on the fireplace's wall", (scene.bySurface?.chimney ?? 0) > 0, JSON.stringify(scene.bySurface));
+check("the roof has gutters", (scene.bySurface?.gutter ?? 0) > 0, JSON.stringify(scene.bySurface));
+check("the front door is fitted", (scene.bySurface?.door ?? 0) > 0, JSON.stringify(scene.bySurface));
 check("the showcase opens at the kerb", scene.mode === "street", scene.mode);
 const by = scene.bySurface ?? {};
 // No ceilings here: the dollhouse has none by design, or it would be a set

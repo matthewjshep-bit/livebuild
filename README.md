@@ -641,6 +641,24 @@ camera flying, and by the time the second lands the pixel that held the
 room may hold sky, so a second click that misses while a room has just
 been focused is taken as walking into that room.
 
+**The exterior is assembled, not drawn.** A window was one box with a
+paler box in it, flush with the wall; a door was one box in a colour; the
+roof stopped at its edge; the cladding met itself at the corners with
+nothing to say it had. A window is fitted now: a frame in the reveal, a
+sill standing out from the wall and a stool inside, casing round the
+outside proud of the cladding, bars dividing it into lights of about half
+a metre, a rail across the middle, one pane per light
+(`src/lib/model/window-assembly.ts`). The front door is a frame, a
+six-panel leaf, a threshold, a handle and casing. The roof has fascia
+boards along its eaves with a gutter under each and a downpipe at every
+corner, rake boards up its gable ends, and a cap along the ridge and down
+every hip, read off the roof's own faces so a change to the roof carries
+its trim with it (`src/lib/model/roof-trim.ts`). There is a board up every
+outside corner, a band of foundation under the cladding, and a chimney on
+the fireplace's wall when the reader found one. The porch has posts and a
+roof over the door, and a fence read as picket, or white, is pickets. All
+of it is boxes, pure, and tested without a browser.
+
 **A sky, soft shadows, and a graded frame.** A sited house stands under
 three's analytic sky now - a scattering model with the sun in it, driven by
 the same solar position as the light and the shadows, so the disc is where

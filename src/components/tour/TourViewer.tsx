@@ -283,20 +283,23 @@ function Scene({
   const ground = useMemo(() => {
     const house = houseBounds(property.plan);
     if (!house) return null;
-    const box = planSite
-      ? boundsOf(
-          deriveLot({
-            house,
-            site: planSite,
-            frontDoorBearing: property.exterior?.frontDoorBearing ?? null,
-            garageBearing: property.exterior?.garage?.bearing ?? null,
-            planXBearing: property.site?.planXBearing ?? 90,
-          }).polygon,
-        )
-      : house;
+    const lot = planSite
+      ? deriveLot({
+          house,
+          site: planSite,
+          frontDoorBearing: property.exterior?.frontDoorBearing ?? null,
+          garageBearing: property.exterior?.garage?.bearing ?? null,
+          planXBearing: property.site?.planXBearing ?? 90,
+        })
+      : null;
+    const box = lot ? boundsOf(lot.polygon) : house;
+    // The wall facing the street, as the model names walls. The front door
+    // is on it, so a fireplace keeps off it and its chimney with it.
+    const front = lot ? ({ "-y": "north", "+y": "south", "-x": "west", "+x": "east" } as const)[lot.front.side] : null;
     return {
       centre: [(box.x0 + box.x1) / 2, (box.y0 + box.y1) / 2] as [number, number],
       half: Math.max(box.x1 - box.x0, box.y1 - box.y0) / 2,
+      front,
     };
   }, [property.plan, property.site, property.exterior, planSite]);
   const walkState = useRef<WalkState>({ x: 0, y: 0, level: 0, yaw: 0 });
@@ -341,6 +344,7 @@ function Scene({
       />
 
       <Model
+        frontWall={ground?.front ?? null}
         plan={property.plan}
         spec={property.spec}
         furnished={furnished}

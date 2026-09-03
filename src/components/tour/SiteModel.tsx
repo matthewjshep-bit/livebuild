@@ -5,6 +5,7 @@ import { useMemo } from "react";
 import * as THREE from "three";
 
 import { exteriorLook } from "@/lib/model/exterior-look";
+import { doorAssembly } from "@/lib/model/door-assembly";
 import { type Landscape, landscapeFor } from "@/lib/model/landscape";
 import { roofGeometry, roofOverRect } from "@/lib/model/roof";
 import { type Scheme, toHex } from "@/lib/model/schemes";
@@ -205,7 +206,20 @@ export function SiteModel({
     }
 
     const porch = merged([...garden.porch, ...garden.steps].map((b) => boxGeometry(b.center, b.size)));
-    const door = garden.door ? boxGeometry(garden.door.center, garden.door.size) : null;
+    // The posts and the roof they hold, in the trim colour.
+    const porchTrim = merged([...garden.posts, ...garden.porchRoof].map((b) => boxGeometry(b.center, b.size)));
+    // The front door as fitted: a frame, a six-panel leaf, a threshold, a
+    // handle and casing - by part, since the leaf, the joinery and the
+    // handle are three colours.
+    const trimColour = look.trimColour ?? "#f0ede6";
+    const doorParts = garden.doorAt && garden.doorOutward
+      ? doorAssembly(garden.doorAt, garden.doorOutward, 0.9, 2.05, { leaf: garden.door?.colour ?? "#3c3f42", frame: trimColour, casing: trimColour })
+      : [];
+    const partsOf = (keep: (part: string) => boolean) =>
+      merged(doorParts.filter((p) => keep(p.part)).map((p) => boxGeometry(p.center, p.size, (p.angleDeg * Math.PI) / 180)));
+    const door = partsOf((part) => part === "door-leaf" || part === "door-panel");
+    const doorTrim = partsOf((part) => part !== "door-leaf" && part !== "door-panel" && part !== "handle");
+    const doorHandle = partsOf((part) => part === "handle");
 
     const fenceParts: THREE.BufferGeometry[] = [];
     for (const run of garden.fence) {
@@ -218,6 +232,22 @@ export function SiteModel({
       for (const y of [run.heightM * 0.4, run.heightM * 0.8]) {
         const rail = alongSegment(run.a, run.b, y, 0.1, 0.04);
         if (rail) fenceParts.push(rail);
+      }
+      // Pickets: a board every fifteen centimetres, a little short of the
+      // ground and of the posts' tops, turned to the run.
+      if (run.picket) {
+        const angle = Math.atan2(run.b[1] - run.a[1], run.b[0] - run.a[0]);
+        const count = Math.floor(len / 0.15);
+        for (let i = 1; i < count; i++) {
+          const t = i / count;
+          fenceParts.push(
+            boxGeometry(
+              [run.a[0] + (run.b[0] - run.a[0]) * t, run.heightM / 2 + 0.02, run.a[1] + (run.b[1] - run.a[1]) * t],
+              [0.08, run.heightM - 0.12, 0.02],
+              angle,
+            ),
+          );
+        }
       }
     }
     const fence = merged(fenceParts);
@@ -286,8 +316,12 @@ export function SiteModel({
       surfaces,
       hard,
       porch,
+      porchTrim,
       door,
+      doorTrim,
+      doorHandle,
       doorColour: garden.door?.colour ?? "#3c3f42",
+      trimColour,
       fence,
       fenceColour,
       trunks,
@@ -341,9 +375,24 @@ export function SiteModel({
           <meshStandardMaterial color={CONCRETE} roughness={0.9} metalness={0} />
         </mesh>
       )}
+      {built.porchTrim && (
+        <mesh geometry={built.porchTrim} castShadow receiveShadow userData={{ element: "porch" }}>
+          <meshStandardMaterial color={built.trimColour} roughness={0.6} metalness={0} />
+        </mesh>
+      )}
       {built.door && (
-        <mesh geometry={built.door} castShadow receiveShadow userData={{ element: "porch" }}>
-          <meshStandardMaterial color={built.doorColour} roughness={0.6} metalness={0} />
+        <mesh geometry={built.door} castShadow receiveShadow userData={{ element: "door" }}>
+          <meshStandardMaterial color={built.doorColour} roughness={0.55} metalness={0} envMapIntensity={0.6} />
+        </mesh>
+      )}
+      {built.doorTrim && (
+        <mesh geometry={built.doorTrim} castShadow receiveShadow userData={{ element: "door" }}>
+          <meshStandardMaterial color={built.trimColour} roughness={0.6} metalness={0} />
+        </mesh>
+      )}
+      {built.doorHandle && (
+        <mesh geometry={built.doorHandle} castShadow userData={{ element: "door" }}>
+          <meshStandardMaterial color="#b8b6ae" roughness={0.3} metalness={0.85} />
         </mesh>
       )}
       {built.fence && (

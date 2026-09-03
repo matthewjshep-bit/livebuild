@@ -42,6 +42,11 @@ const onHouse = (p: Vec2, r = 0) => p[0] > house.x0 - r && p[0] < house.x1 + r &
   check("a drive on the garage's side (east, the viewer's left)", g.driveway !== null && g.driveway!.polygon.every((p) => p[0] > 10), JSON.stringify(g.driveway?.polygon));
   check("the drive meets the front edge", g.driveway!.polygon.some((p) => Math.abs(p[1] - Math.min(...lot.polygon.map((q) => q[1]))) < 1e-6));
   check("and nothing else is planted", g.trees.length === 0 && g.shrubs.length === 0 && g.fence.length === 0 && g.porch.length === 0 && g.outbuildings.length === 0);
+  check("no porch, so no posts and no porch roof", g.posts.length === 0 && g.porchRoof.length === 0);
+  // The fitted door hangs proud of the cladding: the wall is solid where the
+  // plan has no opening, so its leaf, six centimetres behind the face, must
+  // land outside the siding at 0.22.
+  check("the door's face is outside the cladding", g.doorAt !== null && g.doorAt![1] < -0.22 - 0.06 && g.doorAt![1] > -0.35 && g.doorOutward![1] === -1, `${g.doorAt} ${g.doorOutward}`);
 }
 
 // --- a read garden ---
@@ -69,6 +74,11 @@ const onHouse = (p: Vec2, r = 0) => p[0] > house.x0 - r && p[0] < house.x1 + r &
   check("a tree along the street stands by the front edge", street !== undefined, g.trees.map((t) => t.at[1].toFixed(1)).join(","));
   check("the drive is asphalt", g.driveway?.material === "asphalt");
   check("a porch stands at the door", g.porch.length === 1 && g.steps.length === 2);
+  check("on two posts, with a roof over it", g.posts.length === 2 && g.porchRoof.length === 1);
+  check("the posts stand on the porch and the roof over them",
+    g.posts.every((p) => p.center[1] - p.size[1] / 2 > 0.1) && g.porchRoof.every((r) => r.center[1] > Math.max(...g.posts.map((p) => p.center[1] + p.size[1] / 2)) - 0.01),
+    JSON.stringify({ posts: g.posts.map((p) => p.center), roof: g.porchRoof.map((r) => r.center) }));
+  check("a white fence is pickets", g.fence.every((r) => r.picket));
   check("the fence stays off the front", g.fence.length > 0 && g.fence.every((r) => (r.a[1] + r.b[1]) / 2 > Math.min(...lot.polygon.map((p) => p[1])) + 0.5));
   check("and is white when the read said white", g.fence.every((r) => r.colour === "#ffffff"));
   // The front is -y, so "in front of the wall" is a smaller y.

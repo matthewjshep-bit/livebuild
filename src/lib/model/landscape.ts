@@ -21,12 +21,19 @@ import type { Vec2 } from "@/lib/schema";
 export type Landscape = {
   /** The front door, on the front wall. */
   door: Box | null;
+  /** The door's centre on the wall's outer face, and which way is out: what a fitted door is built from. */
+  doorAt: Vec2 | null;
+  doorOutward: Vec2 | null;
   /** From the door to the front lot line, a metre wide. */
   path: Vec2[] | null;
   driveway: { polygon: Vec2[]; material: "concrete" | "asphalt" | "gravel" } | null;
   porch: Box[];
   steps: Box[];
-  fence: Array<{ a: Vec2; b: Vec2; heightM: number; colour: string }>;
+  /** Two posts at the porch's outer corners, and the roof they hold over the door. */
+  posts: Box[];
+  porchRoof: Box[];
+  /** A run of fence; pickets when the read said picket or the fence is pale. */
+  fence: Array<{ a: Vec2; b: Vec2; heightM: number; colour: string; picket: boolean }>;
   trees: Array<{ at: Vec2; heightM: number; trunkR: number; canopyR: number; shape: "round" | "cone"; colour: string }>;
   shrubs: Array<{ at: Vec2; r: number; colour: string }>;
   hedges: Array<{ a: Vec2; b: Vec2; heightM: number; depthM: number; colour: string }>;
@@ -90,6 +97,13 @@ export function landscapeFor(input: {
   // outside that; the first door was sixteen centimetres out, inside the
   // wall, and rendered faithfully where nobody could see it.
   const doorBox = box(add(door, f, 0.26), 1.025, left, 0.9, 2.05, 0.06, input.doorColour ?? "#3c3f42");
+  // Where the fitted door's face is. The plan has no opening for the front
+  // door - the exterior wall is solid there, the full twenty centimetres
+  // outside the room's polygon, with the cladding a hand outside that - so
+  // the assembly hangs proud of the cladding, as the box did, rather than
+  // in a reveal it does not have: its leaf, set six centimetres behind this
+  // face, lands just outside the siding.
+  const doorAt = add(door, f, 0.285);
 
   // --- the path: door to the front lot line ---
   const reach = frontLine - dot(door, f);
@@ -177,6 +191,15 @@ export function landscapeFor(input: {
   const steps: Box[] = [];
   const hasPorch = has("porch").length > 0;
   if (hasPorch) porch.push(box(add(door, f, 0.75), 0.075, left, 2.4, 0.15, 1.5, CONCRETE));
+  // A roof over the porch, on two posts at its outer corners; the house wall
+  // holds the other side. A slab on the ground with nothing over it was a
+  // patio, and the read said porch.
+  const posts: Box[] = [];
+  const porchRoof: Box[] = [];
+  if (hasPorch) {
+    for (const s of [-1, 1]) posts.push(box(add(add(door, f, 1.35), left, s * 1.1), 1.35, left, 0.1, 2.4, 0.1, WHITE));
+    porchRoof.push(box(add(door, f, 0.8), 2.61, left, 2.6, 0.12, 1.7, WHITE));
+  }
   if (hasPorch || has("steps").length > 0) {
     const from = hasPorch ? 1.5 : 0;
     steps.push(box(add(door, f, from + 0.15), 0.05, left, 1.2, 0.1, 0.3, CONCRETE));
@@ -189,13 +212,16 @@ export function landscapeFor(input: {
   if (fenceRead) {
     const pale = /white|cream|pale/i.test(`${fenceRead.colour ?? ""} ${fenceRead.material ?? ""}`) || luminance(fenceRead.colour) > 0.6;
     const colour = fenceRead.colour ?? (pale ? WHITE : TIMBER);
+    // Pickets when the read said so, and for a pale fence: a white fence in
+    // a front garden is a picket fence, and a dark one is posts and rails.
+    const picket = pale || /picket/i.test(fenceRead.material ?? "");
     for (let i = 0; i < lot.polygon.length; i++) {
       const a = lot.polygon[i];
       const b = lot.polygon[(i + 1) % lot.polygon.length];
       const mid: Vec2 = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
       const isFront = dot(mid, f) > frontLine - 0.5;
       if (isFront && !fenceRead.alongStreet) continue;
-      fence.push({ a, b, heightM: isFront ? 0.9 : 1.2, colour });
+      fence.push({ a, b, heightM: isFront ? 0.9 : 1.2, colour, picket });
     }
   }
 
@@ -300,5 +326,5 @@ export function landscapeFor(input: {
     }
   }
 
-  return { door: doorBox, path, driveway, porch, steps, fence, trees, shrubs, hedges, outbuildings };
+  return { door: doorBox, doorAt, doorOutward: f, path, driveway, porch, steps, posts, porchRoof, fence, trees, shrubs, hedges, outbuildings };
 }

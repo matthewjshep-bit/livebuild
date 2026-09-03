@@ -8,7 +8,11 @@ import { boxGeometry, merged, slabGeometry, solid } from "@/lib/model/solids";
 import { runGeometry } from "@/lib/model/profiles";
 import { joineryFor } from "@/lib/model/joinery";
 import { exteriorLook } from "@/lib/model/exterior-look";
-import { fixturesFor } from "@/lib/model/fixtures";
+import { fireplaceWall, fixturesFor } from "@/lib/model/fixtures";
+import type { Wall } from "@/lib/model/furniture";
+import { chimney, cornerBoards, foundationBand } from "@/lib/model/facade-trim";
+import { roofTrim } from "@/lib/model/roof-trim";
+import { windowAssembly } from "@/lib/model/window-assembly";
 import { roofFor, roofGeometry, thickenFaces } from "@/lib/model/roof";
 import { assetForBox, assetForFloor, assetForRoof, assetForSiding, assetForWall, type BoxMaterial } from "@/lib/model/assets";
 import { assetSurface, useAssetsVersion } from "@/lib/model/asset-surfaces";
@@ -39,12 +43,12 @@ import { type Surface,
   wallMaterialSurface,
   wallSurface, roofSurface, sidingSurface } from "@/lib/model/textures";
 import { type WallSolid, roomIsRectilinear, wallsForLevel } from "@/lib/model/walls";
-import { wallPiecesAround, windowsForLevel } from "@/lib/model/windows";
+import { type ModelWindow, wallPiecesAround, windowsForLevel } from "@/lib/model/windows";
 
 import { area, boundsOf, centroid, fromFrame, levelBase, levelsOf, signedArea, wallSegmentsForRoom } from "@/lib/plan/geometry";
 import { decompose } from "@/lib/plan/footprint";
 import type { HouseSpec } from "@/lib/spec/schema";
-import type { Plan, Room, Exterior, Site } from "@/lib/schema";
+import type { Plan, Room, Exterior, Site, Vec2 } from "@/lib/schema";
 import { formatArea } from "@/lib/units";
 
 /**
@@ -261,6 +265,9 @@ function Roof({
   roofShape = null,
   roofColour = null,
   roofMaterial = null,
+  spec = null,
+  trimColour = null,
+  frontWall = null,
 }: {
   plan: Plan;
   exterior: Exterior | null;
@@ -273,6 +280,12 @@ function Roof({
   roofShape?: string | null;
   roofColour?: string | null;
   roofMaterial?: string | null;
+  /** What each room holds: a fireplace is where the chimney goes. */
+  spec?: HouseSpec | null;
+  /** The fascias, rakes and caps wear the house's trim colour. */
+  trimColour?: string | null;
+  /** The wall facing the street, which a chimney keeps off when it can. */
+  frontWall?: Wall | null;
 }) {
   const assetsVersion = useAssetsVersion();
   const built = useMemo(() => {
@@ -290,14 +303,27 @@ function Roof({
     const ends = roofGeometry(faces, "gable");
     if (ends) applyWorldUvs(ends, TEXTURE_METRES.wall);
     const deck = roofGeometry(faces, "flat");
+    // What finishes the roof at its edges, read off its own faces: fascias
+    // and rakes, gutters with a downpipe at each corner, caps on the ridge
+    // and the hips.
+    const trim = roofTrim(model);
+    const boards = roofGeometry(thickenFaces([...trim.boards, ...trim.caps], 0.025), "trim");
+    const gutters = roofGeometry(thickenFaces(trim.gutters, 0.1), "trim");
+    const pipes = merged(trim.downpipes.map((p) => boxGeometry(p.center, p.size, (p.angleDeg * Math.PI) / 180)));
+    // A chimney on the fireplace's wall, from the ground to above the ridge.
+    const stacks = plan.rooms.flatMap((room) => {
+      const wall = fireplaceWall(room, spec?.rooms[room.id], plan, frontWall);
+      return wall ? [chimney(boundsOf(room.polygon), wall, model.ridgeY, "#8b4a3a")] : [];
+    });
+    const chimneys = merged(stacks.map((p) => boxGeometry(p.center, p.size, 0)));
     const colour = toHex(roofColour ?? exterior?.roof?.colour) ?? "#4b4b4d";
     const surface =
       canTexture() && slopes
         ? assetSurface(assetForRoof(roofMaterial ?? exterior?.roof?.material), 2, colour) ?? roofSurface(colour)
         : null;
-    return { model, slopes, ends, deck, colour, surface };
+    return { model, slopes, ends, deck, colour, surface, boards, gutters, pipes, chimneys };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [plan, exterior, site, roofShape, roofColour, roofMaterial, assetsVersion]);
+  }, [plan, exterior, site, roofShape, roofColour, roofMaterial, spec, frontWall, assetsVersion]);
 
   const materials = useRef<Array<THREE.MeshStandardMaterial | null>>([]);
   useFrame(({ camera }) => {
@@ -359,6 +385,62 @@ function Roof({
           />
         </mesh>
       )}
+      {built.boards && (
+        <mesh geometry={built.boards} castShadow={solid} receiveShadow userData={{ element: "trim" }}>
+          <meshStandardMaterial
+            ref={(m) => {
+              materials.current[3] = m;
+            }}
+            color={trimColour ?? PALETTE.frame}
+            roughness={0.5}
+            side={THREE.DoubleSide}
+            transparent={!solid}
+            depthWrite={solid}
+          />
+        </mesh>
+      )}
+      {built.gutters && (
+        <mesh geometry={built.gutters} castShadow={solid} receiveShadow userData={{ element: "gutter" }}>
+          <meshStandardMaterial
+            ref={(m) => {
+              materials.current[4] = m;
+            }}
+            color="#6b6d70"
+            roughness={0.45}
+            metalness={0.6}
+            side={THREE.DoubleSide}
+            transparent={!solid}
+            depthWrite={solid}
+          />
+        </mesh>
+      )}
+      {built.pipes && (
+        <mesh geometry={built.pipes} castShadow={solid} receiveShadow userData={{ element: "gutter" }}>
+          <meshStandardMaterial
+            ref={(m) => {
+              materials.current[5] = m;
+            }}
+            color="#6b6d70"
+            roughness={0.45}
+            metalness={0.6}
+            transparent={!solid}
+            depthWrite={solid}
+          />
+        </mesh>
+      )}
+      {built.chimneys && (
+        <mesh geometry={built.chimneys} castShadow={solid} receiveShadow userData={{ element: "chimney" }}>
+          <meshStandardMaterial
+            ref={(m) => {
+              materials.current[6] = m;
+            }}
+            color="#8b4a3a"
+            roughness={0.95}
+            transparent={!solid}
+            depthWrite={solid}
+          />
+        </mesh>
+      )}
     </group>
   );
 }
@@ -370,6 +452,7 @@ function LevelModel({
   opacity,
   furnished,
   walking,
+  frontWall = null,
   // Bound under another name: `solid` is also the box helper this builds with.
   solid: facadesSolid = walking,
   scheme,
@@ -397,6 +480,8 @@ function LevelModel({
   opacity: number;
   furnished: boolean;
   walking: boolean;
+  /** The wall facing the street: a fireplace keeps off it, since the front door is there. */
+  frontWall?: Wall | null;
   scheme: Scheme;
   explode: number;
   pick: Pick | null;
@@ -451,6 +536,8 @@ function LevelModel({
     // Exterior walls carrying a window are rebuilt as the pieces around it,
     // which is cheaper and far simpler than subtracting a solid.
     const windowed = new Set<WallSolid>();
+    // Each window with which way is out of its wall, for the fitting.
+    const fitted: Array<{ window: ModelWindow; outward: Vec2 }> = [];
     const interiorParts: THREE.BufferGeometry[] = [];
     const exterior: WallSolid[] = [];
 
@@ -468,6 +555,7 @@ function LevelModel({
       );
       if (window) {
         windowed.add(wall);
+        fitted.push({ window, outward: wall.outward ?? [0, -1] });
         exterior.push(...wallPiecesAround(wall, window));
       } else {
         exterior.push(wall);
@@ -773,7 +861,7 @@ function LevelModel({
        * off. The element it prices under comes from `elementForPiece`, which
        * knows the appliances and leaves a fireplace to its room.
        */
-      for (const piece of fixturesFor(room, roomSpec, plan)) {
+      for (const piece of fixturesFor(room, roomSpec, plan, frontWall)) {
         const element = elementForPiece(piece.kind);
         const frame = piece.frame;
         const turn = frame ? (-frame.rotationDeg * Math.PI) / 180 : 0;
@@ -845,21 +933,35 @@ function LevelModel({
       }
     }
 
+    /**
+     * The windows, fitted: a frame in the reveal, a sill and a stool, casing
+     * outside, bars and a rail, a pane per light. One box with a paler box
+     * in it was most of why the facade read as a drawing.
+     */
     const frameParts: THREE.BufferGeometry[] = [];
     const glassParts: THREE.BufferGeometry[] = [];
+    const partGeometry = (p: { center: [number, number, number]; size: [number, number, number]; angleDeg: number }) =>
+      boxGeometry(p.center, p.size, (p.angleDeg * Math.PI) / 180);
+    const fittedWindows = new Set(fitted.map((f) => f.window));
+    for (const { window, outward } of fitted) {
+      const assembly = windowAssembly(window, outward, baseY, { frame: PALETTE.frame, casing: PALETTE.frame, glass: PALETTE.glass });
+      for (const p of assembly.trim) frameParts.push(partGeometry(p));
+      for (const p of assembly.glass) glassParts.push(partGeometry(p));
+    }
+    // A window no wall was cut for keeps the old frame-and-pane, so it is
+    // still there, if flat.
     for (const window of windows) {
+      if (fittedWindows.has(window)) continue;
       const angle = (window.angleDeg * Math.PI) / 180;
       const height = window.head - window.sill;
       const y = baseY + (window.sill + window.head) / 2;
-      frameParts.push(
-        boxGeometry([window.center[0], y, window.center[1]],
-          [window.width, height, window.thickness], angle),
-      );
-      glassParts.push(
-        boxGeometry([window.center[0], y, window.center[1]],
-          [window.width - 0.09, height - 0.09, window.thickness + 0.01], angle),
-      );
+      frameParts.push(boxGeometry([window.center[0], y, window.center[1]], [window.width, height, window.thickness], angle));
+      glassParts.push(boxGeometry([window.center[0], y, window.center[1]], [window.width - 0.09, height - 0.09, window.thickness + 0.01], angle));
     }
+    // A board up every outside corner, and under the ground floor the band
+    // of foundation a clad house shows.
+    const cornerParts = cornerBoards(exterior, baseY, PALETTE.frame).map(partGeometry);
+    const foundationParts = level === 0 ? foundationBand(exterior, "#8d8a84").map(partGeometry) : [];
 
     /**
      * The house's wall colour, and a surface for it.
@@ -943,12 +1045,14 @@ function LevelModel({
           surface: Surface | null;
         }>,
       frames: merged(frameParts),
+      corners: merged(cornerParts),
+      foundation: merged(foundationParts),
       glass: merged(glassParts),
     };
     // `assetsVersion` is not read: it changes when a scan lands, which is
     // when the gate above would answer differently.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [plan, spec, level, baseY, furnished, walking, facadesSolid, scheme, exploded, assetsVersion]);
+  }, [plan, spec, level, baseY, furnished, walking, facadesSolid, frontWall, scheme, exploded, assetsVersion]);
 
   // Every surface of one room moves together, so a room comes apart from the
   // house as one part rather than as a floor and some furniture that happen to
@@ -1115,7 +1219,7 @@ function LevelModel({
       )}
 
       {!exploded && built.frames && (
-        <mesh geometry={built.frames}>
+        <mesh geometry={built.frames} castShadow receiveShadow userData={{ element: "window" }}>
           <meshStandardMaterial
             color={trimColour ?? PALETTE.frame}
             roughness={0.45}
@@ -1126,8 +1230,18 @@ function LevelModel({
           />
         </mesh>
       )}
+      {!exploded && built.corners && (
+        <mesh geometry={built.corners} castShadow receiveShadow userData={{ element: "trim" }}>
+          <meshStandardMaterial color={trimColour ?? PALETTE.frame} roughness={0.5} metalness={0} transparent={ghosted} opacity={dimmed} />
+        </mesh>
+      )}
+      {!exploded && built.foundation && (
+        <mesh geometry={built.foundation} castShadow receiveShadow userData={{ element: "foundation" }}>
+          <meshStandardMaterial color="#8d8a84" roughness={0.95} metalness={0} transparent={ghosted} opacity={dimmed} />
+        </mesh>
+      )}
       {!exploded && built.glass && (
-        <mesh geometry={built.glass}>
+        <mesh geometry={built.glass} userData={{ element: "glass" }}>
           {/*
             Nearly opaque, not see-through. Real glass would show whatever is
             behind it, and behind an upstairs window there is nothing but the
@@ -1174,6 +1288,7 @@ export function Model({
   onHover,
   onMeasurePoint,
   walking = false,
+  frontWall = null,
   scheme = DEFAULT_SCHEME,
   explode = 0,
   focusRoomId = null,
@@ -1211,6 +1326,8 @@ export function Model({
    * from inside there is nothing in the way to fade.
    */
   walking?: boolean;
+  /** Which of the house's walls faces the street, when the house has one. */
+  frontWall?: Wall | null;
   /** What is currently selected, so it can be lit. */
   pick?: Pick | null;
   /** Absent means the model is not interrogable - no cursor, no picking. */
@@ -1298,6 +1415,7 @@ export function Model({
           opacity={opacity}
           furnished={furnished}
           walking={walking}
+          frontWall={frontWall}
           scheme={scheme}
           explode={explode}
           siding={siding}
@@ -1326,6 +1444,9 @@ export function Model({
           roofShape={look.roofShape}
           roofColour={look.roofColour}
           roofMaterial={look.roofMaterial}
+          spec={spec}
+          trimColour={look.trimColour}
+          frontWall={frontWall}
         />
       )}
 

@@ -322,10 +322,53 @@ export const HouseDefaults = z.object({
 });
 export type HouseDefaults = z.infer<typeof HouseDefaults>;
 
+/* ----------------------------------------------------------- the outside */
+
+/**
+ * What the outside is, read from the owner's own photographs of it.
+ *
+ * Distinct from `Property.exterior`, which is the map and the satellite - a
+ * survey and a model looking at imagery, each with a licence to credit. This
+ * is a third source: the house as its owner photographed it. It carries
+ * provenance like a room does, so a hand edit sticks and a re-read replaces
+ * only what was read.
+ */
+export const LandscapeKind = z.enum([
+  "porch", "steps", "driveway", "path", "fence", "hedge", "tree", "shrub", "lawn", "garage", "shed", "deck", "patio",
+]);
+export type LandscapeKind = z.infer<typeof LandscapeKind>;
+
+export const LandscapeFeature = z.object({
+  id: z.string().min(1),
+  kind: LandscapeKind,
+  material: z.string().nullish(),
+  colour: z.string().nullish(),
+  /** Relative to the front door, facing the house from the street. */
+  side: z.enum(["left", "right", "front", "back", "both"]).nullish(),
+  alongStreet: z.boolean().default(false),
+  size: z.enum(["s", "m", "l"]).nullish(),
+});
+export type LandscapeFeature = z.infer<typeof LandscapeFeature>;
+
+export const ExteriorSpec = z.object({
+  siding: z.object({ material: z.string().nullish(), finish: z.string().nullish(), colour: z.string().nullish() }).nullish(),
+  roof: z.object({ shape: z.string().nullish(), material: z.string().nullish(), colour: z.string().nullish() }).nullish(),
+  trim: z.object({ colour: z.string().nullish() }).nullish(),
+  door: z.object({ colour: z.string().nullish() }).nullish(),
+  features: z.array(LandscapeFeature).default([]),
+  source: z.record(z.string(), Source).default({}),
+  because: z.record(z.string(), z.string()).default({}),
+  observed: z.boolean().default(false),
+  notes: z.string().default(""),
+});
+export type ExteriorSpec = z.infer<typeof ExteriorSpec>;
+
 export const HouseSpec = z.object({
   version: z.literal(1).default(1),
   rooms: z.record(z.string(), RoomSpec).default({}),
   defaults: HouseDefaults.nullish(),
+  /** The outside as photographed. Absent until a photograph of it was read. */
+  exterior: ExteriorSpec.nullish(),
   /** Anything a pass proposed and the gates refused, with the reason. */
   rejections: z
     .array(
@@ -354,6 +397,7 @@ export type HouseSpec = z.infer<typeof HouseSpec>;
 /* ---------------------------------------------------------------- helpers */
 
 export const EMPTY_ROOM_SPEC: RoomSpec = RoomSpec.parse({});
+export const EMPTY_EXTERIOR_SPEC: ExteriorSpec = ExteriorSpec.parse({});
 
 /**
  * Round a measured colour to something a house could have been painted.

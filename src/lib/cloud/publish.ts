@@ -78,7 +78,7 @@ type Upload = { relative: string; blob: Blob; nodeId: string; kind: "photo" };
 async function collect(property: Property): Promise<Upload[]> {
   const uploads: Upload[] = [];
 
-  for (const node of property.nodes) {
+  for (const node of [...property.nodes, ...(property.exteriorPhotos ?? [])]) {
     const photo = await getMedia(refToKey(node.photo));
     if (photo) {
       uploads.push({
@@ -163,6 +163,10 @@ export async function publishProperty(
       photo: publicUrl(`${slug}/photos/${node.id}.jpg`),
       depth: null,
     })),
+    exteriorPhotos: (property.exteriorPhotos ?? []).map((p) => ({
+      ...p,
+      photo: publicUrl(`${slug}/photos/${p.id}.jpg`),
+    })),
   };
 
   onProgress({ stage: "recording", completed: uploads.length, total: uploads.length, bytes });
@@ -174,7 +178,7 @@ export async function publishProperty(
       adminKey,
       slug,
       document: published,
-      photoCount: property.nodes.length,
+      photoCount: property.nodes.length + (property.exteriorPhotos?.length ?? 0),
       bytes,
     }),
   });

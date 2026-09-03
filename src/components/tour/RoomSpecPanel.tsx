@@ -5,7 +5,7 @@ import { useState } from "react";
 import { verifyRoom, type VerifyOutcome } from "@/lib/spec/verify-client";
 import type { CapturePose } from "@/lib/render/capture";
 
-import { type Source } from "@/lib/spec/schema";
+import { type ExteriorSpec, type Source, EMPTY_EXTERIOR_SPEC } from "@/lib/spec/schema";
 import { ftToM, mToFt } from "@/lib/units";
 import type { Property } from "@/lib/schema";
 
@@ -352,6 +352,113 @@ export function RoomSpecPanel({
           {spec.notes && (
             <p className="mt-2 border-t border-ink-600 pt-2 text-[10px] leading-relaxed text-mist-400">
               {spec.notes}
+            </p>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * The outside, as a photograph of it was read, with where each value came from.
+ *
+ * The same rows and the same pill as a room: siding, roof, trim, door, each
+ * marked "from the photos" or "you". Edits are marked yours and stick.
+ */
+export function ExteriorSpecPanel({
+  property,
+  onPropertyChange,
+}: {
+  property: Property;
+  onPropertyChange?: (property: Property) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const spec: ExteriorSpec | null | undefined = property.spec?.exterior;
+  if (!spec) return null;
+
+  const edit = (path: string, value: string) => {
+    if (!onPropertyChange || !property.spec) return;
+    const next = structuredClone({ ...EMPTY_EXTERIOR_SPEC, ...spec });
+    const keys = path.split(".");
+    const leaf = keys.pop()!;
+    let node = next as unknown as Record<string, unknown>;
+    for (const key of keys) {
+      if (node[key] === undefined || node[key] === null) node[key] = {};
+      node = node[key] as Record<string, unknown>;
+    }
+    node[leaf] = value;
+    next.source[path] = "human";
+    delete next.because[path];
+    onPropertyChange({ ...property, spec: { ...property.spec, exterior: next } });
+  };
+
+  const Origin = ({ path }: { path: string }) => {
+    const source = spec.source[path];
+    if (!source) return null;
+    return (
+      <span className={`text-[10px] ${TONE[source]}`} title={spec.because[path] ?? ""}>
+        {LABEL[source]}
+      </span>
+    );
+  };
+  const Row = ({ label, path, children }: { label: string; path: string; children: React.ReactNode }) => (
+    <div className="flex items-center justify-between gap-2 py-1">
+      <span className="shrink-0 text-[11px] text-mist-400">{label}</span>
+      <div className="flex min-w-0 items-center gap-1.5">
+        {children}
+        <Origin path={path} />
+      </div>
+    </div>
+  );
+  const Colour = ({ path, value }: { path: string; value: string | null | undefined }) => (
+    <input
+      type="color"
+      value={value ?? "#888888"}
+      disabled={!onPropertyChange}
+      onChange={(e) => edit(path, e.target.value)}
+      aria-label={path}
+      className="h-5 w-8 cursor-pointer rounded border border-ink-500 bg-ink-700 disabled:opacity-60"
+    />
+  );
+
+  const read = Object.values(spec.source).filter((s) => s === "read").length;
+  return (
+    <div data-exterior-spec className="mt-1.5">
+      <button
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+        className="w-full rounded-lg border border-ink-600 bg-ink-800/90 px-3 py-2 text-left text-[11px] text-mist-200 backdrop-blur transition hover:border-ink-500"
+      >
+        <span className="uppercase tracking-wide text-mist-400">Outside</span>{" "}
+        {spec.observed ? `read from the photos${read ? ` · ${read} ${read === 1 ? "thing" : "things"}` : ""}` : "not photographed"}
+        <span className="float-right text-mist-400">{open ? "▾" : "▸"}</span>
+      </button>
+      {open && (
+        <div className="mt-1.5 rounded-lg border border-ink-600 bg-ink-800/90 px-3 py-2 backdrop-blur">
+          <Row label="Siding" path="siding.material">
+            <span className="truncate text-[11px] text-mist-200">{spec.siding?.material ?? "—"}</span>
+          </Row>
+          <Row label="Siding colour" path="siding.colour">
+            <Colour path="siding.colour" value={spec.siding?.colour} />
+          </Row>
+          <Row label="Roof" path="roof.material">
+            <span className="truncate text-[11px] text-mist-200">
+              {[spec.roof?.shape, spec.roof?.material].filter(Boolean).join(" · ") || "—"}
+            </span>
+          </Row>
+          <Row label="Roof colour" path="roof.colour">
+            <Colour path="roof.colour" value={spec.roof?.colour} />
+          </Row>
+          <Row label="Trim" path="trim.colour">
+            <Colour path="trim.colour" value={spec.trim?.colour} />
+          </Row>
+          <Row label="Front door" path="door.colour">
+            <Colour path="door.colour" value={spec.door?.colour} />
+          </Row>
+          {spec.features.length > 0 && (
+            <p className="mt-1 text-[10px] leading-relaxed text-mist-400">
+              Outside: {spec.features.map((f) => f.kind).join(", ")}.
             </p>
           )}
         </div>

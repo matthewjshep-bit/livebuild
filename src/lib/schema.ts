@@ -265,6 +265,17 @@ export const Property = z.object({
   displayUnits: z.enum(["ft", "m"]).default("ft"),
   plan: Plan,
   nodes: z.array(TourNode).default([]),
+  /**
+   * Photographs of the outside.
+   *
+   * Not nodes: a node stands in a room at a pose, and an elevation has
+   * neither. They used to be dropped on the floor - labelled "Outside" by
+   * the classifier, matched to no room, reported as "left out" - which is
+   * how the one photograph that shows the roof and the siding never reached
+   * the house. Kept here so the exterior read, the evidence panel and the
+   * grader can find them.
+   */
+  exteriorPhotos: z.array(z.object({ id: z.string().min(1), photo: z.string().min(1) })).default([]),
   /** Per-room condition, keyed by room id then by element. */
   condition: z.record(z.string(), z.record(z.string(), Grade)).default({}),
   /** Roof, systems and exterior - things belonging to no single room. */

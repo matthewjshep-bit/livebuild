@@ -43,7 +43,7 @@ const property = (id: string, label = id): Property => ({
   nodes: [],
   condition: {},
   houseCondition: {},
-  rates: {},
+  rates: {}, exteriorPhotos: [],
 });
 
 // --- Ordinary saving ---

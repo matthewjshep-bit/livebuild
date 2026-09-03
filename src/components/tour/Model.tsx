@@ -7,6 +7,7 @@ import * as THREE from "three";
 import { boxGeometry, merged, slabGeometry, solid } from "@/lib/model/solids";
 import { runGeometry } from "@/lib/model/profiles";
 import { joineryFor } from "@/lib/model/joinery";
+import { exteriorLook } from "@/lib/model/exterior-look";
 import { fixturesFor } from "@/lib/model/fixtures";
 import { roofFor, roofGeometry } from "@/lib/model/roof";
 import { sidingFinish } from "@/lib/model/siding";
@@ -260,6 +261,8 @@ function Roof({
   scheme,
   siding,
   solid = false,
+  roofShape = null,
+  roofColour = null,
 }: {
   plan: Plan;
   exterior: Exterior | null;
@@ -268,19 +271,26 @@ function Roof({
   siding: Surface | null;
   /** From the street: opaque, and casting the shadow on the lawn that is the point. */
   solid?: boolean;
+  /** The photographs' say, when they had one: fills a shape the map lacked, and wins on colour. */
+  roofShape?: string | null;
+  roofColour?: string | null;
 }) {
   const built = useMemo(() => {
-    const model = roofFor(plan, exterior, site);
+    const model = roofFor(
+      plan,
+      { roof: { ...(exterior?.roof ?? {}), shape: exterior?.roof?.shape ?? roofShape ?? null } },
+      site,
+    );
     if (!model) return null;
     const slopes = roofGeometry(model.faces, "slope");
     if (slopes) applyWorldUvs(slopes, 2);
     const ends = roofGeometry(model.faces, "gable");
     if (ends) applyWorldUvs(ends, TEXTURE_METRES.wall);
     const deck = roofGeometry(model.faces, "flat");
-    const colour = toHex(exterior?.roof?.colour) ?? "#4b4b4d";
+    const colour = toHex(roofColour ?? exterior?.roof?.colour) ?? "#4b4b4d";
     const surface = canTexture() && slopes ? roofSurface(colour) : null;
     return { model, slopes, ends, deck, colour, surface };
-  }, [plan, exterior, site]);
+  }, [plan, exterior, site, roofShape, roofColour]);
 
   const materials = useRef<Array<THREE.MeshStandardMaterial | null>>([]);
   useFrame(({ camera }) => {
@@ -364,6 +374,7 @@ function LevelModel({
   scheme,
   explode,
   siding,
+  trimColour = null,
   focusRoomId,
   pick,
   onPick,
@@ -380,6 +391,8 @@ function LevelModel({
   solid?: boolean;
   /** The outside's cladding, or null before textures can be made. */
   siding?: Surface | null;
+  /** The window and door trim, when a photograph said what colour it is. */
+  trimColour?: string | null;
   opacity: number;
   furnished: boolean;
   walking: boolean;
@@ -1103,7 +1116,7 @@ function LevelModel({
       {!exploded && built.frames && (
         <mesh geometry={built.frames}>
           <meshStandardMaterial
-            color={PALETTE.frame}
+            color={trimColour ?? PALETTE.frame}
             roughness={0.45}
             metalness={0}
             envMapIntensity={0.7}
@@ -1246,9 +1259,12 @@ export function Model({
    * cladding `textures.ts` can draw, in the exterior colour the scheme
    * already carries - which is the read colour when there was one.
    */
+  // What the outside looks like: the photographs first, then the map, then
+  // the scheme.
+  const look = useMemo(() => exteriorLook(spec, exterior), [spec, exterior]);
   const siding = useMemo(
-    () => (canTexture() ? sidingSurface(sidingFinish(exterior?.walls?.material), scheme.wallExterior) : null),
-    [exterior?.walls?.material, scheme.wallExterior],
+    () => (canTexture() ? sidingSurface(sidingFinish(look.wallMaterial), scheme.wallExterior) : null),
+    [look.wallMaterial, scheme.wallExterior],
   );
 
   if (opacity <= 0.001) return null;
@@ -1268,6 +1284,7 @@ export function Model({
           explode={explode}
           siding={siding}
           solid={walking || street}
+          trimColour={look.trimColour}
           focusRoomId={focusRoomId}
           pick={pick}
           onPick={onPick}
@@ -1281,7 +1298,16 @@ export function Model({
       {/* A roof, from the street. Not when the house is pulled apart, and
           not on foot - inside there is a ceiling between you and it. */}
       {explode <= 0 && !walking && (onlyLevel === null || onlyLevel === undefined) && (
-        <Roof plan={plan} exterior={exterior} site={site} scheme={scheme} siding={siding} solid={street} />
+        <Roof
+          plan={plan}
+          exterior={exterior}
+          site={site}
+          scheme={scheme}
+          siding={siding}
+          solid={street}
+          roofShape={look.roofShape}
+          roofColour={look.roofColour}
+        />
       )}
 
       {showLabels &&

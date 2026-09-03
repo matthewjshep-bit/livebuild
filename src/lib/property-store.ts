@@ -240,7 +240,13 @@ export async function hydrateMedia(property: Property): Promise<Property> {
       photo: (await resolveMediaUrl(node.photo)) ?? node.photo,
     })),
   );
-  return { ...property, nodes };
+  const exteriorPhotos = await Promise.all(
+    (property.exteriorPhotos ?? []).map(async (p) => ({
+      ...p,
+      photo: (await resolveMediaUrl(p.photo)) ?? p.photo,
+    })),
+  );
+  return { ...property, nodes, exteriorPhotos };
 }
 
 /** Saved copy wins, so edits to a bundled demo survive a reload. */

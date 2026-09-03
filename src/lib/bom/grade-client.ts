@@ -157,9 +157,12 @@ export async function gradeExterior(
   const outsideRooms = new Set(
     property.plan.rooms.filter((r) => roomKind(r.label) === "outside").map((r) => r.id),
   );
-  const nodes = property.nodes
-    .filter((n) => outsideRooms.has(n.roomId))
-    .slice(0, MAX_EXTERIOR);
+  // The outside's own photographs first, then whatever stood in an outside
+  // room on a house built before they were kept apart.
+  const nodes = [
+    ...(property.exteriorPhotos ?? []),
+    ...property.nodes.filter((n) => outsideRooms.has(n.roomId)),
+  ].slice(0, MAX_EXTERIOR);
 
   const photos: string[] = [];
   for (const node of nodes) {

@@ -37,12 +37,13 @@ import { RoomMarkers } from "@/components/tour/RoomMarkers";
 import { Minimap } from "@/components/tour/Minimap";
 import { PublishPanel } from "@/components/tour/PublishPanel";
 import { Evidence } from "@/components/tour/Evidence";
-import { RoomSpecPanel } from "@/components/tour/RoomSpecPanel";
+import { ExteriorSpecPanel, RoomSpecPanel } from "@/components/tour/RoomSpecPanel";
 import { walkStartFor } from "@/lib/model/focus";
 import { levelName, levelsOf } from "@/lib/plan/geometry";
 import type { Plan, Property } from "@/lib/schema";
 import { SiteModel } from "@/components/tour/SiteModel";
 import { siteInPlan } from "@/lib/site/plan-site";
+import { exteriorLook } from "@/lib/model/exterior-look";
 import { deriveLot, houseBounds } from "@/lib/site/lot";
 
 /**
@@ -516,7 +517,13 @@ export function TourViewer({
   // A house that was looked at from the street offers its own colours first,
   // so the default is what the building actually is rather than a direction
   // somebody might take it in.
-  const schemes = useMemo(() => schemesFor(property.exterior), [property.exterior]);
+  // "This house" wears what the photographs saw, when they saw it, and what
+  // the map saw otherwise - the same precedence the model draws with.
+  const look = useMemo(() => exteriorLook(property.spec, property.exterior), [property.spec, property.exterior]);
+  const schemes = useMemo(
+    () => schemesFor({ walls: { colour: look.wallColour }, roof: { colour: look.roofColour } }),
+    [look.wallColour, look.roofColour],
+  );
   const [schemeName, setSchemeName] = useState<string | null>(null);
   // Its own colours when it has any, and otherwise the direction that was
   // always the default. A house nobody surveyed must look exactly as it did.
@@ -824,7 +831,7 @@ export function TourViewer({
             {property.label || property.id}
           </span>
           <span className="hidden shrink-0 whitespace-nowrap text-xs text-mist-400 lg:inline">
-            {property.plan.rooms.length} rooms &middot; built from {property.nodes.length}{" "}
+            {property.plan.rooms.length} rooms &middot; built from {property.nodes.length + (property.exteriorPhotos?.length ?? 0)}{" "}
             {property.nodes.length === 1 ? "photo" : "photos"}
           </span>
         </div>
@@ -1158,6 +1165,11 @@ export function TourViewer({
             roomId={focusRoomId}
             onPropertyChange={onPropertyChange ? saveEdit : undefined}
           />
+          {/* The outside, when the whole house is what is being looked at
+              and a photograph of it was read. */}
+          {focusRoomId === null && property.spec?.exterior && (
+            <ExteriorSpecPanel property={property} onPropertyChange={onPropertyChange ? saveEdit : undefined} />
+          )}
         </div>
 
         {/* A small plan floating over a large one is just a smaller plan. */}

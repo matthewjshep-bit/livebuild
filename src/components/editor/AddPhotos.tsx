@@ -107,10 +107,17 @@ export function AddPhotos({
         );
       }
 
+      const keptOutside = keepExisting ? base.exteriorPhotos : [];
       let assembled: Property = {
         ...base,
         plan,
         nodes: keepExisting ? [...base.nodes, ...placed.nodes] : placed.nodes,
+        exteriorPhotos: [
+          ...keptOutside,
+          ...placed.outside
+            .filter((p) => !keptOutside.some((k) => k.id === p.id))
+            .map((p) => ({ id: p.id, photo: p.ref })),
+        ],
       };
       onUpdate(assembled);
 
@@ -198,7 +205,11 @@ export function AddPhotos({
     const all = [...oldPhotos, ...read.photos.map((p) => ({ id: p.id, ref: p.ref, roomLabel: p.roomLabel }))];
     const placed = placePhotos(nextPlan, all);
 
-    const assembled: Property = { ...carried, nodes: placed.nodes };
+    const assembled: Property = {
+      ...carried,
+      nodes: placed.nodes,
+      exteriorPhotos: placed.outside.map((p) => ({ id: p.id, photo: p.ref })),
+    };
     onUpdate(assembled);
 
     const said: string[] = [

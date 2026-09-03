@@ -31,7 +31,8 @@ export type Job =
   | "condition"
   | "room-read"
   | "room-verify"
-  | "site-read";
+  | "site-read"
+  | "exterior-read";
 
 export type Effort = "low" | "medium" | "high";
 
@@ -105,6 +106,8 @@ const JOBS: Record<Job, { model: string; effort: Effort; imageEdge: number; imag
   "room-read": { model: OPUS, effort: "high", imageEdge: 1024, imageQuality: 0.88 },
   "room-verify": { model: OPUS, effort: "high", imageEdge: 1024, imageQuality: 0.85 },
   "site-read": { model: OPUS, effort: "high", imageEdge: 1024, imageQuality: 0.88 },
+  // What the outside is made of, from the owner's own photographs of it.
+  "exterior-read": { model: OPUS, effort: "high", imageEdge: 1024, imageQuality: 0.88 },
 };
 
 /**

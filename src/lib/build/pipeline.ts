@@ -6,6 +6,7 @@ import { getMedia, refToKey } from "@/lib/media-store";
 import { placeNodesInRoom } from "@/lib/plan/autolayout";
 import type { HouseSpec } from "@/lib/plan/describe";
 import type { Plan, TourNode } from "@/lib/schema";
+import { roomKind } from "@/lib/plan/room-kind";
 
 /**
  * The steps between "here are some photographs" and "here is your house".
@@ -128,8 +129,12 @@ export function placePhotos<T extends BuildPhoto>(
   plan: Plan,
   photos: T[],
   existing: TourNode[] = [],
-): { nodes: TourNode[]; unplaced: number } {
-  const remaining = photos.filter((p) => p.roomLabel);
+): { nodes: TourNode[]; unplaced: number; outside: T[] } {
+  // The outside first. A photograph of the front of the house is not of any
+  // room, and matching it against the room list left it "unplaced" - which
+  // read as lost, and was.
+  const outside = photos.filter((p) => p.roomLabel && roomKind(p.roomLabel) === "outside");
+  const remaining = photos.filter((p) => p.roomLabel && !outside.includes(p));
   const take = (predicate: (label: string) => boolean) => {
     const taken = remaining.filter((p) => predicate(p.roomLabel!));
     for (const photo of taken) remaining.splice(remaining.indexOf(photo), 1);
@@ -157,7 +162,7 @@ export function placePhotos<T extends BuildPhoto>(
     ),
   );
 
-  return { nodes, unplaced: remaining.length };
+  return { nodes, unplaced: remaining.length, outside };
 }
 
 /**

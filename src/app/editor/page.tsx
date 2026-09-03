@@ -20,7 +20,7 @@ function emptyProperty(id: string): Property {
     // map as 'nothing seen yet' rather than 'nothing needed'.
     condition: {},
     houseCondition: {},
-    rates: {},
+    rates: {}, exteriorPhotos: [],
   };
 }
 

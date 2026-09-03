@@ -66,6 +66,7 @@ import {
 } from "@/lib/storage/intake";
 import { M_PER_FT } from "@/lib/units";
 import { SITE_ATTRIBUTION } from "@/lib/site/plan-site";
+import { readExteriorPhotos } from "@/lib/spec/exterior-client";
 
 /**
  * Three screens, and the middle one runs itself.
@@ -511,7 +512,7 @@ function NewTourInner() {
           nodes: [],
           condition: {},
           houseCondition: {},
-          rates: {},
+          rates: {}, exteriorPhotos: [],
         });
       } else if (label) {
         const stored = loadProperty(propertyId);
@@ -599,12 +600,19 @@ function NewTourInner() {
    * house, and the tour is already open in front of somebody while it runs.
    */
   const readInterior = useCallback(async (property: Property) => {
-    setReading({ room: "", done: 0, total: property.plan.rooms.length });
+    // The outside counts as one more room in the same bar, and is read at the
+    // same time: the gate stays one condition, and the tour opens on a house
+    // whose siding was read along with its floors.
+    const outsideToRead = (property.exteriorPhotos?.length ?? 0) > 0 ? 1 : 0;
+    const readingOutside = outsideToRead
+      ? readExteriorPhotos(property, property.spec?.exterior ?? null)
+      : Promise.resolve({ exterior: property.spec?.exterior ?? null, notes: [] as string[] });
+    setReading({ room: "", done: 0, total: property.plan.rooms.length + outsideToRead });
     try {
       const result = await readRooms(
         property,
         property.spec ?? RoomSpecDoc.parse({}),
-        (progress) => setReading(progress),
+        (progress) => setReading({ ...progress, total: progress.total + outsideToRead }),
         (roomId, roomSpec) => {
           const stored = loadProperty(property.id);
           if (!stored) return;
@@ -617,17 +625,25 @@ function NewTourInner() {
           setProperty(next);
         },
       );
+      if (outsideToRead) {
+        setReading({ room: "Outside", done: property.plan.rooms.length, total: property.plan.rooms.length + 1 });
+      }
+      const outside = await readingOutside;
       // The inference re-runs at the end of the read, so the final write is the
       // one that carries the conventions out to the rooms nobody photographed.
       const stored = loadProperty(property.id);
       if (stored) {
-        const next: Property = { ...stored, spec: result.spec };
+        const next: Property = {
+          ...stored,
+          spec: { ...result.spec, exterior: outside.exterior ?? result.spec.exterior ?? null },
+        };
         saveProperty(next);
         setProperty(next);
       }
       setReading(null);
-      if (result.notes.length > 0) {
-        setNotes((current) => [...current, ...result.notes.slice(0, 4)]);
+      const notes = [...result.notes, ...outside.notes];
+      if (notes.length > 0) {
+        setNotes((current) => [...current, ...notes.slice(0, 5)]);
       }
     } catch {
       setReading(null);
@@ -783,6 +799,8 @@ function NewTourInner() {
         displayUnits: "ft",
         plan: nextPlan,
         nodes: placed.nodes,
+        // The outside's photographs, kept beside the rooms' rather than lost.
+        exteriorPhotos: placed.outside.map((p) => ({ id: p.id, photo: p.ref })),
         // Filled in once someone grades the property; the BOM treats an empty
         // map as 'nothing seen yet' rather than 'nothing needed'.
         condition: {},
@@ -818,6 +836,11 @@ function NewTourInner() {
         exterior: outside,
         spec: inference.spec,
       };
+      if (placed.outside.length > 0) {
+        gathered.push(
+          `${placed.outside.length} photograph${placed.outside.length === 1 ? "" : "s"} of the outside, kept for the roof and the siding.`,
+        );
+      }
       if (placed.unplaced > 0) {
         gathered.push(
           `${placed.unplaced} photo${placed.unplaced === 1 ? "" : "s"} had no matching room and ${placed.unplaced === 1 ? "was" : "were"} left out.`,
@@ -1747,8 +1770,13 @@ function NewTourInner() {
                 setPlan(next);
                 // Re-place rather than carrying nodes over: a redrawn plan has
                 // different room ids, and stale ones orphan the photos.
-                const { nodes } = placePhotos(next, photos);
-                const updated = { ...property, plan: next, nodes };
+                const placed = placePhotos(next, photos);
+                const updated = {
+                  ...property,
+                  plan: next,
+                  nodes: placed.nodes,
+                  exteriorPhotos: placed.outside.map((p) => ({ id: p.id, photo: p.ref })),
+                };
                 setProperty(updated);
                 saveProperty(updated);
               }}

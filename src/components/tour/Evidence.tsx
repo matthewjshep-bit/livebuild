@@ -28,9 +28,13 @@ export function Evidence({
   const [open, setOpen] = useState(false);
   const [zoomed, setZoomed] = useState<string | null>(null);
 
+  // The whole house includes the outside's photographs, which are not nodes.
   const photos = useMemo(
-    () => (roomId ? property.nodes.filter((n) => n.roomId === roomId) : property.nodes),
-    [property.nodes, roomId],
+    () =>
+      roomId
+        ? property.nodes.filter((n) => n.roomId === roomId)
+        : [...property.nodes, ...(property.exteriorPhotos ?? [])],
+    [property.nodes, property.exteriorPhotos, roomId],
   );
 
   const room = roomId ? property.plan.rooms.find((r) => r.id === roomId) ?? null : null;
@@ -48,7 +52,7 @@ export function Evidence({
     return () => window.removeEventListener("keydown", onKey);
   }, [open, zoomed]);
 
-  if (property.nodes.length === 0) return null;
+  if (property.nodes.length === 0 && (property.exteriorPhotos?.length ?? 0) === 0) return null;
 
   return (
     <>

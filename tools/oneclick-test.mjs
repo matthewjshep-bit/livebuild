@@ -59,6 +59,7 @@ const built = await page.evaluate(() => {
     rooms: doc?.plan.rooms.length ?? 0,
     doorways: doc?.plan.openings.length ?? 0,
     nodes: doc?.nodes.length ?? 0,
+    exteriorPhotos: doc?.exteriorPhotos?.length ?? 0,
     allConnected: (doc?.nodes ?? []).every((n) => n.neighbors.length > 0),
     id: doc?.id,
   };
@@ -77,7 +78,7 @@ const ok =
   arrived &&
   built.rooms >= 4 &&
   built.doorways > 0 &&
-  built.nodes === files.length &&
+  built.nodes + built.exteriorPhotos === files.length &&
   built.allConnected &&
   walkable;
 

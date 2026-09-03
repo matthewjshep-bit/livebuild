@@ -612,6 +612,19 @@ that a house from the street has. The scripted tour opens with that shot
 before it climbs to the dollhouse. Without a map there is no kerb, and the
 street view stands the default distance off at the same height.
 
+**Reading the outside.** The classifier has always labelled a photograph of
+the front of the house "Outside", and the build then matched it against the
+room list, found no room, and reported it "left out" - so the one photograph
+that shows the roof and the siding never reached the house. Those
+photographs are kept now, apart from the rooms' (a node stands in a room at
+a pose; an elevation has neither), and read under the same gate as the
+rooms by a reader that describes the building - cladding, roof, trim, door -
+and then lists what is outside it, one entry per tree. For how the outside
+*looks*, the photographs win over the map's imagery, and the map's survey
+wins for everything that is geometry; the roof's shape from a photograph
+fills in only where the map had none. "This house" wears the photographed
+colours, and an Outside panel says where each value came from.
+
 **And the outside is a house.** The site read returns what the walls are
 clad in and what shape the roof is, with its ridge bearing and pitch, and
 until now the street saw an untextured box with its top open. The free text

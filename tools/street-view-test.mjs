@@ -206,6 +206,8 @@ check("the roof is there from the street", (streetScene.bySurface?.roof ?? 0) > 
 // And through a window there is a room with a ceiling, not the sky through
 // the house: the dollhouse's lids are on from the pavement.
 check("the ceilings are on from the street", (streetScene.bySurface?.ceiling ?? 0) > 0, JSON.stringify(streetScene.bySurface));
+// The road is a street: asphalt and, on it, a broken centre line.
+check("the road has its centre line", (streetScene.bySurface?.street ?? 0) >= 2, JSON.stringify(streetScene.bySurface));
 check("and the names are", (await page.locator("[data-street-name]").count()) === 2);
 await page.screenshot({ path: "shots/ST2-street-view.png" });
 

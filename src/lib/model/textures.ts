@@ -831,10 +831,37 @@ export function floorSurface(finish: FloorFinish, tone: string): Surface {
       }
 
       if (finish === "grass") {
+        // Slow blotches first - a lawn is greener where the ground holds
+        // water and paler where it is worn - in colour only, since they are
+        // not relief. Then the blades, with far less contrast than they
+        // had: strong light-dark speckle at blade scale read as camouflage
+        // from the kerb, which is where a lawn is mostly seen from.
+        if (albedo) {
+          for (let i = 0; i < 24; i++) {
+            const r = w * (0.12 + rand() * 0.22);
+            const x = rand() * w;
+            const y = rand() * h;
+            const grad = g.createRadialGradient(x, y, 0, x, y, r);
+            grad.addColorStop(0, rand() < 0.5 ? "rgba(255,255,230,0.07)" : "rgba(0,20,0,0.07)");
+            grad.addColorStop(1, "rgba(0,0,0,0)");
+            g.fillStyle = grad;
+            g.beginPath();
+            g.arc(x, y, r, 0, Math.PI * 2);
+            g.fill();
+            // Wrapped copies, so a blotch at the edge continues across the seam.
+            for (const [ox, oy] of [[w, 0], [-w, 0], [0, h], [0, -h]] as const) {
+              g.beginPath();
+              g.arc(x + ox, y + oy, r, 0, Math.PI * 2);
+              g.fill();
+            }
+          }
+        } else {
+          for (let i = 0; i < 24 * 4; i++) rand();
+        }
         for (let i = 0; i < 20000; i++) {
           const x = rand() * w;
           const y = rand() * h;
-          g.strokeStyle = paint((rand() - 0.5) * 34, (rand() - 0.5) * 90);
+          g.strokeStyle = paint((rand() - 0.5) * 16, (rand() - 0.5) * 36);
           g.lineWidth = 0.8;
           g.beginPath();
           g.moveTo(x, y);

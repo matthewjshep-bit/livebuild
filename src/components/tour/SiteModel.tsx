@@ -11,8 +11,10 @@ import { roofGeometry, roofOverRect } from "@/lib/model/roof";
 import { type Scheme, toHex } from "@/lib/model/schemes";
 import { sidingFinish } from "@/lib/model/siding";
 import { kerbGeometry, ribbonGeometry } from "@/lib/model/site-geometry";
+import { centreDashes } from "@/lib/model/road-marks";
+import { canopyGeometry, shrubGeometry, trunkGeometry } from "@/lib/model/tree-geometry";
 import { windowsForLevel } from "@/lib/model/windows";
-import { boxGeometry, coneGeometry, cylinderGeometry, merged, slabGeometry, sphereGeometry } from "@/lib/model/solids";
+import { boxGeometry, merged, slabGeometry } from "@/lib/model/solids";
 import {
   type Surface,
   TEXTURE_METRES,
@@ -27,7 +29,7 @@ import {
 import { assetForRoof, assetForSiding } from "@/lib/model/assets";
 import { assetSurface, useAssetsVersion } from "@/lib/model/asset-surfaces";
 import { surfaceProps } from "@/lib/model/surface-props";
-import { centroid, pointInPolygon } from "@/lib/plan/geometry";
+import { area, centroid, pointInPolygon } from "@/lib/plan/geometry";
 import { type Lot, deriveLot, houseBounds } from "@/lib/site/lot";
 import { type PlanSite, closestPointOnWays, roadWidth } from "@/lib/site/plan-site";
 import type { HouseSpec } from "@/lib/spec/schema";
@@ -55,11 +57,24 @@ const TRUNK = "#5b4636";
 const CONCRETE = "#b9b5ad";
 const GRAVEL = "#a39c8f";
 
-type Textured = { geometry: THREE.BufferGeometry; surface: Surface | null; colour: string; element: string };
+type Textured = { geometry: THREE.BufferGeometry; surface: Surface | null; colour: string; element: string; vertexColours?: boolean };
 
 /** A material for a surface, or a flat colour when textures cannot be made. */
-function Material({ surface, colour, roughness = 0.95, env = 0.3 }: { surface: Surface | null; colour: string; roughness?: number; env?: number }) {
-  return <meshStandardMaterial {...surfaceProps(surface, { colour, roughness }, env)} />;
+function Material({
+  surface,
+  colour,
+  roughness = 0.95,
+  env = 0.3,
+  vertexColors = false,
+}: {
+  surface: Surface | null;
+  colour: string;
+  roughness?: number;
+  env?: number;
+  /** The geometry carries a shade of its own, multiplied into the colour: a crown's underside. */
+  vertexColors?: boolean;
+}) {
+  return <meshStandardMaterial {...surfaceProps(surface, { colour, roughness }, env)} vertexColors={vertexColors} />;
 }
 
 /** A box along a segment on the ground. */
@@ -106,7 +121,10 @@ export function SiteModel({
     const textures = canTexture();
 
     const lawn = slabGeometry(lot.polygon, -0.03, 0.05);
-    if (lawn) applyWorldUvs(lawn, TEXTURE_METRES.floor);
+    // Four metres to the tile rather than two: the blades come out a little
+    // coarser and the slow blotches drawn into the grass repeat over a
+    // distance the eye does not catch from the kerb.
+    if (lawn) applyWorldUvs(lawn, 4);
 
     const roads = merged(
       planSite.streets.flatMap((s) =>
@@ -119,16 +137,32 @@ export function SiteModel({
     const kerbs = merged(
       planSite.streets.flatMap((s) => s.ways.flatMap((way) => kerbGeometry(way, roadWidth(s.kind), -0.01))),
     );
+    // The broken centre line down each road, a hair above the asphalt.
+    const marks = merged(planSite.streets.flatMap((s) => s.ways.flatMap((way) => centreDashes(way, -0.017))));
 
     // Next door's buildings, and the ones on this lot - a detached garage -
     // which are the garden's to clad.
     const inLot = (outline: Vec2[]) => pointInPolygon(centroid(outline), lot.polygon);
-    const neighbours = merged(
-      planSite.buildings
-        .filter((b) => !inLot(b.outline))
-        .map((b) => slabGeometry(b.outline, b.heightM, b.heightM))
-        .filter((g): g is THREE.BufferGeometry => Boolean(g)),
-    );
+    // Next door as walls to the eave and, where the outline is near enough a
+    // rectangle to carry one, a hip roof over it. A grey box with a flat top
+    // is a warehouse; most of what is next door is a house.
+    const neighbourWalls: THREE.BufferGeometry[] = [];
+    const neighbourRoofParts: THREE.BufferGeometry[] = [];
+    for (const b of planSite.buildings) {
+      if (inLot(b.outline)) continue;
+      const walls = slabGeometry(b.outline, b.heightM, b.heightM);
+      if (walls) neighbourWalls.push(walls);
+      const xs = b.outline.map((p) => p[0]);
+      const ys = b.outline.map((p) => p[1]);
+      const rect = { x0: Math.min(...xs), y0: Math.min(...ys), x1: Math.max(...xs), y1: Math.max(...ys) };
+      const boxArea = (rect.x1 - rect.x0) * (rect.y1 - rect.y0);
+      if (boxArea > 20 && Math.abs(area(b.outline)) / boxArea > 0.78) {
+        const roof = roofGeometry(roofOverRect(rect, "hip", b.heightM, 22, rect.x1 - rect.x0 >= rect.y1 - rect.y0), "slope");
+        if (roof) neighbourRoofParts.push(roof);
+      }
+    }
+    const neighbours = merged(neighbourWalls);
+    const neighbourRoofs = merged(neighbourRoofParts);
 
     /**
      * The name where the road passes the house, lying on the road.
@@ -253,34 +287,30 @@ export function SiteModel({
     const fence = merged(fenceParts);
     const fenceColour = garden.fence[0]?.colour ?? "#8a6a45";
 
-    const trunks = merged(
-      garden.trees.map((t) => {
-        const trunkH = t.shape === "cone" ? t.heightM * 0.25 : t.heightM - t.canopyR * 1.6;
-        return cylinderGeometry([t.at[0], trunkH / 2, t.at[1]], t.trunkR, trunkH);
-      }),
-    );
-    const canopies = new Map<string, THREE.BufferGeometry[]>();
-    for (const t of garden.trees) {
-      const trunkH = t.shape === "cone" ? t.heightM * 0.25 : t.heightM - t.canopyR * 1.6;
-      const g =
-        t.shape === "cone"
-          ? coneGeometry([t.at[0], trunkH + (t.heightM - trunkH) / 2, t.at[1]], t.canopyR, t.heightM - trunkH)
-          : sphereGeometry([t.at[0], trunkH + t.canopyR * 0.9, t.at[1]], t.canopyR);
-      (canopies.get(t.colour) ?? canopies.set(t.colour, []).get(t.colour)!).push(g);
-    }
-    for (const s of garden.shrubs) {
-      (canopies.get(s.colour) ?? canopies.set(s.colour, []).get(s.colour)!).push(sphereGeometry([s.at[0], s.r * 0.8, s.at[1]], s.r));
-    }
+    // Trunks with branches, crowns of several lobes, shrubs as clumps: see
+    // `tree-geometry.ts`. Crowns and shrubs carry a vertex shade - darker
+    // underneath - and hedges are plain boxes that do not, and geometries
+    // with different attributes cannot be merged, so the two are grouped
+    // apart and drawn with and without the shade.
+    const trunks = merged(garden.trees.map((t) => trunkGeometry(t)));
+    const crowns = new Map<string, THREE.BufferGeometry[]>();
+    const hedgeRuns = new Map<string, THREE.BufferGeometry[]>();
+    const into = (groups: Map<string, THREE.BufferGeometry[]>, key: string, g: THREE.BufferGeometry) =>
+      (groups.get(key) ?? groups.set(key, []).get(key)!).push(g);
+    for (const t of garden.trees) into(crowns, t.colour, canopyGeometry(t));
+    for (const s of garden.shrubs) into(crowns, s.colour, shrubGeometry(s));
     for (const h of garden.hedges) {
       const g = alongSegment(h.a, h.b, h.heightM / 2, h.heightM, h.depthM, 0.3);
-      if (g) (canopies.get(h.colour) ?? canopies.set(h.colour, []).get(h.colour)!).push(g);
+      if (g) into(hedgeRuns, h.colour, g);
     }
-    const planting: Textured[] = [...canopies].flatMap(([colour, parts]) => {
-      const g = merged(parts);
-      if (!g) return [];
-      applyWorldUvs(g, 1.5);
-      return [{ geometry: g, surface: textures ? foliageSurface(colour) : null, colour, element: "planting" }];
-    });
+    const foliage = (groups: Map<string, THREE.BufferGeometry[]>, vertexColours: boolean): Textured[] =>
+      [...groups].flatMap(([colour, parts]) => {
+        const g = merged(parts);
+        if (!g) return [];
+        applyWorldUvs(g, 1.5);
+        return [{ geometry: g, surface: textures ? foliageSurface(colour) : null, colour, element: "planting", vertexColours }];
+      });
+    const planting: Textured[] = [...foliage(crowns, true), ...foliage(hedgeRuns, false)];
 
     // The house's own garage or shed, clad like the house, under its own gable.
     const outWalls: THREE.BufferGeometry[] = [];
@@ -311,7 +341,9 @@ export function SiteModel({
       lawn,
       roads,
       kerbs,
+      marks,
       neighbours,
+      neighbourRoofs,
       names,
       surfaces,
       hard,
@@ -364,6 +396,11 @@ export function SiteModel({
           <meshStandardMaterial color="#a9a7a2" roughness={0.9} metalness={0} />
         </mesh>
       )}
+      {built.marks && (
+        <mesh geometry={built.marks} receiveShadow userData={{ element: "street" }}>
+          <meshStandardMaterial color="#d9d6c8" roughness={0.85} metalness={0} />
+        </mesh>
+      )}
 
       {built.hard.map((h, i) => (
         <mesh key={`hard-${i}`} geometry={h.geometry} receiveShadow userData={{ element: h.element }}>
@@ -407,7 +444,7 @@ export function SiteModel({
       )}
       {built.planting.map((p, i) => (
         <mesh key={`planting-${i}`} geometry={p.geometry} castShadow receiveShadow userData={{ element: p.element }}>
-          <Material surface={p.surface} colour={p.colour} env={0.35} />
+          <Material surface={p.surface} colour={p.colour} env={0.35} vertexColors={p.vertexColours ?? false} />
         </mesh>
       ))}
 
@@ -430,6 +467,11 @@ export function SiteModel({
       {showNeighbours && built.neighbours && (
         <mesh geometry={built.neighbours} castShadow receiveShadow userData={{ element: "neighbour" }}>
           <meshStandardMaterial color={NEIGHBOUR} roughness={0.95} metalness={0} />
+        </mesh>
+      )}
+      {showNeighbours && built.neighbourRoofs && (
+        <mesh geometry={built.neighbourRoofs} castShadow receiveShadow userData={{ element: "neighbour" }}>
+          <meshStandardMaterial color="#6c6b69" roughness={0.95} metalness={0} />
         </mesh>
       )}
 

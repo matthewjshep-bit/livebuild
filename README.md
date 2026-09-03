@@ -674,6 +674,16 @@ legs; a fridge has two doors with handles; a basin is a vanity on the
 floor with doors, a top, a bowl and a tap; a wardrobe has doors. Furniture
 takes a softer bevel than joinery.
 
+**The garden has plants in it.** A tree was one sphere on a cylinder and a
+conifer one cone; a crown is several lobes now, offset and overlapping,
+with branches leaning out of the trunk into it, darker underneath than on
+top; a conifer is tiers of cone that narrow going up; a shrub is a clump
+of three (`src/lib/model/tree-geometry.ts`, seeded by where the plant
+stands so every tree is different and the same each time). The neighbours
+have hip roofs where their outlines are near enough rectangles to carry
+one, the roads have a broken centre line (`road-marks.ts`), and the lawn
+is quieter up close and varies slowly across the lot.
+
 **A sky, soft shadows, and a graded frame.** A sited house stands under
 three's analytic sky now - a scattering model with the sun in it, driven by
 the same solar position as the light and the shadows, so the disc is where

@@ -184,10 +184,16 @@ export default function Home() {
             <span className="transition-transform group-hover:translate-x-0.5">&rarr;</span>
           </Link>
           <Link
-            href="/tour/demo-house"
+            href="/tour/showcase"
             className="inline-flex w-full items-center justify-center rounded-xl border border-ink-500 px-6 py-3.5 text-base text-mist-200 transition hover:border-mist-400 sm:w-auto"
           >
-            Walk a sample house
+            See the showcase house
+          </Link>
+          <Link
+            href="/tour/demo-house"
+            className="inline-flex w-full items-center justify-center rounded-xl border border-ink-600 px-6 py-3.5 text-base text-mist-400 transition hover:border-mist-400 sm:w-auto"
+          >
+            Walk a plain sample
           </Link>
         </div>
 

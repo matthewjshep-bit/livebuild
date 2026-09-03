@@ -589,6 +589,17 @@ just proud of the partition's, following the same door-cut segments the
 exploded view uses, with the windows cut out so a brick wall does not cover
 its own glass. Every other room draws nothing extra.
 
+**The showcase house.** `/tour/showcase` is a bundled sample whose data
+fills every field a build can now carry - a read for every photographed
+room with its joinery, fixtures and furnishings; the site with its frame,
+streets and neighbours; what the map said of the outside; what the
+photographs said of the siding, the roof, the trim, the door and the garden.
+Nothing in it is rendered geometry: the renderer derives all of that at view
+time, so the same file shows the current build quality on every deploy, and
+it is where to look first after a push. `npx tsx tools/make-showcase.ts`
+regenerates it, validated by the app's own parser. The plain `demo-house`
+stays as it was - the house with no site - because the suites pin it.
+
 **The house is on its street.** The map lookup has always returned the
 named roads round the building and the buildings next door in the same
 request as the outline, and the drawing pad has drawn the roads for

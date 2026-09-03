@@ -1,0 +1,917 @@
+{
+  "id": "showcase",
+  "label": "Showcase House",
+  "displayUnits": "ft",
+  "plan": {
+    "scaleRef": {
+      "px": 1,
+      "meters": 0.3048
+    },
+    "rooms": [
+      {
+        "id": "living",
+        "label": "Living Room",
+        "polygon": [
+          [
+            0,
+            0
+          ],
+          [
+            6,
+            0
+          ],
+          [
+            6,
+            5
+          ],
+          [
+            0,
+            5
+          ]
+        ],
+        "ceilingHeight": 2.7,
+        "level": 0
+      },
+      {
+        "id": "kitchen",
+        "label": "Kitchen",
+        "polygon": [
+          [
+            6,
+            0
+          ],
+          [
+            10,
+            0
+          ],
+          [
+            10,
+            5
+          ],
+          [
+            6,
+            5
+          ]
+        ],
+        "ceilingHeight": 2.7,
+        "level": 0
+      },
+      {
+        "id": "hall",
+        "label": "Hallway",
+        "polygon": [
+          [
+            0,
+            5
+          ],
+          [
+            10,
+            5
+          ],
+          [
+            10,
+            6.5
+          ],
+          [
+            0,
+            6.5
+          ]
+        ],
+        "ceilingHeight": 2.7,
+        "level": 0
+      },
+      {
+        "id": "primary",
+        "label": "Primary Bedroom",
+        "polygon": [
+          [
+            0,
+            6.5
+          ],
+          [
+            4.5,
+            6.5
+          ],
+          [
+            4.5,
+            10
+          ],
+          [
+            0,
+            10
+          ]
+        ],
+        "ceilingHeight": 2.7,
+        "level": 0
+      },
+      {
+        "id": "bedroom",
+        "label": "Bedroom",
+        "polygon": [
+          [
+            4.5,
+            6.5
+          ],
+          [
+            7.5,
+            6.5
+          ],
+          [
+            7.5,
+            10
+          ],
+          [
+            4.5,
+            10
+          ]
+        ],
+        "ceilingHeight": 2.7,
+        "level": 0
+      },
+      {
+        "id": "bath",
+        "label": "Bathroom",
+        "polygon": [
+          [
+            7.5,
+            6.5
+          ],
+          [
+            10,
+            6.5
+          ],
+          [
+            10,
+            10
+          ],
+          [
+            7.5,
+            10
+          ]
+        ],
+        "ceilingHeight": 2.7,
+        "level": 0
+      }
+    ],
+    "openings": [
+      {
+        "id": "d1",
+        "between": [
+          "living",
+          "kitchen"
+        ],
+        "at": [
+          6,
+          2.5
+        ],
+        "width": 0.9,
+        "kind": "door"
+      },
+      {
+        "id": "d2",
+        "between": [
+          "living",
+          "hall"
+        ],
+        "at": [
+          3,
+          5
+        ],
+        "width": 0.9,
+        "kind": "door"
+      },
+      {
+        "id": "d3",
+        "between": [
+          "kitchen",
+          "hall"
+        ],
+        "at": [
+          8,
+          5
+        ],
+        "width": 0.9,
+        "kind": "door"
+      },
+      {
+        "id": "d4",
+        "between": [
+          "hall",
+          "primary"
+        ],
+        "at": [
+          2.25,
+          6.5
+        ],
+        "width": 0.9,
+        "kind": "door"
+      },
+      {
+        "id": "d5",
+        "between": [
+          "hall",
+          "bedroom"
+        ],
+        "at": [
+          6,
+          6.5
+        ],
+        "width": 0.9,
+        "kind": "door"
+      },
+      {
+        "id": "d6",
+        "between": [
+          "hall",
+          "bath"
+        ],
+        "at": [
+          8.75,
+          6.5
+        ],
+        "width": 0.9,
+        "kind": "door"
+      },
+      {
+        "id": "d7",
+        "between": [
+          "primary",
+          "bedroom"
+        ],
+        "at": [
+          4.5,
+          8.25
+        ],
+        "width": 0.9,
+        "kind": "door"
+      },
+      {
+        "id": "d8",
+        "between": [
+          "bedroom",
+          "bath"
+        ],
+        "at": [
+          7.5,
+          8.25
+        ],
+        "width": 0.9,
+        "kind": "door"
+      }
+    ]
+  },
+  "nodes": [
+    {
+      "id": "n1",
+      "roomId": "living",
+      "position": [
+        0.9,
+        0.9
+      ],
+      "eyeHeight": 1.5,
+      "heading": 48.9,
+      "pitch": 0,
+      "fovDeg": 78,
+      "photo": "/properties/demo-house/photos/living-01.jpg",
+      "neighbors": []
+    },
+    {
+      "id": "n2",
+      "roomId": "living",
+      "position": [
+        5.2,
+        4.2
+      ],
+      "eyeHeight": 1.5,
+      "heading": 229.5,
+      "pitch": 0,
+      "fovDeg": 78,
+      "photo": "/properties/demo-house/photos/living-02.jpg",
+      "neighbors": []
+    },
+    {
+      "id": "n3",
+      "roomId": "kitchen",
+      "position": [
+        9.2,
+        4.2
+      ],
+      "eyeHeight": 1.5,
+      "heading": 219.8,
+      "pitch": 0,
+      "fovDeg": 78,
+      "photo": "/properties/demo-house/photos/kitchen-01.jpg",
+      "neighbors": []
+    },
+    {
+      "id": "n4",
+      "roomId": "hall",
+      "position": [
+        0.7,
+        5.75
+      ],
+      "eyeHeight": 1.5,
+      "heading": 89,
+      "pitch": 0,
+      "fovDeg": 78,
+      "photo": "/properties/demo-house/photos/hall-01.jpg",
+      "neighbors": []
+    },
+    {
+      "id": "n5",
+      "roomId": "primary",
+      "position": [
+        0.8,
+        7.3
+      ],
+      "eyeHeight": 1.5,
+      "heading": 48.4,
+      "pitch": 0,
+      "fovDeg": 78,
+      "photo": "/properties/demo-house/photos/bedroom-01.jpg",
+      "neighbors": []
+    },
+    {
+      "id": "n6",
+      "roomId": "bath",
+      "position": [
+        8,
+        7.3
+      ],
+      "eyeHeight": 1.5,
+      "heading": 120,
+      "pitch": 0,
+      "fovDeg": 78,
+      "photo": "/properties/demo-house/photos/bath-01.jpg",
+      "neighbors": []
+    }
+  ],
+  "exteriorPhotos": [],
+  "condition": {},
+  "houseCondition": {},
+  "rates": {},
+  "kind": "house",
+  "site": {
+    "lat": 47.6231,
+    "lon": -122.2969,
+    "planXBearing": 90,
+    "frame": {
+      "centre": {
+        "lat": 47.6231,
+        "lon": -122.2969
+      },
+      "rotationDeg": 0,
+      "offset": [
+        -5,
+        -5
+      ],
+      "scale": 1
+    },
+    "streets": [
+      {
+        "name": "Maple Street",
+        "kind": "residential",
+        "ways": [
+          [
+            [
+              47.62325271289975,
+              -122.29749975855263
+            ],
+            [
+              47.62325271289975,
+              -122.2969
+            ]
+          ],
+          [
+            [
+              47.62325271289975,
+              -122.2969
+            ],
+            [
+              47.62325271289975,
+              -122.29630024144736
+            ]
+          ]
+        ]
+      },
+      {
+        "name": "Oak Avenue",
+        "kind": "tertiary",
+        "ways": [
+          [
+            [
+              47.623504240028744,
+              -122.2966467686111
+            ],
+            [
+              47.62278559108876,
+              -122.2966467686111
+            ]
+          ]
+        ]
+      }
+    ],
+    "buildings": [
+      {
+        "ring": [
+          [
+            47.62314491555875,
+            -122.29720654326023
+          ],
+          [
+            47.62314491555875,
+            -122.29709991951754
+          ],
+          [
+            47.623064067553,
+            -122.29709991951754
+          ],
+          [
+            47.623064067553,
+            -122.29720654326023
+          ]
+        ],
+        "kind": null,
+        "levels": 2
+      },
+      {
+        "ring": [
+          [
+            47.6231538986705,
+            -122.29676672032163
+          ],
+          [
+            47.6231538986705,
+            -122.29668675251462
+          ],
+          [
+            47.62307305066475,
+            -122.29668675251462
+          ],
+          [
+            47.62307305066475,
+            -122.29676672032163
+          ]
+        ],
+        "kind": null,
+        "heightM": 5
+      },
+      {
+        "ring": [
+          [
+            47.62336051024075,
+            -122.29701995171052
+          ],
+          [
+            47.62336051024075,
+            -122.29688667203216
+          ],
+          [
+            47.62328864534675,
+            -122.29688667203216
+          ],
+          [
+            47.62328864534675,
+            -122.29701995171052
+          ]
+        ],
+        "kind": null,
+        "levels": 1
+      },
+      {
+        "ring": [
+          [
+            47.62301915199425,
+            -122.29715323138889
+          ],
+          [
+            47.62301915199425,
+            -122.2970466076462
+          ],
+          [
+            47.62294728710025,
+            -122.2970466076462
+          ],
+          [
+            47.62294728710025,
+            -122.29715323138889
+          ]
+        ],
+        "kind": null,
+        "levels": 1
+      },
+      {
+        "ring": [
+          [
+            47.62312694933525,
+            -122.29682003219297
+          ],
+          [
+            47.62312694933525,
+            -122.29678004828946
+          ],
+          [
+            47.62307305066475,
+            -122.29678004828946
+          ],
+          [
+            47.62307305066475,
+            -122.29682003219297
+          ]
+        ],
+        "kind": "garage"
+      }
+    ],
+    "attribution": [
+      "Map data © OpenStreetMap contributors (ODbL)"
+    ]
+  },
+  "exterior": {
+    "storeys": 1,
+    "roof": {
+      "shape": "gable",
+      "ridgeBearing": 90,
+      "pitchDeg": 30,
+      "material": "asphalt shingle",
+      "colour": "#4a4744"
+    },
+    "walls": {
+      "material": "wood siding",
+      "colour": "#9aa0a3"
+    },
+    "frontDoorBearing": 350,
+    "garage": {
+      "bearing": 90,
+      "bays": 1
+    },
+    "source": "map",
+    "imageryDate": null,
+    "confidence": "high",
+    "attribution": [
+      "Building outline © OpenStreetMap contributors (ODbL)"
+    ]
+  },
+  "spec": {
+    "version": 1,
+    "rooms": {
+      "living": {
+        "floor": {
+          "material": "wood",
+          "colour": "#c2a173"
+        },
+        "walls": {
+          "material": "paint",
+          "colour": "#d8c9a8"
+        },
+        "ceiling": {
+          "kind": "flat",
+          "liftM": 0.15,
+          "marginM": 0.5,
+          "colour": "#f6f5f2"
+        },
+        "trim": {
+          "baseboardM": 0.09,
+          "profile": "square",
+          "colour": "#f4f4f2"
+        },
+        "openings": {},
+        "joinery": [],
+        "fixtures": [
+          {
+            "id": "living-fireplace",
+            "kind": "fireplace",
+            "material": "brick",
+            "colour": null
+          }
+        ],
+        "furnishings": [
+          {
+            "id": "living-sofa",
+            "kind": "sofa",
+            "colour": "#3a2a1e",
+            "material": "leather"
+          },
+          {
+            "id": "living-rug",
+            "kind": "rug",
+            "colour": "#8a7a66",
+            "material": "fabric"
+          }
+        ],
+        "source": {
+          "floor.material": "read",
+          "floor.colour": "read",
+          "walls.material": "read",
+          "walls.colour": "read",
+          "ceiling.colour": "read",
+          "trim.colour": "read",
+          "fixtures": "read",
+          "furnishings": "read"
+        },
+        "because": {},
+        "observed": true,
+        "notes": ""
+      },
+      "kitchen": {
+        "floor": {
+          "material": "wood",
+          "colour": "#6b3f2a"
+        },
+        "walls": {
+          "material": "paint",
+          "colour": "#e8e0cf"
+        },
+        "ceiling": {
+          "kind": "flat",
+          "liftM": 0.15,
+          "marginM": 0.5,
+          "colour": "#f6f5f2"
+        },
+        "trim": {
+          "baseboardM": 0.09,
+          "profile": "square",
+          "colour": "#f4f4f2"
+        },
+        "openings": {},
+        "joinery": [
+          {
+            "id": "kitchen-run",
+            "kind": "cabinet-run",
+            "wall": "north",
+            "alongM": 0.05,
+            "lengthM": 0.85,
+            "depthM": null,
+            "tier": "base+wall",
+            "doorStyle": "shaker",
+            "colour": "#c9a06a",
+            "hardware": "bar",
+            "worktop": {
+              "material": "quartz",
+              "colour": "#e9e6df",
+              "thicknessM": 0.03
+            }
+          }
+        ],
+        "fixtures": [
+          {
+            "id": "kitchen-range",
+            "kind": "range",
+            "material": "stainless steel",
+            "colour": null
+          },
+          {
+            "id": "kitchen-hood",
+            "kind": "hood",
+            "material": "stainless steel",
+            "colour": null
+          },
+          {
+            "id": "kitchen-fridge",
+            "kind": "fridge",
+            "material": "stainless steel",
+            "colour": null
+          }
+        ],
+        "furnishings": [],
+        "source": {
+          "floor.material": "read",
+          "floor.colour": "read",
+          "walls.material": "read",
+          "walls.colour": "read",
+          "joinery": "read",
+          "fixtures": "read"
+        },
+        "because": {},
+        "observed": true,
+        "notes": ""
+      },
+      "hall": {
+        "floor": {
+          "material": "wood",
+          "colour": "#c2a173"
+        },
+        "walls": {
+          "material": "paint",
+          "colour": "#d8c9a8"
+        },
+        "openings": {},
+        "joinery": [],
+        "fixtures": [],
+        "furnishings": [],
+        "source": {
+          "floor.material": "inferred",
+          "floor.colour": "inferred",
+          "walls.colour": "inferred"
+        },
+        "because": {
+          "floor.material": "The living room and the kitchen it joins are both wood."
+        },
+        "observed": false,
+        "notes": ""
+      },
+      "primary": {
+        "floor": {
+          "material": "carpet",
+          "colour": "#9c9083"
+        },
+        "walls": {
+          "material": "paint",
+          "colour": "#cfd6d2"
+        },
+        "openings": {},
+        "joinery": [],
+        "fixtures": [],
+        "furnishings": [
+          {
+            "id": "primary-bed",
+            "kind": "bed",
+            "colour": "#5a4a3a",
+            "material": "fabric"
+          }
+        ],
+        "source": {
+          "floor.material": "read",
+          "floor.colour": "read",
+          "walls.colour": "read",
+          "furnishings": "read"
+        },
+        "because": {},
+        "observed": true,
+        "notes": ""
+      },
+      "bedroom": {
+        "floor": {
+          "material": "carpet",
+          "colour": "#9c9083"
+        },
+        "walls": {
+          "material": "paint",
+          "colour": "#d8c9a8"
+        },
+        "openings": {},
+        "joinery": [],
+        "fixtures": [],
+        "furnishings": [],
+        "source": {
+          "floor.material": "inferred",
+          "floor.colour": "inferred",
+          "walls.colour": "inferred"
+        },
+        "because": {},
+        "observed": false,
+        "notes": ""
+      },
+      "bath": {
+        "floor": {
+          "material": "tile",
+          "colour": "#d9d4cc"
+        },
+        "walls": {
+          "material": "tile",
+          "colour": "#e6e2da"
+        },
+        "openings": {},
+        "joinery": [
+          {
+            "id": "bath-vanity",
+            "kind": "vanity",
+            "wall": "south",
+            "alongM": 0.1,
+            "lengthM": 0.5,
+            "tier": "base",
+            "doorStyle": "slab",
+            "colour": "#f2f0eb",
+            "hardware": "bar",
+            "worktop": {
+              "material": "quartz",
+              "colour": "#f4f2ee",
+              "thicknessM": 0.03
+            }
+          }
+        ],
+        "fixtures": [],
+        "furnishings": [],
+        "source": {
+          "floor.material": "read",
+          "floor.colour": "read",
+          "walls.material": "read",
+          "walls.colour": "read",
+          "joinery": "read"
+        },
+        "because": {},
+        "observed": true,
+        "notes": ""
+      }
+    },
+    "defaults": {
+      "trim": {
+        "baseboardM": 0.09,
+        "profile": "square",
+        "colour": "#f4f4f2"
+      },
+      "ceilingM": {
+        "0": 2.7
+      },
+      "wallColour": "#d8c9a8",
+      "ceilingColour": "#f6f5f2"
+    },
+    "exterior": {
+      "siding": {
+        "material": "cedar lap siding",
+        "finish": "lap",
+        "colour": "#9aa0a3"
+      },
+      "roof": {
+        "shape": "gable",
+        "material": "asphalt shingle",
+        "colour": "#4a4744"
+      },
+      "trim": {
+        "colour": "#f4f2ec"
+      },
+      "door": {
+        "colour": "#7a2e2a"
+      },
+      "features": [
+        {
+          "id": "outside-0",
+          "kind": "tree",
+          "material": "maple",
+          "colour": null,
+          "side": "left",
+          "alongStreet": false,
+          "size": "l"
+        },
+        {
+          "id": "outside-1",
+          "kind": "tree",
+          "material": "pine",
+          "colour": null,
+          "side": "right",
+          "alongStreet": false,
+          "size": "m"
+        },
+        {
+          "id": "outside-2",
+          "kind": "fence",
+          "material": "timber",
+          "colour": "#f0ede6",
+          "side": null,
+          "alongStreet": true,
+          "size": null
+        },
+        {
+          "id": "outside-3",
+          "kind": "porch",
+          "material": "concrete",
+          "colour": null,
+          "side": null,
+          "alongStreet": false,
+          "size": null
+        },
+        {
+          "id": "outside-4",
+          "kind": "driveway",
+          "material": "asphalt",
+          "colour": null,
+          "side": "left",
+          "alongStreet": false,
+          "size": null
+        },
+        {
+          "id": "outside-5",
+          "kind": "shrub",
+          "material": null,
+          "colour": null,
+          "side": "both",
+          "alongStreet": false,
+          "size": "s"
+        },
+        {
+          "id": "outside-6",
+          "kind": "hedge",
+          "material": null,
+          "colour": null,
+          "side": "front",
+          "alongStreet": true,
+          "size": null
+        }
+      ],
+      "source": {
+        "siding.material": "read",
+        "siding.finish": "read",
+        "siding.colour": "read",
+        "roof.material": "read",
+        "roof.colour": "read",
+        "trim.colour": "read",
+        "door.colour": "read",
+        "features": "read"
+      },
+      "because": {},
+      "observed": true,
+      "notes": "Grey cedar lap siding under a dark asphalt gable; white trim; a dark red door; a mature maple to the left and a pine to the right; a white picket fence along the street."
+    },
+    "rejections": [],
+    "shapeEdits": []
+  }
+}
